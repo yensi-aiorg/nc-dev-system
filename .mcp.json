@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"],
+      "env": {}
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "test-crafter": {
+      "type": "http",
+      "url": "http://localhost:16630/mcp",
+      "headers": {}
+    },
+    "visual-designer": {
+      "type": "http",
+      "url": "http://localhost:12101/mcp",
+      "headers": {}
+    }
+  }
+}

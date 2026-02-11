@@ -1,0 +1,37 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(docker *)",
+      "Bash(docker compose *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(pip *)",
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "Bash(curl http://localhost:*)",
+      "Bash(ollama *)",
+      "Bash(codex *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(ls *)",
+      "Bash(playwright *)",
+      "Bash(npx playwright *)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(sudo *)"
+    ]
+  }
+}
