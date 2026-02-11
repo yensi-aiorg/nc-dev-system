@@ -1,0 +1,107 @@
+version: "3.9"
+
+services:
+  frontend-test:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: {{ project_name }}-frontend-test
+    ports:
+      - "{{ ports.frontend + 100 }}:{{ ports.frontend }}"
+    environment:
+      - VITE_API_URL=http://backend-test:{{ ports.backend }}/api/v1
+      - VITE_PORT={{ ports.frontend }}
+      - VITE_MOCK_APIS=true
+      - NODE_ENV=test
+{% if auth_required %}
+      - VITE_KEYCLOAK_URL=http://keycloak-test:8080
+      - VITE_KEYCLOAK_REALM={{ project_name }}
+      - VITE_KEYCLOAK_CLIENT_ID={{ project_name }}-frontend
+{% endif %}
+    depends_on:
+      backend-test:
+        condition: service_healthy
+    networks:
+      - {{ project_name }}-test-network
+
+  backend-test:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: {{ project_name }}-backend-test
+    ports:
+      - "{{ ports.backend + 100 }}:{{ ports.backend }}"
+    environment:
+      - MONGODB_URL=mongodb://mongodb-test:27017
+      - DATABASE_NAME={{ project_name | replace('-', '_') }}_test_db
+      - REDIS_URL=redis://redis-test:6379/0
+      - PORT={{ ports.backend }}
+      - DEBUG=true
+      - LOG_LEVEL=debug
+      - CORS_ORIGINS=*
+      - TESTING=true
+{% if auth_required %}
+      - KEYCLOAK_URL=http://keycloak-test:8080
+      - KEYCLOAK_REALM={{ project_name }}
+      - KEYCLOAK_CLIENT_ID={{ project_name }}-api
+{% endif %}
+    depends_on:
+      mongodb-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    networks:
+      - {{ project_name }}-test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:{{ ports.backend }}/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  mongodb-test:
+    image: mongo:7
+    container_name: {{ project_name }}-mongodb-test
+    tmpfs:
+      - /data/db
+    networks:
+      - {{ project_name }}-test-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    command: ["mongod", "--bind_ip_all", "--nojournal"]
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: {{ project_name }}-redis-test
+    networks:
+      - {{ project_name }}-test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.48.0-jammy
+    container_name: {{ project_name }}-playwright
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    environment:
+      - PLAYWRIGHT_BASE_URL=http://frontend-test:{{ ports.frontend }}
+      - CI=true
+    depends_on:
+      - frontend-test
+    networks:
+      - {{ project_name }}-test-network
+    command: ["npx", "playwright", "test"]
+
+networks:
+  {{ project_name }}-test-network:
+    name: {{ project_name }}-test-network
+    driver: bridge

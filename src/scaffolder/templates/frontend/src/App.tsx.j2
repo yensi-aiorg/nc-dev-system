@@ -1,0 +1,27 @@
+import { Routes, Route } from 'react-router-dom';
+import { MainLayout } from '@/components/layout';
+import HomePage from '@/pages/HomePage';
+{% if auth_required %}
+import LoginPage from '@/pages/LoginPage';
+{% endif %}
+{% for feature in features %}
+import {{ feature.name | replace(' ', '') | replace('-', '') | title }}Page from '@/pages/{{ feature.name | replace(' ', '') | replace('-', '') | title }}Page';
+{% endfor %}
+
+function App() {
+  return (
+    <Routes>
+{% if auth_required %}
+      <Route path="/login" element={<LoginPage />} />
+{% endif %}
+      <Route element={<MainLayout />}>
+        <Route path="/" element={<HomePage />} />
+{% for feature in features %}
+        <Route path="/{{ feature.name | lower | replace(' ', '-') }}" element={<{{ feature.name | replace(' ', '') | replace('-', '') | title }}Page />} />
+{% endfor %}
+      </Route>
+    </Routes>
+  );
+}
+
+export default App;

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Running {{ project_name }} test suite ==="
+
+COMPOSE_TEST="docker compose -f docker-compose.test.yml -p {{ project_name }}-test"
+
+cleanup() {
+    echo "Cleaning up test containers..."
+    $COMPOSE_TEST down -v 2>/dev/null || true
+}
+trap cleanup EXIT
+
+echo ""
+echo "--- Starting test infrastructure ---"
+$COMPOSE_TEST up -d mongodb-test redis-test
+sleep 3
+
+echo ""
+echo "--- Running Backend Tests ---"
+$COMPOSE_TEST run --rm backend-test python -m pytest tests/ -v \
+    --cov=app --cov-report=term-missing --cov-report=html:htmlcov
+BACKEND_EXIT=$?
+
+echo ""
+echo "--- Running Frontend Unit Tests ---"
+$COMPOSE_TEST run --rm frontend-test npm run test:ci
+FRONTEND_EXIT=$?
+
+echo ""
+echo "--- Running E2E Tests ---"
+$COMPOSE_TEST up -d frontend-test backend-test
+sleep 5
+$COMPOSE_TEST run --rm playwright
+E2E_EXIT=$?
+
+echo ""
+echo "=== Test Results ==="
+echo "Backend:  $([ $BACKEND_EXIT -eq 0 ] && echo 'PASSED' || echo 'FAILED')"
+echo "Frontend: $([ $FRONTEND_EXIT -eq 0 ] && echo 'PASSED' || echo 'FAILED')"
+echo "E2E:      $([ $E2E_EXIT -eq 0 ] && echo 'PASSED' || echo 'FAILED')"
+
+if [ $BACKEND_EXIT -ne 0 ] || [ $FRONTEND_EXIT -ne 0 ] || [ $E2E_EXIT -ne 0 ]; then
+    echo ""
+    echo "Some tests FAILED."
+    exit 1
+fi
+
+echo ""
+echo "All tests PASSED."

@@ -1,0 +1,98 @@
+"""FastAPI application entry point with lifespan management."""
+
+from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.api.v1.router import api_router
+from app.api.middleware import SecurityHeadersMiddleware, RequestIDMiddleware, setup_rate_limiter
+from app.core.exceptions import AppException
+from app.core.logging import setup_logging, get_logger
+from app.db.mongodb import mongodb_connection
+from app.db.indexes import create_indexes
+
+logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan: startup and shutdown handlers."""
+    setup_logging(settings.LOG_LEVEL, settings.DEBUG)
+    logger.info("Starting {{ project_name }} backend", version="1.0.0")
+
+    await mongodb_connection.connect(settings.MONGODB_URL, settings.DATABASE_NAME)
+    logger.info("Connected to MongoDB", database=settings.DATABASE_NAME)
+
+    db = mongodb_connection.get_database()
+    await create_indexes(db)
+    logger.info("Database indexes created")
+
+    yield
+
+    await mongodb_connection.disconnect()
+    logger.info("Disconnected from MongoDB")
+    logger.info("{{ project_name }} backend stopped")
+
+
+app = FastAPI(
+    title="{{ project_name | replace('-', ' ') | title }}",
+    description="{{ description }}",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Custom middleware
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestIDMiddleware)
+
+# Rate limiter
+setup_rate_limiter(app)
+
+
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
+    """Handle application-specific exceptions."""
+    logger.warning(
+        "Application error",
+        status_code=exc.status_code,
+        detail=exc.detail,
+        path=str(request.url),
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unexpected exceptions."""
+    logger.error(
+        "Unhandled exception",
+        error=str(exc),
+        error_type=type(exc).__name__,
+        path=str(request.url),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
+app.include_router(api_router, prefix="/api/v1")

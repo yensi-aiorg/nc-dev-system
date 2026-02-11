@@ -1,0 +1,47 @@
+"""Security utilities{% if auth_required %} with KeyCloak integration{% endif %}."""
+{% if auth_required %}
+
+import httpx
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.config import settings
+from app.core.exceptions import UnauthorizedException
+
+security_scheme = HTTPBearer()
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+) -> dict:
+    """Validate the Bearer token against KeyCloak and return the user payload."""
+    token = credentials.credentials
+    userinfo_url = (
+        f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}"
+        f"/protocol/openid-connect/userinfo"
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                userinfo_url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
+            )
+        if response.status_code != 200:
+            raise UnauthorizedException("Invalid or expired token")
+        user_data = response.json()
+        return {
+            "id": user_data.get("sub", ""),
+            "username": user_data.get("preferred_username", ""),
+            "email": user_data.get("email", ""),
+            "name": user_data.get("name", ""),
+            "roles": user_data.get("realm_access", {}).get("roles", []),
+            "is_active": True,
+        }
+    except httpx.RequestError as exc:
+        raise UnauthorizedException(f"Authentication service unavailable: {exc}") from exc
+{% else %}
+# No authentication required for this project.
+# If authentication is needed in the future, enable auth_required and
+# KeyCloak integration will be generated here.
+{% endif %}

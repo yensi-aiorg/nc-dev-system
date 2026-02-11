@@ -1,0 +1,47 @@
+"""Tests for {{ feature.name }} endpoints."""
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_create_{{ feature.name_slug }}(client: AsyncClient) -> None:
+    """Creating a {{ feature.name_slug }} returns 201 with the created item."""
+    payload = {{ feature.sample_create_payload }}
+    response = await client.post("/api/v1/{{ feature.entity_plural }}/", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert "id" in data
+{% for key in feature.sample_create_keys %}
+    assert data["{{ key }}"] == payload["{{ key }}"]
+{% endfor %}
+
+
+@pytest.mark.asyncio
+async def test_list_{{ feature.entity_plural }}(client: AsyncClient) -> None:
+    """Listing {{ feature.entity_plural }} returns paginated results."""
+    payload = {{ feature.sample_create_payload }}
+    await client.post("/api/v1/{{ feature.entity_plural }}/", json=payload)
+    response = await client.get("/api/v1/{{ feature.entity_plural }}/")
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert "total" in data
+    assert data["total"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_{{ feature.name_slug }}_not_found(client: AsyncClient) -> None:
+    """Getting a non-existent {{ feature.name_slug }} returns 404."""
+    response = await client.get("/api/v1/{{ feature.entity_plural }}/507f1f77bcf86cd799439011")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_{{ feature.name_slug }}(client: AsyncClient) -> None:
+    """Deleting a {{ feature.name_slug }} returns 204."""
+    payload = {{ feature.sample_create_payload }}
+    create_resp = await client.post("/api/v1/{{ feature.entity_plural }}/", json=payload)
+    item_id = create_resp.json()["id"]
+    response = await client.delete(f"/api/v1/{{ feature.entity_plural }}/{item_id}")
+    assert response.status_code == 204

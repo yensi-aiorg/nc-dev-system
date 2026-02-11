@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Seeding {{ project_name }} database ==="
+
+MONGO_HOST="${MONGO_HOST:-localhost}"
+MONGO_PORT="${MONGO_PORT:-{{ ports.mongodb }}}"
+DB_NAME="{{ project_name | replace('-', '_') }}_db"
+
+# Wait for MongoDB to be ready
+echo "Waiting for MongoDB..."
+for i in $(seq 1 30); do
+    if mongosh --host "$MONGO_HOST" --port "$MONGO_PORT" --eval "db.adminCommand('ping')" &>/dev/null; then
+        echo "MongoDB is ready."
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "ERROR: MongoDB is not ready after 30 seconds."
+        exit 1
+    fi
+    sleep 1
+done
+
+# Seed data using mongosh
+mongosh --host "$MONGO_HOST" --port "$MONGO_PORT" "$DB_NAME" --eval '
+{% for collection in db_collections %}
+db.{{ collection.name }}.deleteMany({});
+db.{{ collection.name }}.insertMany([
+    {
+{% for field in collection.fields[:5] %}
+        {{ field.name }}: {{ field.seed_value }},
+{% endfor %}
+{% if not collection.fields %}
+        name: "Sample {{ collection.name | replace('_', ' ') | title }} 1",
+        description: "Auto-generated seed data",
+{% endif %}
+        created_at: new Date(),
+        updated_at: new Date()
+    },
+    {
+{% for field in collection.fields[:5] %}
+        {{ field.name }}: {{ field.seed_value_alt }},
+{% endfor %}
+{% if not collection.fields %}
+        name: "Sample {{ collection.name | replace('_', ' ') | title }} 2",
+        description: "Auto-generated seed data",
+{% endif %}
+        created_at: new Date(),
+        updated_at: new Date()
+    }
+]);
+print("Seeded {{ collection.name }}: " + db.{{ collection.name }}.countDocuments() + " documents");
+{% endfor %}
+'
+
+echo ""
+echo "=== Seed complete ==="

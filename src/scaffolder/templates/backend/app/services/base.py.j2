@@ -1,0 +1,74 @@
+"""Base service with generic CRUD operations for MongoDB."""
+
+from abc import ABC
+from datetime import datetime, timezone
+from typing import Any, Generic, Optional, TypeVar
+
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorCollection
+
+T = TypeVar("T")
+
+
+class BaseService(ABC, Generic[T]):
+    """Abstract base service providing CRUD operations on a MongoDB collection."""
+
+    def __init__(self, collection: AsyncIOMotorCollection) -> None:
+        self.collection = collection
+
+    async def get_by_id(self, id: str) -> Optional[dict[str, Any]]:
+        """Retrieve a single document by its ID."""
+        if not ObjectId.is_valid(id):
+            return None
+        doc = await self.collection.find_one({"_id": ObjectId(id)})
+        if doc:
+            doc["id"] = str(doc.pop("_id"))
+        return doc
+
+    async def get_all(
+        self, skip: int = 0, limit: int = 100, filter_query: Optional[dict[str, Any]] = None
+    ) -> list[dict[str, Any]]:
+        """Retrieve a paginated list of documents."""
+        query = filter_query or {}
+        cursor = self.collection.find(query).skip(skip).limit(limit).sort("created_at", -1)
+        results: list[dict[str, Any]] = []
+        async for doc in cursor:
+            doc["id"] = str(doc.pop("_id"))
+            results.append(doc)
+        return results
+
+    async def create(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Insert a new document and return it with its generated ID."""
+        now = datetime.now(timezone.utc)
+        data["created_at"] = now
+        data["updated_at"] = now
+        result = await self.collection.insert_one(data)
+        data["id"] = str(result.inserted_id)
+        data.pop("_id", None)
+        return data
+
+    async def update(self, id: str, data: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Update an existing document by ID. Returns None if not found."""
+        if not ObjectId.is_valid(id):
+            return None
+        data["updated_at"] = datetime.now(timezone.utc)
+        result = await self.collection.find_one_and_update(
+            {"_id": ObjectId(id)},
+            {"$set": data},
+            return_document=True,
+        )
+        if result:
+            result["id"] = str(result.pop("_id"))
+        return result
+
+    async def delete(self, id: str) -> bool:
+        """Delete a document by ID. Returns True if deleted, False if not found."""
+        if not ObjectId.is_valid(id):
+            return False
+        result = await self.collection.delete_one({"_id": ObjectId(id)})
+        return result.deleted_count > 0
+
+    async def count(self, filter_query: Optional[dict[str, Any]] = None) -> int:
+        """Count documents matching the filter query."""
+        query = filter_query or {}
+        return await self.collection.count_documents(query)

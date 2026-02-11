@@ -1,0 +1,184 @@
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Card, LoadingSpinner, ErrorMessage } from '@/components/ui';
+import { api } from '@/api';
+import { ENDPOINTS } from '@/api/endpoints';
+import type { HealthResponse, ReadyResponse } from '@/api/types';
+
+interface SystemStatus {
+  health: HealthResponse | null;
+  ready: ReadyResponse | null;
+}
+
+function HomePage() {
+  const [status, setStatus] = useState<SystemStatus>({
+    health: null,
+    ready: null,
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function checkStatus() {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const [healthRes, readyRes] = await Promise.all([
+          api.get<HealthResponse>(ENDPOINTS.HEALTH),
+          api.get<ReadyResponse>(ENDPOINTS.READY),
+        ]);
+        setStatus({
+          health: healthRes.data,
+          ready: readyRes.data,
+        });
+      } catch (err) {
+        setError('Failed to connect to the backend API.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    checkStatus();
+  }, []);
+
+  if (isLoading) {
+    return React.createElement(
+      'div',
+      { className: 'flex items-center justify-center py-20' },
+      React.createElement(LoadingSpinner, { size: 'lg' })
+    );
+  }
+
+  return React.createElement(
+    'div',
+    { className: 'space-y-8' },
+    React.createElement(
+      'div',
+      null,
+      React.createElement(
+        'h1',
+        { className: 'text-3xl font-bold text-gray-900' },
+        '{{ project_name | replace("-", " ") | title }}'
+      ),
+      React.createElement(
+        'p',
+        { className: 'mt-2 text-gray-600' },
+        '{{ description }}'
+      )
+    ),
+    error &&
+      React.createElement(ErrorMessage, {
+        message: error,
+        onRetry: () => window.location.reload(),
+      }),
+    React.createElement(
+      'div',
+      { className: 'grid gap-4 sm:grid-cols-2' },
+      React.createElement(
+        Card,
+        null,
+        React.createElement(
+          'div',
+          { className: 'flex items-center justify-between' },
+          React.createElement(
+            'div',
+            null,
+            React.createElement(
+              'h3',
+              { className: 'text-sm font-medium text-gray-500' },
+              'API Health'
+            ),
+            React.createElement(
+              'p',
+              { className: 'mt-1 text-2xl font-semibold text-gray-900' },
+              status.health?.status || 'Unknown'
+            )
+          ),
+          React.createElement(
+            'div',
+            {
+              className: `h-3 w-3 rounded-full ${
+                status.health?.status === 'healthy'
+                  ? 'bg-green-500'
+                  : 'bg-red-500'
+              }`,
+            }
+          )
+        )
+      ),
+      React.createElement(
+        Card,
+        null,
+        React.createElement(
+          'div',
+          { className: 'flex items-center justify-between' },
+          React.createElement(
+            'div',
+            null,
+            React.createElement(
+              'h3',
+              { className: 'text-sm font-medium text-gray-500' },
+              'Database'
+            ),
+            React.createElement(
+              'p',
+              { className: 'mt-1 text-2xl font-semibold text-gray-900' },
+              status.ready?.database || 'Unknown'
+            )
+          ),
+          React.createElement(
+            'div',
+            {
+              className: `h-3 w-3 rounded-full ${
+                status.ready?.database === 'connected'
+                  ? 'bg-green-500'
+                  : 'bg-red-500'
+              }`,
+            }
+          )
+        )
+      )
+    ),
+{% if features | length > 0 %}
+    React.createElement(
+      'div',
+      null,
+      React.createElement(
+        'h2',
+        { className: 'text-xl font-semibold text-gray-900 mb-4' },
+        'Features'
+      ),
+      React.createElement(
+        'div',
+        { className: 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3' },
+{% for feature in features %}
+        React.createElement(
+          Card,
+          { key: '{{ feature.name }}' },
+          React.createElement(
+            'h3',
+            { className: 'text-lg font-semibold text-gray-900' },
+            '{{ feature.name | replace("_", " ") | title }}'
+          ),
+          React.createElement(
+            'p',
+            { className: 'mt-1 text-sm text-gray-600' },
+            '{{ feature.description }}'
+          ),
+          React.createElement(
+            Link,
+            {
+              to: '/{{ feature.name | lower | replace(" ", "-") }}',
+              className:
+                'mt-3 inline-block text-sm font-medium text-primary-600 hover:text-primary-800 transition-colors',
+            },
+            'Go to {{ feature.name | replace("_", " ") | title }} \u2192'
+          )
+        ),
+{% endfor %}
+      )
+    ),
+{% endif %}
+  );
+}
+
+export default HomePage;

@@ -1,0 +1,168 @@
+import { http, HttpResponse } from 'msw';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:{{ ports.backend }}/api/v1';
+
+export const handlers = [
+  // Health check
+  http.get(`${API_BASE}/health`, () => {
+    return HttpResponse.json({ status: 'healthy' });
+  }),
+
+  // Ready check
+  http.get(`${API_BASE}/ready`, () => {
+    return HttpResponse.json({ status: 'ready', database: 'connected' });
+  }),
+{% if auth_required %}
+
+  // Auth - Login
+  http.post(`${API_BASE}/auth/login`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, string>;
+    if (body.username === 'admin' && body.password === 'admin') {
+      return HttpResponse.json({
+        access_token: 'mock-access-token-xyz',
+        refresh_token: 'mock-refresh-token-xyz',
+        token_type: 'bearer',
+        expires_in: 3600,
+      });
+    }
+    return HttpResponse.json(
+      { detail: 'Invalid credentials' },
+      { status: 401 }
+    );
+  }),
+
+  // Auth - Current User
+  http.get(`${API_BASE}/auth/me`, ({ request }) => {
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return HttpResponse.json(
+        { detail: 'Not authenticated' },
+        { status: 401 }
+      );
+    }
+    return HttpResponse.json({
+      id: 'user-1',
+      username: 'admin',
+      email: 'admin@example.com',
+      roles: ['admin'],
+    });
+  }),
+
+  // Auth - Logout
+  http.post(`${API_BASE}/auth/logout`, () => {
+    return HttpResponse.json({ message: 'Logged out successfully' });
+  }),
+
+  // Auth - Refresh
+  http.post(`${API_BASE}/auth/refresh`, () => {
+    return HttpResponse.json({
+      access_token: 'mock-refreshed-access-token',
+      refresh_token: 'mock-refreshed-refresh-token',
+      token_type: 'bearer',
+      expires_in: 3600,
+    });
+  }),
+{% endif %}
+{% for contract in api_contracts %}
+
+  // {{ contract.name | title }} - List
+  http.get(`${API_BASE}/{{ contract.path }}`, ({ request }) => {
+    const url = new URL(request.url);
+    const page = parseInt(url.searchParams.get('page') || '1', 10);
+    const pageSize = parseInt(url.searchParams.get('page_size') || '10', 10);
+
+    const mockItems = Array.from({ length: Math.min(pageSize, 5) }, (_, i) => ({
+      id: `{{ contract.name }}-${(page - 1) * pageSize + i + 1}`,
+{% for field in contract.fields | default([]) %}
+      {{ field.name }}: {{ field.mock_value | default("'Sample " ~ field.name ~ "'") }},
+{% endfor %}
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+
+    return HttpResponse.json({
+      items: mockItems,
+      total: 25,
+      page,
+      page_size: pageSize,
+      total_pages: Math.ceil(25 / pageSize),
+    });
+  }),
+
+  // {{ contract.name | title }} - Get by ID
+  http.get(`${API_BASE}/{{ contract.path }}/:id`, ({ params }) => {
+    const { id } = params;
+    return HttpResponse.json({
+      id,
+{% for field in contract.fields | default([]) %}
+      {{ field.name }}: {{ field.mock_value | default("'Sample " ~ field.name ~ "'") }},
+{% endfor %}
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }),
+
+  // {{ contract.name | title }} - Create
+  http.post(`${API_BASE}/{{ contract.path }}`, async ({ request }) => {
+    const body = await request.json();
+    return HttpResponse.json(
+      {
+        id: `{{ contract.name }}-new-${Date.now()}`,
+        ...body,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      { status: 201 }
+    );
+  }),
+
+  // {{ contract.name | title }} - Update
+  http.patch(`${API_BASE}/{{ contract.path }}/:id`, async ({ params, request }) => {
+    const { id } = params;
+    const body = await request.json();
+    return HttpResponse.json({
+      id,
+      ...body,
+      updated_at: new Date().toISOString(),
+    });
+  }),
+
+  // {{ contract.name | title }} - Delete
+  http.delete(`${API_BASE}/{{ contract.path }}/:id`, () => {
+    return new HttpResponse(null, { status: 204 });
+  }),
+{% endfor %}
+];
+
+// Error handler variants for testing error states
+export const errorHandlers = [
+  http.get(`${API_BASE}/health`, () => {
+    return HttpResponse.json(
+      { detail: 'Service unavailable' },
+      { status: 503 }
+    );
+  }),
+{% for contract in api_contracts %}
+  http.get(`${API_BASE}/{{ contract.path }}`, () => {
+    return HttpResponse.json(
+      { detail: 'Internal server error' },
+      { status: 500 }
+    );
+  }),
+{% endfor %}
+];
+
+// Empty response handlers for testing empty states
+export const emptyHandlers = [
+{% for contract in api_contracts %}
+  http.get(`${API_BASE}/{{ contract.path }}`, () => {
+    return HttpResponse.json({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 10,
+      total_pages: 0,
+    });
+  }),
+{% endfor %}
+];

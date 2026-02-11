@@ -1,0 +1,62 @@
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+
+interface Notification {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  message: string;
+}
+
+interface AppState {
+  sidebarOpen: boolean;
+  notifications: Notification[];
+  toggleSidebar: () => void;
+  setSidebarOpen: (open: boolean) => void;
+  addNotification: (type: Notification['type'], message: string) => void;
+  removeNotification: (id: string) => void;
+  clearNotifications: () => void;
+}
+
+export const useAppStore = create<AppState>()(
+  devtools(
+    (set) => ({
+      sidebarOpen: true,
+      notifications: [],
+
+      toggleSidebar: () =>
+        set((state) => ({ sidebarOpen: !state.sidebarOpen }), false, 'toggleSidebar'),
+
+      setSidebarOpen: (open: boolean) =>
+        set({ sidebarOpen: open }, false, 'setSidebarOpen'),
+
+      addNotification: (type: Notification['type'], message: string) =>
+        set(
+          (state) => ({
+            notifications: [
+              ...state.notifications,
+              {
+                id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                type,
+                message,
+              },
+            ],
+          }),
+          false,
+          'addNotification'
+        ),
+
+      removeNotification: (id: string) =>
+        set(
+          (state) => ({
+            notifications: state.notifications.filter((n) => n.id !== id),
+          }),
+          false,
+          'removeNotification'
+        ),
+
+      clearNotifications: () =>
+        set({ notifications: [] }, false, 'clearNotifications'),
+    }),
+    { name: 'app-store' }
+  )
+);

@@ -1,0 +1,53 @@
+"""{{ feature.model_name }} request/response schemas."""
+
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+
+class {{ feature.model_name }}Create(BaseModel):
+    """Schema for creating a new {{ feature.name_slug }}."""
+{% for field in feature.fields %}
+{% if field.required %}
+    {{ field.name }}: {{ field.python_type }} = Field(..., description="{{ field.description }}")
+{% else %}
+    {{ field.name }}: Optional[{{ field.python_type }}] = Field(default={{ field.default_value }}, description="{{ field.description }}")
+{% endif %}
+{% endfor %}
+{% if not feature.fields %}
+    name: str = Field(..., description="Name of the {{ feature.name_slug }}")
+    description: Optional[str] = Field(default=None, description="Description")
+{% endif %}
+
+
+class {{ feature.model_name }}Update(BaseModel):
+    """Schema for updating an existing {{ feature.name_slug }}."""
+{% for field in feature.fields %}
+    {{ field.name }}: Optional[{{ field.python_type }}] = Field(default=None, description="{{ field.description }}")
+{% endfor %}
+{% if not feature.fields %}
+    name: Optional[str] = Field(default=None, description="Name of the {{ feature.name_slug }}")
+    description: Optional[str] = Field(default=None, description="Description")
+{% endif %}
+
+
+class {{ feature.model_name }}Response(BaseModel):
+    """Schema for {{ feature.name_slug }} responses."""
+
+    id: str = Field(..., description="Unique identifier")
+{% for field in feature.fields %}
+{% if field.required %}
+    {{ field.name }}: {{ field.python_type }} = Field(..., description="{{ field.description }}")
+{% else %}
+    {{ field.name }}: Optional[{{ field.python_type }}] = Field(default={{ field.default_value }}, description="{{ field.description }}")
+{% endif %}
+{% endfor %}
+{% if not feature.fields %}
+    name: str = Field(..., description="Name of the {{ feature.name_slug }}")
+    description: Optional[str] = Field(default=None, description="Description")
+{% endif %}
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+
+    model_config = {"from_attributes": True}

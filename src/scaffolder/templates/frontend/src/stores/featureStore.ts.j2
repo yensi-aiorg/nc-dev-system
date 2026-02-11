@@ -1,0 +1,141 @@
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import { api } from '@/api';
+import type { {{ feature.ts_type_name }}, Create{{ feature.ts_type_name }}DTO, Update{{ feature.ts_type_name }}DTO, PaginatedResponse } from '@/api/types';
+
+interface {{ feature.ts_type_name }}State {
+  items: {{ feature.ts_type_name }}[];
+  currentItem: {{ feature.ts_type_name }} | null;
+  isLoading: boolean;
+  error: string | null;
+  total: number;
+  page: number;
+  pageSize: number;
+  fetchItems: (page?: number, pageSize?: number) => Promise<void>;
+  fetchItem: (id: string) => Promise<void>;
+  createItem: (data: Create{{ feature.ts_type_name }}DTO) => Promise<{{ feature.ts_type_name }}>;
+  updateItem: (id: string, data: Update{{ feature.ts_type_name }}DTO) => Promise<{{ feature.ts_type_name }}>;
+  deleteItem: (id: string) => Promise<void>;
+  clearError: () => void;
+  clearCurrentItem: () => void;
+}
+
+export const use{{ feature.ts_type_name }}Store = create<{{ feature.ts_type_name }}State>()(
+  devtools(
+    (set, get) => ({
+      items: [],
+      currentItem: null,
+      isLoading: false,
+      error: null,
+      total: 0,
+      page: 1,
+      pageSize: 20,
+
+      fetchItems: async (page = 1, pageSize = 20) => {
+        set({ isLoading: true, error: null }, false, 'fetchItems/start');
+        try {
+          const skip = (page - 1) * pageSize;
+          const response = await api.get<PaginatedResponse<{{ feature.ts_type_name }}>>('/{{ feature.entity_plural }}', {
+            params: { skip, limit: pageSize },
+          });
+          set(
+            {
+              items: response.data.items,
+              total: response.data.total,
+              page,
+              pageSize,
+              isLoading: false,
+            },
+            false,
+            'fetchItems/success'
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to fetch {{ feature.entity_plural }}';
+          set({ error: message, isLoading: false }, false, 'fetchItems/error');
+          throw error;
+        }
+      },
+
+      fetchItem: async (id: string) => {
+        set({ isLoading: true, error: null }, false, 'fetchItem/start');
+        try {
+          const response = await api.get<{{ feature.ts_type_name }}>(`/{{ feature.entity_plural }}/${id}`);
+          set({ currentItem: response.data, isLoading: false }, false, 'fetchItem/success');
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to fetch {{ feature.name_slug }}';
+          set({ error: message, isLoading: false }, false, 'fetchItem/error');
+          throw error;
+        }
+      },
+
+      createItem: async (data: Create{{ feature.ts_type_name }}DTO) => {
+        set({ isLoading: true, error: null }, false, 'createItem/start');
+        try {
+          const response = await api.post<{{ feature.ts_type_name }}>('/{{ feature.entity_plural }}/', data);
+          const newItem = response.data;
+          set(
+            (state) => ({
+              items: [newItem, ...state.items],
+              total: state.total + 1,
+              isLoading: false,
+            }),
+            false,
+            'createItem/success'
+          );
+          return newItem;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to create {{ feature.name_slug }}';
+          set({ error: message, isLoading: false }, false, 'createItem/error');
+          throw error;
+        }
+      },
+
+      updateItem: async (id: string, data: Update{{ feature.ts_type_name }}DTO) => {
+        set({ isLoading: true, error: null }, false, 'updateItem/start');
+        try {
+          const response = await api.put<{{ feature.ts_type_name }}>(`/{{ feature.entity_plural }}/${id}`, data);
+          const updatedItem = response.data;
+          set(
+            (state) => ({
+              items: state.items.map((item) => (item.id === id ? updatedItem : item)),
+              currentItem: state.currentItem?.id === id ? updatedItem : state.currentItem,
+              isLoading: false,
+            }),
+            false,
+            'updateItem/success'
+          );
+          return updatedItem;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to update {{ feature.name_slug }}';
+          set({ error: message, isLoading: false }, false, 'updateItem/error');
+          throw error;
+        }
+      },
+
+      deleteItem: async (id: string) => {
+        set({ isLoading: true, error: null }, false, 'deleteItem/start');
+        try {
+          await api.delete(`/{{ feature.entity_plural }}/${id}`);
+          set(
+            (state) => ({
+              items: state.items.filter((item) => item.id !== id),
+              total: state.total - 1,
+              currentItem: state.currentItem?.id === id ? null : state.currentItem,
+              isLoading: false,
+            }),
+            false,
+            'deleteItem/success'
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to delete {{ feature.name_slug }}';
+          set({ error: message, isLoading: false }, false, 'deleteItem/error');
+          throw error;
+        }
+      },
+
+      clearError: () => set({ error: null }, false, 'clearError'),
+      clearCurrentItem: () => set({ currentItem: null }, false, 'clearCurrentItem'),
+    }),
+    { name: '{{ feature.name_slug }}-store' }
+  )
+);

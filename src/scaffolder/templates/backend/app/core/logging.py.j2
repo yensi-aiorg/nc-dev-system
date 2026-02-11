@@ -1,0 +1,58 @@
+"""Structured logging configuration using structlog."""
+
+import logging
+import sys
+
+import structlog
+
+
+def setup_logging(log_level: str = "info", debug: bool = False) -> None:
+    """Configure structured logging based on environment.
+
+    Args:
+        log_level: Log level string (debug, info, warning, error).
+        debug: If True, use human-readable console output; otherwise JSON.
+    """
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+    ]
+
+    if debug:
+        renderer: structlog.types.Processor = structlog.dev.ConsoleRenderer(colors=True)
+    else:
+        renderer = structlog.processors.JSONRenderer()
+
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
+    structlog.configure(
+        processors=[
+            *shared_processors,
+            structlog.processors.format_exc_info,
+            renderer,
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        cache_logger_on_first_use=True,
+    )
+
+    logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
+        level=level,
+    )
+
+
+def get_logger(name: str) -> structlog.stdlib.BoundLogger:
+    """Get a structured logger instance.
+
+    Args:
+        name: Logger name, typically __name__.
+
+    Returns:
+        A bound structlog logger.
+    """
+    return structlog.get_logger(name)

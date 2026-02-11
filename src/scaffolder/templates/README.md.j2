@@ -1,0 +1,170 @@
+# {{ project_name }}
+
+{{ description }}
+
+## Technology Stack
+
+- **Frontend**: React 19, TypeScript, Vite, Zustand, Tailwind CSS
+- **Backend**: FastAPI, Python 3.12+, Motor (async MongoDB)
+- **Database**: MongoDB 7
+- **Cache**: Redis 7
+{% if auth_required %}
+- **Authentication**: KeyCloak
+{% endif %}
+- **Infrastructure**: Docker & Docker Compose
+
+## Prerequisites
+
+- Docker & Docker Compose v2+
+- Node.js 20+ (for local development)
+- Python 3.12+ (for local development)
+- Make (optional, for convenience commands)
+
+## Quick Start
+
+### 1. Clone and Setup
+
+```bash
+git clone <repository-url>
+cd {{ project_name }}
+make setup
+```
+
+### 2. Start Development Environment
+
+```bash
+make dev
+```
+
+This starts all services with hot reload:
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:{{ ports.frontend }} |
+| Backend API | http://localhost:{{ ports.backend }}/api/v1 |
+| API Docs (Swagger) | http://localhost:{{ ports.backend }}/docs |
+| MongoDB | localhost:{{ ports.mongodb }} |
+| Redis | localhost:{{ ports.redis }} |
+{% if auth_required %}
+| KeyCloak Admin | http://localhost:{{ ports.keycloak }} |
+{% endif %}
+
+### 3. Seed Data (Optional)
+
+```bash
+make seed
+```
+
+## Development
+
+### Available Commands
+
+```bash
+make help          # Show all available commands
+make dev           # Start development environment
+make test-all      # Run all tests
+make test-backend  # Run backend tests only
+make test-frontend # Run frontend unit tests only
+make test-e2e      # Run Playwright E2E tests
+make lint-all      # Lint all code
+make format-all    # Format all code
+make clean         # Remove containers and build artifacts
+make logs          # Follow service logs
+```
+
+### Project Structure
+
+```
+{{ project_name }}/
+├── backend/          # FastAPI backend
+│   ├── app/          # Application code
+│   │   ├── api/      # API routes and middleware
+│   │   ├── core/     # Security, exceptions, logging
+│   │   ├── db/       # Database connection and indexes
+│   │   ├── models/   # MongoDB document models
+│   │   ├── schemas/  # Pydantic request/response schemas
+│   │   └── services/ # Business logic layer
+│   └── tests/        # Backend tests
+├── frontend/         # React frontend
+│   ├── src/
+│   │   ├── api/      # Axios client and endpoint definitions
+│   │   ├── components/ # UI and layout components
+│   │   ├── hooks/    # Custom React hooks
+│   │   ├── mocks/    # MSW mock handlers
+│   │   ├── pages/    # Page components
+│   │   ├── stores/   # Zustand state stores
+│   │   ├── styles/   # Global styles
+│   │   ├── types/    # TypeScript type definitions
+│   │   └── utils/    # Utility functions
+│   └── e2e/          # Playwright E2E tests
+├── scripts/          # Setup and utility scripts
+└── docker-compose*.yml
+```
+
+## API Documentation
+
+When the backend is running, interactive API documentation is available at:
+
+- **Swagger UI**: http://localhost:{{ ports.backend }}/docs
+- **ReDoc**: http://localhost:{{ ports.backend }}/redoc
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/health` | Health check |
+| GET | `/api/v1/ready` | Readiness check (with DB ping) |
+{% for contract in api_contracts %}
+| {{ contract.method | upper }} | `/api/v1/{{ contract.path }}` | {{ contract.description }} |
+{% endfor %}
+
+## Testing
+
+### Run All Tests
+
+```bash
+make test-all
+```
+
+### Backend Tests
+
+```bash
+make test-backend
+```
+
+### Frontend Unit Tests
+
+```bash
+make test-frontend
+```
+
+### E2E Tests
+
+```bash
+make test-e2e
+```
+
+## Deployment
+
+### Production Build
+
+```bash
+make build
+make up
+```
+
+### Environment Variables
+
+Copy `.env.example` to `.env` and update values for your environment.
+
+See `.env.example` for all available configuration options.
+
+## Features
+
+{% for feature in features %}
+- {{ feature.name }}: {{ feature.description }}
+{% endfor %}
+
+## License
+
+This project is proprietary. All rights reserved.

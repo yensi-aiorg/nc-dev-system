@@ -1,0 +1,35 @@
+export const ENDPOINTS = {
+  HEALTH: '/health',
+  READY: '/ready',
+{% if auth_required %}
+  AUTH: {
+    LOGIN: '/auth/login',
+    LOGOUT: '/auth/logout',
+    REFRESH: '/auth/refresh',
+    ME: '/auth/me',
+  },
+{% endif %}
+{% for contract in api_contracts %}
+  {{ contract.name | upper | replace(' ', '_') | replace('-', '_') }}: {
+{% if contract.endpoints is defined %}
+{% for endpoint in contract.endpoints %}
+    {{ endpoint.name | upper | replace(' ', '_') | replace('-', '_') }}: '{{ endpoint.path }}',
+{% endfor %}
+{% else %}
+    LIST: '/{{ contract.path }}',
+    DETAIL: '/{{ contract.path }}/:id',
+    CREATE: '/{{ contract.path }}',
+    UPDATE: '/{{ contract.path }}/:id',
+    DELETE: '/{{ contract.path }}/:id',
+{% endif %}
+  },
+{% endfor %}
+} as const;
+
+export function buildUrl(template: string, params: Record<string, string>): string {
+  let url = template;
+  for (const [key, value] of Object.entries(params)) {
+    url = url.replace(`:${key}`, encodeURIComponent(value));
+  }
+  return url;
+}
