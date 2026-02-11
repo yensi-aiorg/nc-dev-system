@@ -59,39 +59,132 @@ Template files to create:
 ```
 src/scaffolder/templates/
 ├── frontend/
+│   ├── Dockerfile.j2                 # Production (multi-stage with nginx)
+│   ├── Dockerfile.dev.j2             # Development with HMR
+│   ├── nginx.conf.j2                 # Production nginx config
 │   ├── package.json.j2
-│   ├── vite.config.ts.j2
 │   ├── tsconfig.json.j2
+│   ├── vite.config.ts.j2
+│   ├── vitest.config.ts.j2
 │   ├── tailwind.config.js.j2
+│   ├── playwright.config.ts.j2
 │   ├── index.html.j2
 │   ├── src/
 │   │   ├── main.tsx.j2
 │   │   ├── App.tsx.j2
 │   │   ├── vite-env.d.ts.j2
+│   │   ├── api/
+│   │   │   ├── index.ts.j2           # Axios instance with interceptors
+│   │   │   ├── endpoints.ts.j2       # API endpoint definitions
+│   │   │   └── types.ts.j2           # API response types
+│   │   ├── stores/
+│   │   │   └── index.ts.j2           # Zustand store barrel + sample store
+│   │   ├── components/
+│   │   │   ├── ui/
+│   │   │   │   └── index.ts.j2       # Reusable UI components (Button, Input, Modal)
+│   │   │   ├── layout/
+│   │   │   │   └── index.ts.j2       # Header, Sidebar, Footer
+│   │   │   └── features/
+│   │   │       └── .gitkeep
+│   │   ├── pages/
+│   │   │   └── HomePage.tsx.j2
+│   │   ├── hooks/
+│   │   │   └── index.ts.j2           # Custom React hooks
+│   │   ├── types/
+│   │   │   └── index.ts.j2           # TypeScript type definitions
+│   │   ├── utils/
+│   │   │   └── index.ts.j2           # Constants, helpers, validators
+│   │   ├── styles/
+│   │   │   └── globals.css.j2
 │   │   └── mocks/
-│   │       ├── browser.ts.j2
-│   │       ├── server.ts.j2
-│   │       └── handlers.ts.j2
-│   └── e2e/
-│       └── smoke.spec.ts.j2
+│   │       ├── browser.ts.j2         # MSW browser setup
+│   │       ├── server.ts.j2          # MSW server setup (for tests)
+│   │       └── handlers.ts.j2        # Mock API handlers
+│   ├── e2e/
+│   │   └── smoke.spec.ts.j2
+│   └── tests/
+│       └── unit/
+│           └── .gitkeep
+│
 ├── backend/
+│   ├── Dockerfile.j2                 # Production (multi-stage, non-root user)
+│   ├── Dockerfile.dev.j2             # Development with hot reload
 │   ├── requirements.txt.j2
+│   ├── requirements-dev.txt.j2
+│   ├── pyproject.toml.j2
 │   ├── app/
 │   │   ├── __init__.py.j2
-│   │   ├── main.py.j2
-│   │   ├── config.py.j2
-│   │   ├── routers/__init__.py.j2
-│   │   ├── services/__init__.py.j2
-│   │   ├── models/__init__.py.j2
-│   │   └── db/__init__.py.j2
+│   │   ├── main.py.j2               # FastAPI app with lifespan (graceful shutdown)
+│   │   ├── config.py.j2             # Pydantic Settings (env-driven)
+│   │   ├── api/
+│   │   │   ├── __init__.py.j2
+│   │   │   ├── deps.py.j2           # Dependency injection (get_db, get_current_user)
+│   │   │   ├── middleware.py.j2     # CORS, security headers, rate limiting
+│   │   │   └── v1/
+│   │   │       ├── __init__.py.j2
+│   │   │       ├── router.py.j2     # API router aggregation
+│   │   │       └── endpoints/
+│   │   │           ├── __init__.py.j2
+│   │   │           └── health.py.j2 # /health and /ready endpoints
+│   │   ├── core/
+│   │   │   ├── __init__.py.j2
+│   │   │   ├── security.py.j2       # KeyCloak integration (when auth required)
+│   │   │   ├── exceptions.py.j2     # AppException, NotFoundException, etc.
+│   │   │   └── logging.py.j2        # Structured JSON logging
+│   │   ├── models/
+│   │   │   ├── __init__.py.j2
+│   │   │   └── base.py.j2           # Base MongoDB document model
+│   │   ├── schemas/
+│   │   │   ├── __init__.py.j2
+│   │   │   └── base.py.j2           # Base Pydantic request/response schemas
+│   │   ├── services/
+│   │   │   ├── __init__.py.j2
+│   │   │   └── base.py.j2           # BaseService(ABC, Generic[T]) with CRUD
+│   │   └── db/
+│   │       ├── __init__.py.j2
+│   │       ├── mongodb.py.j2        # MongoDB connection + get_database()
+│   │       └── indexes.py.j2        # Database index creation
 │   └── tests/
-│       ├── conftest.py.j2
-│       └── test_health.py.j2
-├── docker-compose.yml.j2
+│       ├── __init__.py.j2
+│       ├── conftest.py.j2           # Pytest fixtures (test_db, client, mock deps)
+│       ├── unit/
+│       │   └── test_health.py.j2
+│       └── integration/
+│           └── .gitkeep
+│
+├── keycloak/                          # Only generated when auth is required
+│   ├── Dockerfile.j2
+│   └── realm-export.json.j2
+│
+├── scripts/
+│   ├── setup.sh.j2
+│   ├── seed-data.sh.j2
+│   └── run-tests.sh.j2
+│
+├── docker-compose.yml.j2             # Production
+├── docker-compose.dev.yml.j2         # Development with hot reload
+├── docker-compose.test.yml.j2        # Test environment
 ├── .env.example.j2
+├── .env.development.j2
+├── .env.test.j2
+├── Makefile.j2                        # dev, test-all, lint-all, format-all, clean targets
+├── .github/
+│   └── workflows/
+│       └── ci.yml.j2                  # GitHub Actions CI/CD (lint → test → build → e2e)
 ├── playwright.config.ts.j2
 └── README.md.j2
 ```
+
+**Important template requirements:**
+- The Axios interceptor template (`api/index.ts.j2`) must include request interceptors (auth token, request ID) and response interceptors (401 redirect, error logging)
+- The Zustand store template must use `devtools` middleware and manage `isLoading`/`error` state
+- The BaseService template must implement `ABC, Generic[T]` with full CRUD operations
+- The exceptions template must define `AppException`, `NotFoundException`, `UnauthorizedException`, `ForbiddenException`
+- Health endpoint templates must include `/health` (basic) and `/ready` (with DB ping)
+- Production Dockerfiles must use multi-stage builds with non-root users
+- The Makefile must include: `dev`, `test-all`, `lint-all`, `format-all`, `clean` targets
+- Docker Compose dev file must use volume mounts for HMR
+- All ports must use the sequential allocation starting at 23000 (NEVER default ports)
 
 ### 3. Build Orchestrator (Phase 3 engine)
 
@@ -376,6 +469,160 @@ The `playwright.config.ts` should:
 - Include Desktop Chrome + Mobile Safari projects
 - Capture screenshots on every test
 - Generate JSON + HTML reports
+
+## Generated Project Conventions (templates MUST implement these)
+
+### Frontend Golden Rule: Components NEVER Call APIs Directly
+
+```
+Component Layer (UI only, no API calls)
+        │
+        ▼
+Zustand Stores (state management + API call actions)
+        │
+        ▼
+Axios Interceptor Layer (auth headers, error handling, logging)
+        │
+        ▼
+Backend API
+```
+
+### Zustand Store Pattern (all stores must follow this)
+
+```typescript
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import { api } from '@/api';
+
+interface FeatureState {
+  items: Item[];
+  isLoading: boolean;
+  error: string | null;
+  fetchItems: () => Promise<void>;
+}
+
+export const useFeatureStore = create<FeatureState>()(
+  devtools((set) => ({
+    items: [],
+    isLoading: false,
+    error: null,
+    fetchItems: async () => {
+      set({ isLoading: true, error: null });
+      try {
+        const response = await api.get<Item[]>('/items');
+        set({ items: response.data, isLoading: false });
+      } catch (error) {
+        set({ error: 'Failed to fetch items', isLoading: false });
+        throw error;
+      }
+    },
+  }), { name: 'feature-store' })
+);
+```
+
+### Axios Interceptor Setup
+
+```typescript
+import axios from 'axios';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:23001/api/v1';
+
+export const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' },
+});
+
+// Request interceptor: auth token + request ID
+// Response interceptor: 401 → redirect to login, error logging
+```
+
+### Backend Service Pattern
+
+```python
+class BaseService(ABC, Generic[T]):
+    def __init__(self, collection: AsyncIOMotorCollection):
+        self.collection = collection
+
+    async def get_by_id(self, id: str) -> Optional[T]: ...
+    async def get_all(self, skip: int = 0, limit: int = 100) -> List[T]: ...
+    async def create(self, data: dict) -> T: ...
+    async def update(self, id: str, data: dict) -> Optional[T]: ...
+    async def delete(self, id: str) -> bool: ...
+```
+
+### Backend Dependency Injection
+
+```python
+async def get_db() -> AsyncIOMotorDatabase: ...
+async def get_current_active_user(credentials, db) -> dict: ...
+```
+
+### Backend API Endpoint Pattern
+
+```python
+@router.get("/", response_model=List[ItemResponse])
+async def list_items(
+    service: Annotated[ItemService, Depends(get_item_service)],
+    current_user: Annotated[dict, Depends(get_current_active_user)],
+): ...
+```
+
+### Error Handling Hierarchy
+
+- `AppException` — base exception
+- `NotFoundException` — 404
+- `UnauthorizedException` — 401
+- `ForbiddenException` — 403
+
+### AI Integration (Adapter Pattern)
+
+Generated projects with AI features MUST use the adapter pattern:
+- Abstract base class/interface for all AI operations
+- CLI-based implementations for dev/test (Claude CLI, Codex CLI, Gemini CLI via Python subprocesses)
+- Open Router implementation for production
+- Ollama API (localhost:11434) for local inference
+- Citex integration for RAG when needed
+- Configuration-driven model/provider selection
+- No direct coupling to specific AI providers in business logic
+
+### Production Readiness (all generated projects)
+
+1. Health endpoints: `/health` (basic) and `/ready` (with DB ping)
+2. Structured logging: JSON format in production, human-readable in dev
+3. Database indexes: Created on startup via `db/indexes.py`
+4. Rate limiting: slowapi on sensitive endpoints (login, signup)
+5. Graceful shutdown: FastAPI lifespan context manager
+6. Security headers: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection
+7. CORS: Restricted origins in production, localhost in dev
+8. Production Dockerfiles: Multi-stage builds, non-root user
+9. CI/CD: GitHub Actions workflow (lint → test → build → e2e)
+10. Makefile: dev, test-all, lint-all, format-all, clean targets
+
+### Port Allocation (NEVER use default ports)
+
+| Service | Port |
+|---------|------|
+| Frontend | 23000 |
+| Backend | 23001 |
+| MongoDB | 23002 |
+| Redis | 23003 |
+| KeyCloak | 23004 |
+| KeyCloak Postgres | 23005 |
+
+### No Incomplete Code (STRICTLY ENFORCED)
+
+Generated code must NEVER contain:
+- TODO comments
+- Placeholder implementations (`pass`, `return True`)
+- "Coming soon" or "Not yet implemented" text
+- Empty exception handlers (`except: pass`)
+- Commented-out code blocks
+- Hardcoded test data in production code
+- console.log debugging statements
+- Disabled functionality
+
+Every file must be fully functional, syntactically correct, linted, type-checked, and tested.
 
 ## Rules for Building
 
