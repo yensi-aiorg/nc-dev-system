@@ -1,0 +1,94 @@
+import React, { useEffect } from 'react';
+import { Card, LoadingSpinner, ErrorMessage, Button } from '@/components/ui';
+import { use{{ feature.ts_type_name }}Store } from '@/stores/use{{ feature.ts_type_name }}Store';
+
+function {{ feature.ts_type_name }}Page() {
+  const { items, isLoading, error, total, fetchItems } = use{{ feature.ts_type_name }}Store();
+
+  useEffect(() => {
+    fetchItems();
+  }, [fetchItems]);
+
+  if (isLoading && items.length === 0) {
+    return React.createElement(
+      'div',
+      { className: 'flex items-center justify-center py-20' },
+      React.createElement(LoadingSpinner, { size: 'lg' })
+    );
+  }
+
+  return React.createElement(
+    'div',
+    { className: 'space-y-6' },
+    React.createElement(
+      'div',
+      { className: 'flex items-center justify-between' },
+      React.createElement(
+        'div',
+        null,
+        React.createElement(
+          'h1',
+          { className: 'text-3xl font-bold text-gray-900' },
+          '{{ feature.display_name }}'
+        ),
+        React.createElement(
+          'p',
+          { className: 'mt-1 text-sm text-gray-500' },
+          `${total} {{ feature.entity_plural }} total`
+        )
+      ),
+      React.createElement(
+        Button,
+        { variant: 'primary' },
+        'Add {{ feature.display_name_singular }}'
+      )
+    ),
+    error &&
+      React.createElement(ErrorMessage, {
+        message: error,
+        onRetry: () => fetchItems(),
+      }),
+    items.length === 0 && !isLoading
+      ? React.createElement(
+          Card,
+          null,
+          React.createElement(
+            'div',
+            { className: 'py-12 text-center' },
+            React.createElement(
+              'p',
+              { className: 'text-gray-500' },
+              'No {{ feature.entity_plural }} found. Create your first one.'
+            )
+          )
+        )
+      : React.createElement(
+          'div',
+          { className: 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3' },
+          items.map((item) =>
+            React.createElement(
+              Card,
+              { key: item.id },
+              React.createElement(
+                'h3',
+                { className: 'text-lg font-semibold text-gray-900' },
+                item.name || item.id
+              ),
+              item.description &&
+                React.createElement(
+                  'p',
+                  { className: 'mt-1 text-sm text-gray-600' },
+                  item.description
+                ),
+              React.createElement(
+                'p',
+                { className: 'mt-2 text-xs text-gray-400' },
+                `Created: ${new Date(item.created_at).toLocaleDateString()}`
+              )
+            )
+          )
+        )
+  );
+}
+
+export default {{ feature.ts_type_name }}Page;

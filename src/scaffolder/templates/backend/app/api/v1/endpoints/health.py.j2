@@ -1,0 +1,26 @@
+"""Health check endpoints."""
+
+from fastapi import APIRouter, Depends
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from app.api.deps import get_db
+
+router = APIRouter()
+
+
+@router.get("/health")
+async def health_check() -> dict:
+    """Basic health check - returns 200 if the service is running."""
+    return {"status": "healthy", "service": "{{ project_name }}"}
+
+
+@router.get("/ready")
+async def readiness_check(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    """Readiness check - verifies database connectivity."""
+    try:
+        await db.command("ping")
+        return {"status": "ready", "database": "connected"}
+    except Exception:
+        return {"status": "not_ready", "database": "disconnected"}

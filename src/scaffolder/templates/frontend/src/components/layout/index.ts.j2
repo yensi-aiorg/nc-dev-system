@@ -1,0 +1,210 @@
+import React from 'react';
+import { Outlet, Link, useLocation } from 'react-router-dom';
+{% if auth_required %}
+import { useAuthStore } from '@/stores';
+{% endif %}
+import { useAppStore } from '@/stores';
+
+/* ------------------------------------------------------------------ */
+/* Header                                                              */
+/* ------------------------------------------------------------------ */
+
+export function Header() {
+  const { toggleSidebar } = useAppStore();
+{% if auth_required %}
+  const { user, isAuthenticated, logout } = useAuthStore();
+{% endif %}
+
+  return React.createElement(
+    'header',
+    {
+      className:
+        'sticky top-0 z-30 flex h-16 items-center justify-between border-b border-gray-200 bg-white px-4 sm:px-6',
+    },
+    React.createElement(
+      'div',
+      { className: 'flex items-center gap-3' },
+      React.createElement(
+        'button',
+        {
+          onClick: toggleSidebar,
+          className: 'rounded-lg p-2 text-gray-500 hover:bg-gray-100 lg:hidden',
+          'aria-label': 'Toggle sidebar',
+        },
+        React.createElement(
+          'svg',
+          { className: 'h-5 w-5', fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor' },
+          React.createElement('path', {
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            strokeWidth: 2,
+            d: 'M4 6h16M4 12h16M4 18h16',
+          })
+        )
+      ),
+      React.createElement(
+        Link,
+        { to: '/', className: 'text-xl font-bold text-primary-600' },
+        '{{ project_name | replace("-", " ") | title }}'
+      )
+    ),
+    React.createElement(
+      'div',
+      { className: 'flex items-center gap-4' },
+{% if auth_required %}
+      isAuthenticated && user
+        ? React.createElement(
+            'div',
+            { className: 'flex items-center gap-3' },
+            React.createElement(
+              'span',
+              { className: 'text-sm text-gray-700' },
+              user.username
+            ),
+            React.createElement(
+              'button',
+              {
+                onClick: () => logout(),
+                className:
+                  'rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-200 transition-colors',
+              },
+              'Logout'
+            )
+          )
+        : React.createElement(
+            Link,
+            {
+              to: '/login',
+              className:
+                'rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors',
+            },
+            'Login'
+          )
+{% else %}
+      React.createElement(
+        'span',
+        { className: 'text-sm text-gray-500' },
+        '{{ project_name | replace("-", " ") | title }}'
+      )
+{% endif %}
+    )
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar                                                             */
+/* ------------------------------------------------------------------ */
+
+interface NavItem {
+  label: string;
+  path: string;
+  icon: string;
+}
+
+const navItems: NavItem[] = [
+  { label: 'Home', path: '/', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
+{% for feature in features %}
+  { label: '{{ feature.name | replace("_", " ") | title }}', path: '/{{ feature.name | lower | replace(" ", "-") }}', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
+{% endfor %}
+];
+
+export function Sidebar() {
+  const location = useLocation();
+  const { sidebarOpen, setSidebarOpen } = useAppStore();
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    sidebarOpen &&
+      React.createElement('div', {
+        className: 'fixed inset-0 z-20 bg-black/50 lg:hidden',
+        onClick: () => setSidebarOpen(false),
+      }),
+    React.createElement(
+      'aside',
+      {
+        className: `fixed inset-y-0 left-0 z-20 flex w-64 flex-col border-r border-gray-200 bg-white pt-16 transition-transform lg:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`,
+      },
+      React.createElement(
+        'nav',
+        { className: 'flex-1 space-y-1 px-3 py-4' },
+        navItems.map((item) =>
+          React.createElement(
+            Link,
+            {
+              key: item.path,
+              to: item.path,
+              onClick: () => setSidebarOpen(false),
+              className: `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                location.pathname === item.path
+                  ? 'bg-primary-50 text-primary-700'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`,
+            },
+            React.createElement(
+              'svg',
+              {
+                className: 'h-5 w-5 shrink-0',
+                fill: 'none',
+                viewBox: '0 0 24 24',
+                stroke: 'currentColor',
+              },
+              React.createElement('path', {
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round',
+                strokeWidth: 2,
+                d: item.icon,
+              })
+            ),
+            item.label
+          )
+        )
+      )
+    )
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Footer                                                              */
+/* ------------------------------------------------------------------ */
+
+export function Footer() {
+  return React.createElement(
+    'footer',
+    { className: 'border-t border-gray-200 bg-white px-4 py-4 sm:px-6' },
+    React.createElement(
+      'p',
+      { className: 'text-center text-sm text-gray-500' },
+      `\u00A9 ${new Date().getFullYear()} {{ project_name | replace("-", " ") | title }}. All rights reserved.`
+    )
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* MainLayout                                                          */
+/* ------------------------------------------------------------------ */
+
+export function MainLayout() {
+  return React.createElement(
+    'div',
+    { className: 'flex min-h-screen flex-col bg-gray-50' },
+    React.createElement(Header, null),
+    React.createElement(
+      'div',
+      { className: 'flex flex-1' },
+      React.createElement(Sidebar, null),
+      React.createElement(
+        'main',
+        { className: 'flex-1 lg:ml-64' },
+        React.createElement(
+          'div',
+          { className: 'mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8' },
+          React.createElement(Outlet, null)
+        ),
+        React.createElement(Footer, null)
+      )
+    )
+  );
+}

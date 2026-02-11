@@ -1,0 +1,109 @@
+"""Pytest fixtures for {{ project_name }} backend tests."""
+
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+from app.main import app
+from app.api.deps import get_db
+
+
+class MockCollection:
+    """Mock MongoDB collection for unit testing."""
+
+    def __init__(self) -> None:
+        self._documents: dict[str, dict[str, Any]] = {}
+        self.find_one = AsyncMock(side_effect=self._find_one)
+        self.find = MagicMock(side_effect=self._find)
+        self.insert_one = AsyncMock(side_effect=self._insert_one)
+        self.find_one_and_update = AsyncMock(side_effect=self._find_one_and_update)
+        self.delete_one = AsyncMock(side_effect=self._delete_one)
+        self.count_documents = AsyncMock(side_effect=self._count_documents)
+        self.create_index = AsyncMock()
+
+    async def _find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
+        if "_id" in query:
+            return self._documents.get(str(query["_id"]))
+        return None
+
+    def _find(self, query: dict[str, Any] | None = None) -> Any:
+        mock_cursor = MagicMock()
+        mock_cursor.skip = MagicMock(return_value=mock_cursor)
+        mock_cursor.limit = MagicMock(return_value=mock_cursor)
+        mock_cursor.sort = MagicMock(return_value=mock_cursor)
+        docs = list(self._documents.values())
+        mock_cursor.__aiter__ = MagicMock(return_value=iter(docs))
+        return mock_cursor
+
+    async def _insert_one(self, data: dict[str, Any]) -> Any:
+        from bson import ObjectId
+
+        oid = ObjectId()
+        data["_id"] = oid
+        self._documents[str(oid)] = data.copy()
+        result = MagicMock()
+        result.inserted_id = oid
+        return result
+
+    async def _find_one_and_update(
+        self, query: dict[str, Any], update: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any] | None:
+        doc_id = str(query.get("_id", ""))
+        if doc_id in self._documents:
+            self._documents[doc_id].update(update.get("$set", {}))
+            return self._documents[doc_id]
+        return None
+
+    async def _delete_one(self, query: dict[str, Any]) -> Any:
+        doc_id = str(query.get("_id", ""))
+        result = MagicMock()
+        if doc_id in self._documents:
+            del self._documents[doc_id]
+            result.deleted_count = 1
+        else:
+            result.deleted_count = 0
+        return result
+
+    async def _count_documents(self, query: dict[str, Any] | None = None) -> int:
+        return len(self._documents)
+
+
+class MockDatabase:
+    """Mock MongoDB database for unit testing."""
+
+    def __init__(self) -> None:
+        self._collections: dict[str, MockCollection] = {}
+
+    def __getitem__(self, name: str) -> MockCollection:
+        if name not in self._collections:
+            self._collections[name] = MockCollection()
+        return self._collections[name]
+
+    async def command(self, cmd: str) -> dict[str, Any]:
+        return {"ok": 1}
+
+
+@pytest.fixture
+def mock_db() -> MockDatabase:
+    """Provide a mock MongoDB database."""
+    return MockDatabase()
+
+
+@pytest_asyncio.fixture
+async def client(mock_db: MockDatabase) -> AsyncGenerator[AsyncClient, None]:
+    """Provide an async test client with mocked database."""
+
+    async def override_get_db() -> AsyncGenerator[MockDatabase, None]:
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.clear()

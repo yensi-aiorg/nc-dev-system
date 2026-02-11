@@ -1,0 +1,30 @@
+"""Database index creation on startup."""
+
+import structlog
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ASCENDING, DESCENDING
+
+logger = structlog.get_logger(__name__)
+
+
+async def create_indexes(db: AsyncIOMotorDatabase) -> None:
+    """Create all required database indexes.
+
+    Args:
+        db: The MongoDB database instance.
+    """
+{% for collection in db_collections %}
+
+    # Indexes for {{ collection.name }}
+    {{ collection.name }}_col = db["{{ collection.name }}"]
+    await {{ collection.name }}_col.create_index([("created_at", DESCENDING)])
+    await {{ collection.name }}_col.create_index([("updated_at", DESCENDING)])
+{% for index in collection.indexes | default([]) %}
+    await {{ collection.name }}_col.create_index(
+        [{% for field in index.fields %}("{{ field }}", ASCENDING){% if not loop.last %}, {% endif %}{% endfor %}],
+        unique={{ index.unique | default(False) }},
+    )
+{% endfor %}
+{% endfor %}
+
+    logger.info("database_indexes_created")

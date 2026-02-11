@@ -1,0 +1,44 @@
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './frontend/e2e',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: process.env.CI ? 'html' : 'list',
+  timeout: 30000,
+  expect: {
+    timeout: 10000,
+  },
+  use: {
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:{{ ports.frontend }}',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+  },
+  projects: [
+    {
+      name: 'chromium-desktop',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 900 },
+      },
+    },
+    {
+      name: 'chromium-mobile',
+      use: {
+        ...devices['Pixel 5'],
+        viewport: { width: 375, height: 812 },
+      },
+    },
+  ],
+  webServer: process.env.CI
+    ? undefined
+    : {
+        command: 'make dev-detached',
+        url: 'http://localhost:{{ ports.frontend }}',
+        reuseExistingServer: true,
+        timeout: 120000,
+      },
+});

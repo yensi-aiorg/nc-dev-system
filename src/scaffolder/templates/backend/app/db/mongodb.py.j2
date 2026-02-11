@@ -1,0 +1,51 @@
+"""MongoDB connection management via Motor async driver."""
+
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+
+
+class MongoDBConnection:
+    """Manages the MongoDB connection lifecycle with connection pooling."""
+
+    def __init__(self) -> None:
+        self._client: AsyncIOMotorClient | None = None
+        self._database: AsyncIOMotorDatabase | None = None
+
+    async def connect(self, url: str, database_name: str) -> None:
+        """Establish a connection to MongoDB.
+
+        Args:
+            url: MongoDB connection URL.
+            database_name: Name of the database to use.
+        """
+        self._client = AsyncIOMotorClient(
+            url,
+            maxPoolSize=50,
+            minPoolSize=10,
+            serverSelectionTimeoutMS=5000,
+        )
+        self._database = self._client[database_name]
+
+    async def disconnect(self) -> None:
+        """Close the MongoDB connection."""
+        if self._client is not None:
+            self._client.close()
+        self._client = None
+        self._database = None
+
+    def get_database(self) -> AsyncIOMotorDatabase:
+        """Return the active database instance.
+
+        Raises:
+            RuntimeError: If connect() has not been called.
+        """
+        if self._database is None:
+            raise RuntimeError("Database not initialized. Call connect() first.")
+        return self._database
+
+    @property
+    def is_connected(self) -> bool:
+        """Check whether the database connection is active."""
+        return self._client is not None and self._database is not None
+
+
+mongodb_connection = MongoDBConnection()

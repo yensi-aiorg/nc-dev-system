@@ -1,0 +1,55 @@
+"""Application configuration using Pydantic Settings."""
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    # Application
+    PROJECT_NAME: str = "{{ project_name }}"
+    DEBUG: bool = False
+    LOG_LEVEL: str = "info"
+    PORT: int = {{ ports.backend }}
+    TESTING: bool = False
+
+    # MongoDB
+    MONGODB_URL: str = "mongodb://localhost:{{ ports.mongodb }}"
+    DATABASE_NAME: str = "{{ project_name | replace('-', '_') }}_db"
+
+    # Redis
+    REDIS_URL: str = "redis://localhost:{{ ports.redis }}/0"
+
+    # CORS
+    CORS_ORIGINS: str = "http://localhost:{{ ports.frontend }}"
+
+    # Rate limiting
+    RATE_LIMIT_DEFAULT: str = "100/minute"
+    RATE_LIMIT_AUTH: str = "20/minute"
+{% if auth_required %}
+
+    # KeyCloak / Auth
+    KEYCLOAK_URL: str = "http://localhost:{{ ports.keycloak }}"
+    KEYCLOAK_REALM: str = "{{ project_name | replace('-', '_') }}"
+    KEYCLOAK_CLIENT_ID: str = "{{ project_name | replace('-', '_') }}-api"
+    KEYCLOAK_CLIENT_SECRET: str = ""
+    JWT_SECRET_KEY: str = "dev-secret-key-not-for-production"
+    JWT_ALGORITHM: str = "RS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+{% endif %}
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS origins from comma-separated string."""
+        if self.CORS_ORIGINS == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": True,
+    }
+
+
+settings = Settings()

@@ -1,0 +1,37 @@
+"""Dependency injection for FastAPI endpoints."""
+
+from typing import Annotated
+from collections.abc import AsyncGenerator
+
+from fastapi import Depends
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from app.db.mongodb import mongodb_connection
+{% if auth_required %}
+from app.core.security import get_current_user
+{% endif %}
+
+
+async def get_db() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
+    """Yield the application database instance."""
+    db = mongodb_connection.get_database()
+    yield db
+
+
+DbDep = Annotated[AsyncIOMotorDatabase, Depends(get_db)]
+{% if auth_required %}
+
+
+async def get_current_active_user(
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Return the current authenticated user, raising if inactive."""
+    if not current_user.get("is_active", True):
+        from app.core.exceptions import ForbiddenException
+
+        raise ForbiddenException("Inactive user account")
+    return current_user
+
+
+CurrentUserDep = Annotated[dict, Depends(get_current_active_user)]
+{% endif %}

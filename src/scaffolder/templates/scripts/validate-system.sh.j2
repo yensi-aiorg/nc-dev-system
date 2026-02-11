@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Validating {{ project_name }} system ==="
+
+FRONTEND_URL="http://localhost:{{ ports.frontend }}"
+BACKEND_URL="http://localhost:{{ ports.backend }}"
+ERRORS=0
+
+check_endpoint() {
+    local name="$1"
+    local url="$2"
+    local expected_status="${3:-200}"
+
+    response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$url" 2>/dev/null || echo "000")
+    if [ "$response" = "$expected_status" ]; then
+        echo "  [OK]   $name ($url) -> $response"
+    else
+        echo "  [FAIL] $name ($url) -> $response (expected $expected_status)"
+        ERRORS=$((ERRORS + 1))
+    fi
+}
+
+echo ""
+echo "--- Backend API ---"
+check_endpoint "Health"    "$BACKEND_URL/api/v1/health"
+check_endpoint "Readiness" "$BACKEND_URL/api/v1/ready"
+check_endpoint "Docs"      "$BACKEND_URL/docs"
+
+echo ""
+echo "--- Frontend ---"
+check_endpoint "Home Page" "$FRONTEND_URL/"
+{% if auth_required %}
+
+echo ""
+echo "--- KeyCloak ---"
+check_endpoint "KeyCloak" "http://localhost:{{ ports.keycloak }}/health/ready"
+{% endif %}
+
+echo ""
+if [ $ERRORS -gt 0 ]; then
+    echo "=== Validation FAILED: $ERRORS endpoint(s) unreachable ==="
+    exit 1
+else
+    echo "=== Validation PASSED: All endpoints reachable ==="
+fi

@@ -1,0 +1,74 @@
+export interface ApiResponse<T> {
+  data: T;
+  message?: string;
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface ApiError {
+  detail: string;
+  status_code: number;
+}
+
+export interface HealthResponse {
+  status: string;
+}
+
+export interface ReadyResponse {
+  status: string;
+  database: string;
+}
+{% if auth_required %}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  roles: string[];
+}
+{% endif %}
+{% for collection in db_collections %}
+
+export interface {{ collection.name | replace('_', ' ') | title | replace(' ', '') }} {
+  id: string;
+{% for field in collection.fields %}
+  {{ field.name }}: {{ field.ts_type | default('string') }};
+{% endfor %}
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Create{{ collection.name | replace('_', ' ') | title | replace(' ', '') }}DTO {
+{% for field in collection.fields %}
+{% if not field.readonly | default(false) %}
+  {{ field.name }}{% if field.optional | default(false) %}?{% endif %}: {{ field.ts_type | default('string') }};
+{% endif %}
+{% endfor %}
+}
+
+export interface Update{{ collection.name | replace('_', ' ') | title | replace(' ', '') }}DTO {
+{% for field in collection.fields %}
+{% if not field.readonly | default(false) %}
+  {{ field.name }}?: {{ field.ts_type | default('string') }};
+{% endif %}
+{% endfor %}
+}
+{% endfor %}

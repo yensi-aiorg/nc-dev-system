@@ -1,0 +1,176 @@
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: {{ project_name }}-frontend-dev
+    ports:
+      - "{{ ports.frontend }}:{{ ports.frontend }}"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:{{ ports.backend }}/api/v1
+      - VITE_PORT={{ ports.frontend }}
+{% if auth_required %}
+      - VITE_KEYCLOAK_URL=http://localhost:{{ ports.keycloak }}
+      - VITE_KEYCLOAK_REALM={{ project_name }}
+      - VITE_KEYCLOAK_CLIENT_ID={{ project_name }}-frontend
+{% endif %}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - {{ project_name }}-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:{{ ports.frontend }}/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: {{ project_name }}-backend-dev
+    ports:
+      - "{{ ports.backend }}:{{ ports.backend }}"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017
+      - DATABASE_NAME={{ project_name | replace('-', '_') }}_db
+      - REDIS_URL=redis://redis:6379/0
+      - PORT={{ ports.backend }}
+      - DEBUG=true
+      - LOG_LEVEL=debug
+      - CORS_ORIGINS=http://localhost:{{ ports.frontend }}
+{% if auth_required %}
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM={{ project_name }}
+      - KEYCLOAK_CLIENT_ID={{ project_name }}-api
+{% endif %}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+{% if auth_required %}
+      keycloak:
+        condition: service_healthy
+{% endif %}
+    networks:
+      - {{ project_name }}-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:{{ ports.backend }}/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  mongodb:
+    image: mongo:7
+    container_name: {{ project_name }}-mongodb-dev
+    ports:
+      - "{{ ports.mongodb }}:27017"
+    volumes:
+      - mongodb_dev_data:/data/db
+    networks:
+      - {{ project_name }}-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: ["mongod", "--bind_ip_all"]
+
+  redis:
+    image: redis:7-alpine
+    container_name: {{ project_name }}-redis-dev
+    ports:
+      - "{{ ports.redis }}:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - {{ project_name }}-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+{% if auth_required %}
+
+  keycloak:
+    build:
+      context: ./keycloak
+      dockerfile: Dockerfile
+    container_name: {{ project_name }}-keycloak-dev
+    ports:
+      - "{{ ports.keycloak }}:8080"
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://keycloak-postgres:5432/keycloak
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=${KEYCLOAK_DB_PASSWORD:-keycloak}
+      - KC_HOSTNAME_STRICT=false
+      - KC_HTTP_ENABLED=true
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    networks:
+      - {{ project_name }}-network
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /health/ready HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n' >&3; cat <&3 | grep -q '200 OK'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  keycloak-postgres:
+    image: postgres:16-alpine
+    container_name: {{ project_name }}-keycloak-postgres-dev
+    ports:
+      - "{{ ports.keycloak_postgres }}:5432"
+    environment:
+      - POSTGRES_DB=keycloak
+      - POSTGRES_USER=keycloak
+      - POSTGRES_PASSWORD=${KEYCLOAK_DB_PASSWORD:-keycloak}
+    volumes:
+      - keycloak_postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - {{ project_name }}-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+{% endif %}
+
+volumes:
+  mongodb_dev_data:
+    name: {{ project_name }}-mongodb-dev-data
+  redis_dev_data:
+    name: {{ project_name }}-redis-dev-data
+{% if auth_required %}
+  keycloak_postgres_dev_data:
+    name: {{ project_name }}-keycloak-postgres-dev-data
+{% endif %}
+
+networks:
+  {{ project_name }}-network:
+    name: {{ project_name }}-network
+    driver: bridge

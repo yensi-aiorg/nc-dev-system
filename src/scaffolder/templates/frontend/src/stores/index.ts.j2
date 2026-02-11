@@ -1,0 +1,8 @@
+{% if auth_required %}
+export { useAuthStore } from './useAuthStore';
+{% endif %}
+{% for collection in db_collections %}
+export { use{{ collection.name | replace('_', ' ') | title | replace(' ', '') }}Store } from './use{{ collection.name | replace('_', ' ') | title | replace(' ', '') }}Store';
+{% endfor %}
+
+export { useAppStore } from './useAppStore';

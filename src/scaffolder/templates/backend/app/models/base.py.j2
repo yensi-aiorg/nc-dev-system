@@ -1,0 +1,56 @@
+"""Base MongoDB document model with common fields."""
+
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from bson import ObjectId
+from pydantic import BaseModel, Field
+
+
+class PyObjectId(str):
+    """Custom type for MongoDB ObjectId serialization."""
+
+    @classmethod
+    def __get_validators__(cls):  # type: ignore[no-untyped-def]
+        yield cls.validate
+
+    @classmethod
+    def validate(cls, v: Any) -> str:
+        if isinstance(v, ObjectId):
+            return str(v)
+        if isinstance(v, str) and ObjectId.is_valid(v):
+            return v
+        raise ValueError(f"Invalid ObjectId: {v}")
+
+
+def utc_now() -> datetime:
+    """Return the current UTC datetime."""
+    return datetime.now(timezone.utc)
+
+
+class BaseDocument(BaseModel):
+    """Base model for all MongoDB documents."""
+
+    id: Optional[str] = Field(default=None, alias="_id")
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str, datetime: lambda v: v.isoformat()},
+    }
+
+    def to_mongo(self) -> dict[str, Any]:
+        """Convert the document to a MongoDB-compatible dict."""
+        data = self.model_dump(by_alias=True, exclude_none=True)
+        if "_id" in data and data["_id"] is not None:
+            data["_id"] = ObjectId(data["_id"])
+        return data
+
+    @classmethod
+    def from_mongo(cls, data: dict[str, Any]) -> "BaseDocument":
+        """Create a document instance from a MongoDB dict."""
+        if "_id" in data:
+            data["_id"] = str(data["_id"])
+        return cls(**data)

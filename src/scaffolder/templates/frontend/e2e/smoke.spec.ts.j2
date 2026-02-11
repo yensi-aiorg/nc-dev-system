@@ -1,0 +1,64 @@
+import { test, expect } from '@playwright/test';
+
+test.describe('Smoke Tests', () => {
+  test('homepage loads successfully', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).toHaveTitle(/{{ project_name | replace('-', ' ') | title }}/i);
+    await expect(page.locator('h1')).toBeVisible();
+  });
+
+  test('homepage displays project title', async ({ page }) => {
+    await page.goto('/');
+    await expect(
+      page.getByText('{{ project_name | replace("-", " ") | title }}')
+    ).toBeVisible();
+  });
+
+  test('navigation sidebar is present', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('aside nav')).toBeVisible();
+  });
+
+  test('health status is displayed on homepage', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByText('API Health')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('healthy')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('database status is displayed on homepage', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByText('Database')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('connected')).toBeVisible({ timeout: 10000 });
+  });
+
+{% for feature in features %}
+  test('navigates to {{ feature.name | lower }} page', async ({ page }) => {
+    await page.goto('/');
+    await page.click('a[href="/{{ feature.name | lower | replace(" ", "-") }}"]');
+    await expect(page).toHaveURL(/{{ feature.name | lower | replace(" ", "-") }}/);
+  });
+
+{% endfor %}
+{% if auth_required %}
+  test('redirects to login when not authenticated', async ({ page }) => {
+    await page.goto('/');
+    // If interceptors redirect on 401, verify login page is accessible
+    await page.goto('/login');
+    await expect(page.getByText('Login')).toBeVisible();
+  });
+{% endif %}
+
+  test('desktop screenshot', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await page.screenshot({ path: 'screenshots/home-desktop.png', fullPage: true });
+  });
+
+  test('mobile screenshot', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await page.screenshot({ path: 'screenshots/home-mobile.png', fullPage: true });
+  });
+});

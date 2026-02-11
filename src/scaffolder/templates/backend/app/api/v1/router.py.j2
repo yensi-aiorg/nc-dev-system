@@ -1,0 +1,19 @@
+"""API v1 router aggregation."""
+
+from fastapi import APIRouter
+
+from app.api.v1.endpoints.health import router as health_router
+{% for feature in features %}
+from app.api.v1.endpoints.{{ feature.name_slug }} import router as {{ feature.name_slug }}_router
+{% endfor %}
+
+api_router = APIRouter()
+
+api_router.include_router(health_router, tags=["health"])
+{% for feature in features %}
+api_router.include_router(
+    {{ feature.name_slug }}_router,
+    prefix="/{{ feature.entity_plural }}",
+    tags=["{{ feature.entity_plural }}"],
+)
+{% endfor %}

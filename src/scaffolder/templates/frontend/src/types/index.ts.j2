@@ -1,0 +1,37 @@
+/**
+ * Global type definitions for {{ project_name }}.
+ */
+
+export type Nullable<T> = T | null;
+
+export type Optional<T> = T | undefined;
+
+export interface SelectOption {
+  label: string;
+  value: string;
+}
+
+export interface SortConfig {
+  field: string;
+  direction: 'asc' | 'desc';
+}
+
+export interface FilterConfig {
+  field: string;
+  operator: 'eq' | 'ne' | 'gt' | 'lt' | 'gte' | 'lte' | 'contains' | 'in';
+  value: string | number | boolean | string[];
+}
+
+export interface PaginationParams {
+  page: number;
+  pageSize: number;
+}
+
+export interface TableColumn<T> {
+  key: keyof T | string;
+  label: string;
+  sortable?: boolean;
+  render?: (value: unknown, row: T) => React.ReactNode;
+}
+
+export type AsyncStatus = 'idle' | 'loading' | 'success' | 'error';

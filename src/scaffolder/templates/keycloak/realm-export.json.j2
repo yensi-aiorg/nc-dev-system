@@ -1,0 +1,83 @@
+{
+  "realm": "{{ project_name | replace('-', '_') }}",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "clients": [
+    {
+      "clientId": "{{ project_name | replace('-', '_') }}-frontend",
+      "name": "{{ project_name | replace('-', ' ') | title }} Frontend",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://localhost:{{ ports.frontend }}/*"
+      ],
+      "webOrigins": [
+        "http://localhost:{{ ports.frontend }}"
+      ],
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "{{ project_name | replace('-', '_') }}-api",
+      "name": "{{ project_name | replace('-', ' ') | title }} Backend API",
+      "enabled": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Regular user"
+      },
+      {
+        "name": "admin",
+        "description": "Administrator"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@{{ project_name | replace('-', '_') }}.local",
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["user", "admin"]
+    },
+    {
+      "username": "testuser",
+      "enabled": true,
+      "email": "testuser@{{ project_name | replace('-', '_') }}.local",
+      "firstName": "Test",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "testuser",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["user"]
+    }
+  ]
+}

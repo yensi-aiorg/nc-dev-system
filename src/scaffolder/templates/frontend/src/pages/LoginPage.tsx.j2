@@ -1,0 +1,97 @@
+{% if auth_required %}
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Button, Input, Card, ErrorMessage } from '@/components/ui';
+import { useAuthStore } from '@/stores';
+
+function LoginPage() {
+  const navigate = useNavigate();
+  const { login, isLoading, error, clearError } = useAuthStore();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    clearError();
+    try {
+      await login({ username, password });
+      navigate('/');
+    } catch {
+      // Error is set in the store
+    }
+  }
+
+  return React.createElement(
+    'div',
+    { className: 'flex min-h-screen items-center justify-center bg-gray-50 px-4' },
+    React.createElement(
+      'div',
+      { className: 'w-full max-w-md' },
+      React.createElement(
+        'div',
+        { className: 'mb-8 text-center' },
+        React.createElement(
+          'h1',
+          { className: 'text-3xl font-bold text-gray-900' },
+          '{{ project_name | replace("-", " ") | title }}'
+        ),
+        React.createElement(
+          'p',
+          { className: 'mt-2 text-gray-600' },
+          'Sign in to your account'
+        )
+      ),
+      React.createElement(
+        Card,
+        { padding: 'lg' },
+        error &&
+          React.createElement(ErrorMessage, {
+            message: error,
+            className: 'mb-4',
+          }),
+        React.createElement(
+          'form',
+          { onSubmit: handleSubmit, className: 'space-y-4' },
+          React.createElement(Input, {
+            label: 'Username',
+            type: 'text',
+            value: username,
+            onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+              setUsername(e.target.value),
+            required: true,
+            autoComplete: 'username',
+            placeholder: 'Enter your username',
+          }),
+          React.createElement(Input, {
+            label: 'Password',
+            type: 'password',
+            value: password,
+            onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+              setPassword(e.target.value),
+            required: true,
+            autoComplete: 'current-password',
+            placeholder: 'Enter your password',
+          }),
+          React.createElement(
+            Button,
+            {
+              type: 'submit',
+              isLoading,
+              className: 'w-full',
+            },
+            'Sign In'
+          )
+        )
+      )
+    )
+  );
+}
+
+export default LoginPage;
+{% else %}
+// Authentication is not enabled for this project.
+function LoginPage() {
+  return null;
+}
+export default LoginPage;
+{% endif %}

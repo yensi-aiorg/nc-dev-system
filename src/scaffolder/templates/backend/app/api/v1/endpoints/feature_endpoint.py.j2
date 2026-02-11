@@ -1,0 +1,107 @@
+"""{{ feature.name }} API endpoints."""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query
+
+from app.api.deps import DbDep
+{% if auth_required %}
+from app.api.deps import CurrentUserDep
+{% endif %}
+from app.core.exceptions import NotFoundException
+from app.schemas.{{ feature.name_slug }} import (
+    {{ feature.model_name }}Create,
+    {{ feature.model_name }}Response,
+    {{ feature.model_name }}Update,
+)
+from app.services.{{ feature.name_slug }}_service import {{ feature.model_name }}Service
+
+router = APIRouter()
+
+
+def get_service(db: DbDep) -> {{ feature.model_name }}Service:
+    """Dependency to get the {{ feature.name }} service."""
+    return {{ feature.model_name }}Service(db["{{ feature.entity_plural }}"])
+
+
+ServiceDep = Annotated[{{ feature.model_name }}Service, Depends(get_service)]
+
+
+@router.get("/", response_model=dict)
+async def list_{{ feature.entity_plural }}(
+    service: ServiceDep,
+{% if auth_required %}
+    current_user: CurrentUserDep,
+{% endif %}
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+) -> dict:
+    """List all {{ feature.entity_plural }} with pagination."""
+    items = await service.get_all(skip=skip, limit=limit)
+    total = await service.count()
+    page = skip // limit + 1 if limit > 0 else 1
+    total_pages = (total + limit - 1) // limit if limit > 0 else 0
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": limit,
+        "total_pages": total_pages,
+    }
+
+
+@router.get("/{item_id}", response_model={{ feature.model_name }}Response)
+async def get_{{ feature.name_slug }}(
+    item_id: str,
+    service: ServiceDep,
+{% if auth_required %}
+    current_user: CurrentUserDep,
+{% endif %}
+) -> dict:
+    """Get a single {{ feature.name_slug }} by ID."""
+    item = await service.get_by_id(item_id)
+    if item is None:
+        raise NotFoundException(f"{{ feature.model_name }} with id '{item_id}' not found")
+    return item
+
+
+@router.post("/", response_model={{ feature.model_name }}Response, status_code=201)
+async def create_{{ feature.name_slug }}(
+    data: {{ feature.model_name }}Create,
+    service: ServiceDep,
+{% if auth_required %}
+    current_user: CurrentUserDep,
+{% endif %}
+) -> dict:
+    """Create a new {{ feature.name_slug }}."""
+    return await service.create(data.model_dump())
+
+
+@router.patch("/{item_id}", response_model={{ feature.model_name }}Response)
+async def update_{{ feature.name_slug }}(
+    item_id: str,
+    data: {{ feature.model_name }}Update,
+    service: ServiceDep,
+{% if auth_required %}
+    current_user: CurrentUserDep,
+{% endif %}
+) -> dict:
+    """Update an existing {{ feature.name_slug }}."""
+    item = await service.update(item_id, data.model_dump(exclude_unset=True))
+    if item is None:
+        raise NotFoundException(f"{{ feature.model_name }} with id '{item_id}' not found")
+    return item
+
+
+@router.delete("/{item_id}", status_code=204)
+async def delete_{{ feature.name_slug }}(
+    item_id: str,
+    service: ServiceDep,
+{% if auth_required %}
+    current_user: CurrentUserDep,
+{% endif %}
+) -> None:
+    """Delete a {{ feature.name_slug }} by ID."""
+    deleted = await service.delete(item_id)
+    if not deleted:
+        raise NotFoundException(f"{{ feature.model_name }} with id '{item_id}' not found")

@@ -1,0 +1,108 @@
+.PHONY: dev test-all lint-all format-all clean build up down logs setup seed help
+
+PROJECT_NAME := {{ project_name }}
+COMPOSE_DEV := docker compose -f docker-compose.dev.yml -p $(PROJECT_NAME)-dev
+COMPOSE_PROD := docker compose -f docker-compose.yml -p $(PROJECT_NAME)
+COMPOSE_TEST := docker compose -f docker-compose.test.yml -p $(PROJECT_NAME)-test
+
+help: ## Show this help message
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+dev: ## Start development environment with hot reload
+	$(COMPOSE_DEV) up --build
+
+dev-detached: ## Start development environment in background
+	$(COMPOSE_DEV) up --build -d
+
+build: ## Build production images
+	$(COMPOSE_PROD) build
+
+up: ## Start production environment
+	$(COMPOSE_PROD) up -d
+
+down: ## Stop all environments
+	$(COMPOSE_DEV) down 2>/dev/null || true
+	$(COMPOSE_PROD) down 2>/dev/null || true
+	$(COMPOSE_TEST) down 2>/dev/null || true
+
+logs: ## Follow logs from all services
+	$(COMPOSE_DEV) logs -f
+
+logs-backend: ## Follow backend logs
+	$(COMPOSE_DEV) logs -f backend
+
+logs-frontend: ## Follow frontend logs
+	$(COMPOSE_DEV) logs -f frontend
+
+test-all: ## Run all tests (unit + integration + e2e)
+	@echo "=== Running Backend Tests ==="
+	$(COMPOSE_TEST) up -d mongodb-test redis-test
+	$(COMPOSE_TEST) run --rm backend-test python -m pytest tests/ -v --cov=app --cov-report=term-missing
+	@echo ""
+	@echo "=== Running Frontend Unit Tests ==="
+	$(COMPOSE_TEST) run --rm frontend-test npm run test:ci
+	@echo ""
+	@echo "=== Running E2E Tests ==="
+	$(COMPOSE_TEST) up -d frontend-test backend-test
+	$(COMPOSE_TEST) run --rm playwright
+	$(COMPOSE_TEST) down
+
+test-backend: ## Run backend tests only
+	$(COMPOSE_TEST) up -d mongodb-test redis-test
+	$(COMPOSE_TEST) run --rm backend-test python -m pytest tests/ -v --cov=app --cov-report=term-missing
+	$(COMPOSE_TEST) down
+
+test-frontend: ## Run frontend unit tests only
+	$(COMPOSE_TEST) run --rm frontend-test npm run test:ci
+	$(COMPOSE_TEST) down
+
+test-e2e: ## Run Playwright E2E tests
+	$(COMPOSE_TEST) up -d frontend-test backend-test
+	sleep 5
+	$(COMPOSE_TEST) run --rm playwright
+	$(COMPOSE_TEST) down
+
+lint-all: ## Lint all code
+	@echo "=== Linting Backend ==="
+	cd backend && python -m ruff check app/ tests/
+	cd backend && python -m mypy app/
+	@echo ""
+	@echo "=== Linting Frontend ==="
+	cd frontend && npm run lint
+
+format-all: ## Format all code
+	@echo "=== Formatting Backend ==="
+	cd backend && python -m ruff format app/ tests/
+	cd backend && python -m ruff check --fix app/ tests/
+	@echo ""
+	@echo "=== Formatting Frontend ==="
+	cd frontend && npm run format
+
+clean: ## Remove all containers, volumes, and build artifacts
+	$(COMPOSE_DEV) down -v --remove-orphans 2>/dev/null || true
+	$(COMPOSE_PROD) down -v --remove-orphans 2>/dev/null || true
+	$(COMPOSE_TEST) down -v --remove-orphans 2>/dev/null || true
+	docker image prune -f --filter "label=project=$(PROJECT_NAME)" 2>/dev/null || true
+	rm -rf frontend/node_modules frontend/dist
+	rm -rf backend/__pycache__ backend/.pytest_cache
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
+
+setup: ## Initial project setup
+	@echo "Setting up $(PROJECT_NAME)..."
+	cp -n .env.example .env 2>/dev/null || true
+	cp -n .env.development .env.dev 2>/dev/null || true
+	$(COMPOSE_DEV) build
+	@echo "Setup complete. Run 'make dev' to start development."
+
+seed: ## Seed database with initial data
+	bash scripts/seed-data.sh
+
+shell-backend: ## Open a shell in the backend container
+	$(COMPOSE_DEV) exec backend /bin/bash
+
+shell-frontend: ## Open a shell in the frontend container
+	$(COMPOSE_DEV) exec frontend /bin/sh
+
+db-shell: ## Open MongoDB shell
+	$(COMPOSE_DEV) exec mongodb mongosh {{ project_name | replace('-', '_') }}_db

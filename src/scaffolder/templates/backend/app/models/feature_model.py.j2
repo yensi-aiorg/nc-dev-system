@@ -1,0 +1,22 @@
+"""{{ feature.model_name }} document model."""
+
+from typing import Optional
+
+from pydantic import Field
+
+from app.models.base import BaseDocument
+
+
+class {{ feature.model_name }}Document(BaseDocument):
+    """MongoDB document for {{ feature.entity_plural }} collection."""
+{% for field in feature.fields %}
+{% if field.required %}
+    {{ field.name }}: {{ field.python_type }} = Field(..., description="{{ field.description }}")
+{% else %}
+    {{ field.name }}: Optional[{{ field.python_type }}] = Field(default={{ field.default_value }}, description="{{ field.description }}")
+{% endif %}
+{% endfor %}
+{% if not feature.fields %}
+    name: str = Field(..., description="Name of the {{ feature.name_slug }}")
+    description: Optional[str] = Field(default=None, description="Description")
+{% endif %}
