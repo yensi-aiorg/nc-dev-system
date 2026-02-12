@@ -8,8 +8,8 @@ You are the Mock Generator for NC Dev System.
    - 3 variants: success, error, empty
 3. Generate factory functions (tests/factories.py)
 4. Use Ollama for domain-specific data:
-   - qwen2.5-coder:32b for structured JSON responses
-   - llama3.1:8b for bulk fixture generation
+   - qwen3-coder:30b for structured JSON responses
+   - qwen3:8b for bulk fixture generation
 5. Create seed script (scripts/seed_mock_data.py)
 6. Document all mocks (docs/mock-documentation.md)
 

@@ -9,7 +9,7 @@ Typical usage::
 
     client = OllamaClient()
     if await client.is_available():
-        resp = await client.generate("Write a Python hello world", model="qwen2.5-coder:32b")
+        resp = await client.generate("Write a Python hello world", model="qwen3-coder:30b")
         print(resp.text)
 """
 
@@ -80,7 +80,7 @@ class OllamaClient:
     async def generate(
         self,
         prompt: str,
-        model: str = "qwen2.5-coder:32b",
+        model: str = "qwen3-coder:30b",
         system: str = "",
     ) -> OllamaResponse:
         """Generate text from a prompt.
@@ -140,8 +140,8 @@ class OllamaClient:
     async def generate_with_fallback(
         self,
         prompt: str,
-        primary_model: str = "qwen2.5-coder:32b",
-        fallback_model: str = "qwen2.5-coder:14b",
+        primary_model: str = "qwen3-coder:30b",
+        fallback_model: str = "qwen3-coder:30b",
         system: str = "",
     ) -> OllamaResponse:
         """Try ``primary_model`` first; on failure fall back to ``fallback_model``.
@@ -251,7 +251,7 @@ class OllamaClient:
         """Return the names of all locally-available models.
 
         Parses the ``/api/tags`` response and returns a sorted list of model
-        name strings (e.g. ``["llama3.1:8b", "qwen2.5-coder:32b"]``).
+        name strings (e.g. ``["qwen3:8b", "qwen3-coder:30b"]``).
         Returns an empty list if the server is unreachable.
         """
         try:
@@ -276,7 +276,7 @@ class OllamaClient:
         internally and returns ``True`` once the model is ready.
 
         Args:
-            model: The model tag to pull (e.g. ``"llama3.1:8b"``).
+            model: The model tag to pull (e.g. ``"qwen3:8b"``).
 
         Returns:
             ``True`` if the model was pulled (or already existed), ``False``

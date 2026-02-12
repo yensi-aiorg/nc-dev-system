@@ -328,7 +328,7 @@ async def generate_domain_data(
     count: int,
     schema: dict,
     domain_context: str,
-    model: str = "qwen2.5-coder:14b"  # Smaller model for speed
+    model: str = "qwen3-coder:30b"  # Smaller model for speed
 ) -> list[dict]:
     """Generate realistic domain-specific test data using Ollama."""
 
@@ -417,7 +417,7 @@ async def seed():
                 "status": "completed/pending/failed"
             },
             domain_context="Personal finance tracking application",
-            model="llama3.1:8b"  # Fast model for bulk generation
+            model="qwen3:8b"  # Fast model for bulk generation
         )
         await db.transactions.insert_many(transactions)
 

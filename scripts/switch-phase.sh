@@ -5,34 +5,33 @@
 
 case "$1" in
   "build")
-    echo "Switching to BUILD phase — loading Qwen 2.5 Coder 32B (~20GB)"
+    echo "Switching to BUILD phase — loading Qwen3 Coder 30B (~19GB)"
     ollama stop qwen2.5vl:7b 2>/dev/null
-    ollama stop llama3.1:8b 2>/dev/null
-    curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5-coder:32b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
+    ollama stop qwen3:8b 2>/dev/null
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-coder:30b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
     echo "Ready for build phase"
     ;;
   "test")
-    echo "Switching to TEST phase — loading Qwen2.5-VL 7B + Qwen 2.5 Coder 14B (~14GB)"
-    ollama stop qwen2.5-coder:32b 2>/dev/null
+    echo "Switching to TEST phase — loading Qwen2.5-VL 7B + Qwen3 Coder 30B (~24GB)"
+    ollama stop qwen3:8b 2>/dev/null
     curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5vl:7b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
-    curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5-coder:14b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-coder:30b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
     echo "Ready for test phase"
     ;;
   "data")
-    echo "Switching to DATA phase — loading Llama 3.1 8B + Qwen 2.5 Coder 14B (~14GB)"
-    ollama stop qwen2.5-coder:32b 2>/dev/null
+    echo "Switching to DATA phase — loading Qwen3 8B + Qwen3 Coder 30B (~24GB)"
     ollama stop qwen2.5vl:7b 2>/dev/null
-    curl -s http://localhost:11434/api/generate -d '{"model":"llama3.1:8b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
-    curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5-coder:14b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3:8b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-coder:30b","keep_alive":"30m","prompt":"warmup"}' > /dev/null
     echo "Ready for data phase"
     ;;
   *)
     echo "Usage: ./switch-phase.sh [build|test|data]"
     echo ""
     echo "Phases:"
-    echo "  build  — Qwen 2.5 Coder 32B for code review/mock gen (~20GB VRAM)"
-    echo "  test   — Qwen2.5-VL 7B (vision) + Qwen 14B (mocks) (~14GB VRAM)"
-    echo "  data   — Llama 3.1 8B (fixtures) + Qwen 14B (mocks) (~14GB VRAM)"
+    echo "  build  — Qwen3 Coder 30B for code review/mock gen (~19GB VRAM)"
+    echo "  test   — Qwen2.5-VL 7B (vision) + Qwen3 Coder 30B (~24GB VRAM)"
+    echo "  data   — Qwen3 8B (fixtures) + Qwen3 Coder 30B (~24GB VRAM)"
     exit 1
     ;;
 esac

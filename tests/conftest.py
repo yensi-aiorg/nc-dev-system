@@ -139,7 +139,7 @@ def mock_ollama():
     mock_response_generate = MagicMock()
     mock_response_generate.status_code = 200
     mock_response_generate.json.return_value = _make_ollama_generate_response(
-        "qwen2.5-coder:32b", "test prompt"
+        "qwen3-coder:30b", "test prompt"
     )
     mock_response_generate.raise_for_status = MagicMock()
 
@@ -1103,10 +1103,10 @@ def sample_config_dict() -> dict[str, Any]:
         },
         "ollama": {
             "url": "http://localhost:11434",
-            "code_model": "qwen2.5-coder:32b",
-            "code_model_fallback": "qwen2.5-coder:14b",
+            "code_model": "qwen3-coder:30b",
+            "code_model_fallback": "qwen3-coder:30b",
             "vision_model": "qwen2.5vl:7b",
-            "bulk_model": "llama3.1:8b",
+            "bulk_model": "qwen3:8b",
             "timeout": 120,
         },
         "build": {

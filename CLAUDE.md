@@ -68,8 +68,8 @@ Requirements:
 ## Local Model Usage
 
 For mock data and test fixtures, use Ollama (localhost:11434):
-- Mock API responses: qwen2.5-coder:32b or qwen2.5-coder:14b
-- Bulk test data: llama3.1:8b
+- Mock API responses: qwen3-coder:30b
+- Bulk test data: qwen3:8b
 - Screenshot analysis: qwen2.5vl:7b (pre-screen before Claude Vision)
 
 Always try local models first, fall back to cloud only when local fails.

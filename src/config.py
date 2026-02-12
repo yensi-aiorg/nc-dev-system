@@ -49,10 +49,10 @@ class OllamaConfig(BaseModel):
     """Configuration for the local Ollama server."""
 
     url: str = Field(default="http://localhost:11434")
-    code_model: str = Field(default="qwen2.5-coder:32b")
-    code_model_fallback: str = Field(default="qwen2.5-coder:14b")
+    code_model: str = Field(default="qwen3-coder:30b")
+    code_model_fallback: str = Field(default="qwen3-coder:30b")
     vision_model: str = Field(default="qwen2.5vl:7b")
-    bulk_model: str = Field(default="llama3.1:8b")
+    bulk_model: str = Field(default="qwen3:8b")
     timeout: int = Field(default=120, ge=10, description="Per-request timeout in seconds")
 
 

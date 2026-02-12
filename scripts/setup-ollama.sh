@@ -16,21 +16,17 @@ fi
 echo "Pulling required models..."
 echo ""
 
-# Primary coding model (20GB)
-echo "[1/4] Qwen 2.5 Coder 32B — Primary coding model (mock generation, code review)"
-ollama pull qwen2.5-coder:32b
-
-# Fast coding model (9GB)
-echo "[2/4] Qwen 2.5 Coder 14B — Fast coding model (lighter tasks, parallel work)"
-ollama pull qwen2.5-coder:14b
+# Primary coding model (~19GB)
+echo "[1/3] Qwen3 Coder 30B — Primary coding model (mock generation, code review)"
+ollama pull qwen3-coder:30b
 
 # Vision model (5GB)
-echo "[3/4] Qwen2.5-VL 7B — Vision / screenshot analysis (pre-screening)"
+echo "[2/3] Qwen2.5-VL 7B — Vision / screenshot analysis (pre-screening)"
 ollama pull qwen2.5vl:7b
 
-# Fast fixture model (5GB)
-echo "[4/4] Llama 3.1 8B — High-volume test data generation"
-ollama pull llama3.1:8b
+# Fast fixture model (~5GB)
+echo "[3/3] Qwen3 8B — High-volume test data generation"
+ollama pull qwen3:8b
 
 echo ""
 echo "=== All models downloaded ==="
@@ -40,6 +36,6 @@ ollama list
 
 echo ""
 echo "VRAM configurations available:"
-echo "  Build phase:  Qwen 2.5 Coder 32B (~20GB)"
-echo "  Test phase:   Qwen2.5-VL 7B + Qwen 2.5 Coder 14B (~14GB)"
-echo "  Data phase:   Llama 3.1 8B + Qwen 2.5 Coder 14B (~14GB)"
+echo "  Build phase:  Qwen3 Coder 30B (~19GB)"
+echo "  Test phase:   Qwen2.5-VL 7B + Qwen3 Coder 30B (~24GB)"
+echo "  Data phase:   Qwen3 8B + Qwen3 Coder 30B (~24GB)"

@@ -13,12 +13,12 @@
 
 ```bash
 # Primary coding model — best open-source coder, GPT-4o competitive
-ollama pull qwen2.5-coder:32b
+ollama pull qwen3-coder:30b
 # Size: ~20GB VRAM (Q4_K_M quantization)
 # Use: Mock API generation, structured data, code review pre-screening
 
 # Fast coding model — for parallel work alongside vision
-ollama pull qwen2.5-coder:14b
+ollama pull qwen3-coder:30b
 # Size: ~9GB VRAM
 # Use: Lighter coding tasks, mock generation when 32B is unavailable
 
@@ -28,7 +28,7 @@ ollama pull qwen2.5vl:7b
 # Use: Pre-screen Playwright screenshots before escalating to Claude Vision
 
 # Fast fixture generator — high-volume test data
-ollama pull llama3.1:8b
+ollama pull qwen3:8b
 # Size: ~5GB VRAM
 # Use: Generate thousands of realistic test records quickly
 
@@ -85,11 +85,11 @@ echo "Pulling required models..."
 
 # Primary coding model (20GB)
 echo "[1/4] Qwen 2.5 Coder 32B — Primary coding model"
-ollama pull qwen2.5-coder:32b
+ollama pull qwen3-coder:30b
 
 # Fast coding model (9GB)
 echo "[2/4] Qwen 2.5 Coder 14B — Fast coding model"
-ollama pull qwen2.5-coder:14b
+ollama pull qwen3-coder:30b
 
 # Vision model (5GB)
 echo "[3/4] Qwen2.5-VL 7B — Vision / screenshot analysis"
@@ -97,7 +97,7 @@ ollama pull qwen2.5vl:7b
 
 # Fast fixture model (5GB)
 echo "[4/4] Llama 3.1 8B — High-volume test data generation"
-ollama pull llama3.1:8b
+ollama pull qwen3:8b
 
 echo ""
 echo "=== All models downloaded ==="
@@ -133,7 +133,7 @@ Claude Code agents call Ollama via Bash tool:
 # Generate mock data
 curl -s http://localhost:11434/api/generate \
   -d '{
-    "model": "qwen2.5-coder:32b",
+    "model": "qwen3-coder:30b",
     "prompt": "Generate a JSON array of 20 realistic user objects with fields: id, name, email, avatar_url, created_at, role. Use realistic data.",
     "stream": false,
     "format": "json"
@@ -156,7 +156,7 @@ import ollama
 
 # Generate mock API response
 response = ollama.generate(
-    model='qwen2.5-coder:32b',
+    model='qwen3-coder:30b',
     prompt='''Generate a realistic mock API response for a GET /api/users endpoint.
     Return JSON with: users array (10 items), pagination metadata.
     Each user has: id, name, email, avatar, role, created_at, last_login.''',
@@ -201,7 +201,7 @@ export OLLAMA_KEEP_ALIVE=30m
 
 # Or per-request:
 curl http://localhost:11434/api/generate -d '{
-  "model": "qwen2.5-coder:32b",
+  "model": "qwen3-coder:30b",
   "keep_alive": "30m",
   "prompt": "..."
 }'
@@ -238,7 +238,7 @@ If Ollama is unavailable or a local model fails:
 4. **No data loss**: All prompts are logged, can be replayed when Ollama recovers
 
 ```python
-async def generate_with_fallback(prompt: str, local_model: str = "qwen2.5-coder:32b"):
+async def generate_with_fallback(prompt: str, local_model: str = "qwen3-coder:30b"):
     try:
         # Try local first
         response = ollama.generate(model=local_model, prompt=prompt)

@@ -273,8 +273,8 @@ all external API dependencies identified in the requirements.
 
 ## Mock Generation Strategy
 - Use Ollama API (localhost:11434) for bulk data generation
-- Primary model: qwen2.5-coder:32b for structured mock responses
-- Fast model: llama3.1:8b for high-volume fixture generation
+- Primary model: qwen3-coder:30b for structured mock responses
+- Fast model: qwen3:8b for high-volume fixture generation
 - Generate 20+ records per entity type
 - Include realistic: names, emails, addresses, dates, amounts
 - Mock every external API endpoint with at least 3 response variants:
@@ -292,7 +292,7 @@ all external API dependencies identified in the requirements.
 ```python
 import httpx
 
-async def generate_mock_data(prompt: str, model: str = "qwen2.5-coder:32b"):
+async def generate_mock_data(prompt: str, model: str = "qwen3-coder:30b"):
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "http://localhost:11434/api/generate",
@@ -383,19 +383,19 @@ Script to pre-load models for a phase:
 case "$1" in
   "build")
     ollama stop qwen2.5vl:7b 2>/dev/null
-    ollama stop llama3.1:8b 2>/dev/null
-    curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5-coder:32b","keep_alive":"30m"}'
+    ollama stop qwen3:8b 2>/dev/null
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-coder:30b","keep_alive":"30m"}'
     ;;
   "test")
-    ollama stop qwen2.5-coder:32b 2>/dev/null
+    ollama stop qwen3-coder:30b 2>/dev/null
     curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5vl:7b","keep_alive":"30m"}'
-    curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5-coder:14b","keep_alive":"30m"}'
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-coder:30b","keep_alive":"30m"}'
     ;;
   "data")
-    ollama stop qwen2.5-coder:32b 2>/dev/null
+    ollama stop qwen3-coder:30b 2>/dev/null
     ollama stop qwen2.5vl:7b 2>/dev/null
-    curl -s http://localhost:11434/api/generate -d '{"model":"llama3.1:8b","keep_alive":"30m"}'
-    curl -s http://localhost:11434/api/generate -d '{"model":"qwen2.5-coder:14b","keep_alive":"30m"}'
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3:8b","keep_alive":"30m"}'
+    curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-coder:30b","keep_alive":"30m"}'
     ;;
 esac
 ```

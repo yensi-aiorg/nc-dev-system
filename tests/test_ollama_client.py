@@ -45,12 +45,12 @@ class TestOllamaResponse:
     def test_custom_values(self):
         resp = OllamaResponse(
             text="hello world",
-            model="llama3.1:8b",
+            model="qwen3:8b",
             duration_ms=123.4,
             success=True,
         )
         assert resp.text == "hello world"
-        assert resp.model == "llama3.1:8b"
+        assert resp.model == "qwen3:8b"
 
     @pytest.mark.unit
     def test_error_response(self):
@@ -121,7 +121,7 @@ class TestOllamaGenerate:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "response": "def hello(): pass",
-            "model": "qwen2.5-coder:32b",
+            "model": "qwen3-coder:30b",
             "total_duration": 2_000_000_000,
         }
         mock_response.raise_for_status = MagicMock()
@@ -137,7 +137,7 @@ class TestOllamaGenerate:
 
         assert result.success is True
         assert result.text == "def hello(): pass"
-        assert result.model == "qwen2.5-coder:32b"
+        assert result.model == "qwen3-coder:30b"
         assert result.duration_ms > 0
 
     @pytest.mark.unit
@@ -506,8 +506,8 @@ class TestOllamaListModels:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "models": [
-                {"name": "qwen2.5-coder:32b", "size": 123456},
-                {"name": "llama3.1:8b", "size": 78901},
+                {"name": "qwen3-coder:30b", "size": 123456},
+                {"name": "qwen3:8b", "size": 78901},
             ]
         }
         mock_response.raise_for_status = MagicMock()
@@ -522,8 +522,8 @@ class TestOllamaListModels:
             models = await client.list_models()
 
         assert len(models) == 2
-        assert "llama3.1:8b" in models
-        assert "qwen2.5-coder:32b" in models
+        assert "qwen3:8b" in models
+        assert "qwen3-coder:30b" in models
         assert models == sorted(models)  # Sorted
 
     @pytest.mark.unit
@@ -572,9 +572,9 @@ class TestOllamaHasModel:
         client = OllamaClient()
         with patch.object(
             client, "list_models",
-            new=AsyncMock(return_value=["llama3.1:8b", "qwen2.5-coder:32b"]),
+            new=AsyncMock(return_value=["qwen3:8b", "qwen3-coder:30b"]),
         ):
-            assert await client.has_model("llama3.1:8b") is True
+            assert await client.has_model("qwen3:8b") is True
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -582,9 +582,9 @@ class TestOllamaHasModel:
         client = OllamaClient()
         with patch.object(
             client, "list_models",
-            new=AsyncMock(return_value=["llama3.1:8b"]),
+            new=AsyncMock(return_value=["qwen3:8b"]),
         ):
-            assert await client.has_model("qwen2.5-coder:32b") is False
+            assert await client.has_model("qwen3-coder:30b") is False
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +608,7 @@ class TestOllamaPullModel:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             client = OllamaClient()
-            result = await client.pull_model("llama3.1:8b")
+            result = await client.pull_model("qwen3:8b")
 
         assert result is True
 
@@ -622,7 +622,7 @@ class TestOllamaPullModel:
 
         with patch("httpx.AsyncClient", return_value=mock_client):
             client = OllamaClient()
-            result = await client.pull_model("llama3.1:8b")
+            result = await client.pull_model("qwen3:8b")
 
         assert result is False
 
@@ -638,7 +638,7 @@ class TestOllamaEnsureModel:
     async def test_already_available(self):
         client = OllamaClient()
         with patch.object(client, "has_model", new=AsyncMock(return_value=True)):
-            result = await client.ensure_model("llama3.1:8b")
+            result = await client.ensure_model("qwen3:8b")
         assert result is True
 
     @pytest.mark.unit
@@ -647,7 +647,7 @@ class TestOllamaEnsureModel:
         client = OllamaClient()
         with patch.object(client, "has_model", new=AsyncMock(return_value=False)):
             with patch.object(client, "pull_model", new=AsyncMock(return_value=True)):
-                result = await client.ensure_model("llama3.1:8b")
+                result = await client.ensure_model("qwen3:8b")
         assert result is True
 
     @pytest.mark.unit
@@ -656,5 +656,5 @@ class TestOllamaEnsureModel:
         client = OllamaClient()
         with patch.object(client, "has_model", new=AsyncMock(return_value=False)):
             with patch.object(client, "pull_model", new=AsyncMock(return_value=False)):
-                result = await client.ensure_model("llama3.1:8b")
+                result = await client.ensure_model("qwen3:8b")
         assert result is False

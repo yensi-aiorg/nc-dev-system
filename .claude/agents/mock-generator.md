@@ -21,8 +21,8 @@ all external API dependencies identified in the requirements.
 
 ## Mock Generation Strategy
 - Use Ollama API (localhost:11434) for bulk data generation
-- Primary model: qwen2.5-coder:32b for structured mock responses
-- Fast model: llama3.1:8b for high-volume fixture generation
+- Primary model: qwen3-coder:30b for structured mock responses
+- Fast model: qwen3:8b for high-volume fixture generation
 - Generate 20+ records per entity type
 - Include realistic: names, emails, addresses, dates, amounts
 - Mock every external API endpoint with at least 3 response variants:
@@ -40,7 +40,7 @@ all external API dependencies identified in the requirements.
 ```bash
 curl -s http://localhost:11434/api/generate \
   -d '{
-    "model": "qwen2.5-coder:32b",
+    "model": "qwen3-coder:30b",
     "prompt": "Generate JSON mock data...",
     "stream": false,
     "format": "json"

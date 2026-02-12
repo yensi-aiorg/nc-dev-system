@@ -125,12 +125,12 @@ NC Dev System calls Ollama for:
 
 A. Mock data generation (Phase 2)
    POST http://localhost:11434/api/generate
-   Model: qwen2.5-coder:32b
+   Model: qwen3-coder:30b
    → Structured JSON mock responses
 
 B. Test fixture generation (Phase 2)
    POST http://localhost:11434/api/generate
-   Model: llama3.1:8b
+   Model: qwen3:8b
    → Bulk realistic test data
 
 C. Screenshot pre-screening (Phase 4)
@@ -141,7 +141,7 @@ C. Screenshot pre-screening (Phase 4)
 
 D. Code review pre-filter (Phase 3, optional)
    POST http://localhost:11434/api/generate
-   Model: qwen2.5-coder:32b
+   Model: qwen3-coder:30b
    → Quick code quality check before Claude review
 ```
 

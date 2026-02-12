@@ -93,10 +93,10 @@ class TestOllamaConfig:
     def test_defaults(self):
         ollama = OllamaConfig()
         assert ollama.url == "http://localhost:11434"
-        assert ollama.code_model == "qwen2.5-coder:32b"
-        assert ollama.code_model_fallback == "qwen2.5-coder:14b"
+        assert ollama.code_model == "qwen3-coder:30b"
+        assert ollama.code_model_fallback == "qwen3-coder:30b"
         assert ollama.vision_model == "qwen2.5vl:7b"
-        assert ollama.bulk_model == "llama3.1:8b"
+        assert ollama.bulk_model == "qwen3:8b"
         assert ollama.timeout == 120
 
     @pytest.mark.unit

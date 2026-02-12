@@ -551,7 +551,7 @@ class TestPipelinePreflight:
         with patch("src.pipeline.OllamaClient") as MockOllama:
             mock_ollama = MockOllama.return_value
             mock_ollama.is_available = AsyncMock(return_value=True)
-            mock_ollama.list_models = AsyncMock(return_value=["llama3.1:8b", "qwen2.5-coder:32b"])
+            mock_ollama.list_models = AsyncMock(return_value=["qwen3:8b", "qwen3-coder:30b"])
             pipeline = Pipeline(config)
 
         with patch("src.pipeline.check_ports_available", new=AsyncMock(return_value={})):

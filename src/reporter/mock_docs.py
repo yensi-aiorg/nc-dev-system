@@ -209,8 +209,8 @@ class MockDocGenerator:
         lines.append("")
         lines.append(
             "Mock data is generated using factory functions. When available, "
-            "Ollama local models (qwen2.5-coder:14b for API responses, "
-            "llama3.1:8b for bulk data) are used to generate realistic "
+            "Ollama local models (qwen3-coder:30b for API responses, "
+            "qwen3:8b for bulk data) are used to generate realistic "
             "domain-specific test data. The system falls back to "
             "deterministic factory functions when Ollama is not available."
         )
