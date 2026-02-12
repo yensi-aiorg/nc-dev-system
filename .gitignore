@@ -38,3 +38,10 @@ htmlcov/
 /tmp/
 *.tmp
 *.log
+nul
+
+# Temporary diagnostic reports
+config_issues_report.txt
+file_inventory.txt
+final_summary.txt
+validation_report.txt

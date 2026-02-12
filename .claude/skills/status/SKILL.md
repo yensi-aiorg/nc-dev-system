@@ -1,6 +1,7 @@
 ---
 name: status
 description: Check the current build progress
+user-invocable: true
 ---
 
 Check the NC Dev System build progress:
