@@ -133,8 +133,8 @@ by the Team Lead via the Bash tool. Each runs in an isolated git worktree.
 **Invocation pattern (from Team Lead):**
 
 ```bash
-# Team Lead spawns a Codex builder in a worktree
-OPENAI_API_KEY="${OPENAI_API_KEY}" codex exec --full-auto --json \
+# Team Lead spawns a Codex builder in a worktree (Codex CLI handles auth via `codex login`)
+codex exec --full-auto --json \
   --cd .worktrees/feature-name \
   "$(cat .nc-dev/prompts/builder-prompt.md)" \
   -o .nc-dev/codex-results/feature-name.json 2>&1 &

@@ -124,10 +124,7 @@ Ollama Local       → Test data, mock data, bulk generation, vision pre-screeni
 # Install
 npm i -g @openai/codex
 
-# Authenticate with API key
-printenv OPENAI_API_KEY | codex login --with-api-key
-
-# Or with ChatGPT subscription
+# Authenticate (CLI handles its own auth — no API keys needed)
 codex login
 
 # Verify
@@ -144,15 +141,15 @@ approval_policy = "never"
 Claude Code's Team Lead agent uses the Bash tool to spawn Codex:
 
 ```bash
-# Basic feature implementation
-CODEX_API_KEY="${OPENAI_API_KEY}" codex exec --full-auto --json \
+# Basic feature implementation (Codex CLI uses its own auth via `codex login`)
+codex exec --full-auto --json \
   --cd .worktrees/feature-auth \
   "Implement user authentication following the spec in .nc-dev/features/auth.json. \
    Write unit tests. Follow project conventions in CLAUDE.md." \
   -o .nc-dev/codex-results/feature-auth.txt
 
 # With structured output
-CODEX_API_KEY="${OPENAI_API_KEY}" codex exec --full-auto \
+codex exec --full-auto \
   --output-schema .nc-dev/schemas/build-result.json \
   --cd .worktrees/feature-dashboard \
   "Build the dashboard feature per spec" \

@@ -607,15 +607,7 @@ class Pipeline:
             pass
 
         # Fallback: attempt Codex CLI directly.
-        import os
-
-        codex_key = os.environ.get("OPENAI_API_KEY", "")
-        if not codex_key:
-            console.print(
-                f"    [yellow]No OPENAI_API_KEY -- skipping Codex build for {feature_name}[/yellow]"
-            )
-            return {"success": False, "feature": feature_name, "error": "No OPENAI_API_KEY"}
-
+        # Codex CLI handles its own authentication via `codex login`.
         for attempt in range(1, self.config.build.max_codex_attempts + 1):
             console.print(
                 f"    Codex attempt {attempt}/{self.config.build.max_codex_attempts} "
@@ -626,7 +618,7 @@ class Pipeline:
             ensure_dir(self.config.results_dir)
 
             codex_cmd = (
-                f'OPENAI_API_KEY="{codex_key}" codex exec --full-auto --json '
+                f'codex exec --full-auto --json '
                 f'--cd "{self.config.output_dir}" '
                 f'"$(cat {prompt_path})" '
                 f"-o {result_path}"

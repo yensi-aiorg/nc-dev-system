@@ -31,8 +31,9 @@ document and deliver a tested, production-ready codebase.
 - You MUST use local Ollama models for mock/test data generation.
 
 ## Codex Builder Invocation
+Codex CLI handles its own authentication via `codex login`. No API keys needed.
 ```bash
-OPENAI_API_KEY="${OPENAI_API_KEY}" codex exec --full-auto --json \
+codex exec --full-auto --json \
   --cd .worktrees/feature-name \
   "$(cat .nc-dev/prompts/build-feature-name.md)" \
   -o .nc-dev/codex-results/feature-name.json 2>&1 &

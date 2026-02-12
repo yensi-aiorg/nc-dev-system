@@ -13,9 +13,9 @@ Build the feature specified in $ARGUMENTS using Codex CLI:
 2. Create worktree: `git worktree add .worktrees/$FEATURE_NAME -b nc-dev/$FEATURE_NAME`
 3. Copy CLAUDE.md and project conventions into the worktree
 4. Generate the Codex prompt from feature spec + conventions
-5. Spawn Codex builder:
+5. Spawn Codex builder (Codex CLI handles auth via `codex login`):
    ```bash
-   OPENAI_API_KEY="${OPENAI_API_KEY}" codex exec --full-auto --json \
+   codex exec --full-auto --json \
      --cd .worktrees/$FEATURE_NAME \
      "$(cat .nc-dev/prompts/build-$FEATURE_NAME.md)" \
      -o .nc-dev/codex-results/$FEATURE_NAME.json &

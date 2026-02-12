@@ -7,7 +7,6 @@ and structured result reporting.
 
 import asyncio
 import json
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -192,25 +191,19 @@ class CodexRunner:
     def __init__(
         self,
         timeout_seconds: float = 600.0,
-        api_key: str | None = None,
         codex_binary: str = "codex",
     ):
         """Initialize the Codex runner.
 
         Args:
             timeout_seconds: Maximum time to wait for a Codex process (default: 600s).
-            api_key: OpenAI API key. If not provided, uses OPENAI_API_KEY env var.
             codex_binary: Path to the codex CLI binary (default: "codex").
+
+        Authentication is handled by the Codex CLI itself (via ``codex login``).
+        No API keys are needed here.
         """
         self.timeout_seconds = timeout_seconds
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.codex_binary = codex_binary
-
-        if not self.api_key:
-            console.print(
-                "[yellow]Warning: OPENAI_API_KEY not set. "
-                "Codex runner will fail without a valid API key.[/yellow]"
-            )
 
     async def run(
         self,
@@ -275,10 +268,6 @@ class CodexRunner:
             "-o", str(output_file),
         ]
 
-        # Set up environment with API key
-        env = os.environ.copy()
-        env["OPENAI_API_KEY"] = self.api_key
-
         start_time = time.monotonic()
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
@@ -288,7 +277,6 @@ class CodexRunner:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env,
             )
         except FileNotFoundError:
             raise CodexRunnerError(
@@ -463,15 +451,30 @@ class CodexRunner:
             )
             return False
 
-    async def validate_api_key(self) -> bool:
-        """Check if the OPENAI_API_KEY is set and non-empty.
+    async def check_authenticated(self) -> bool:
+        """Check if the Codex CLI is authenticated (via ``codex login``).
 
         Returns:
-            True if the API key is set.
+            True if ``codex login status`` exits successfully.
         """
-        if self.api_key:
-            masked = self.api_key[:8] + "..." + self.api_key[-4:]
-            console.print(f"[green]API key set:[/green] {masked}")
-            return True
-        console.print("[red]OPENAI_API_KEY is not set.[/red]")
-        return False
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.codex_binary, "login", "status",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, _ = await asyncio.wait_for(
+                process.communicate(), timeout=10.0
+            )
+            if process.returncode == 0:
+                console.print("[green]Codex CLI authenticated.[/green]")
+                return True
+            console.print(
+                "[red]Codex CLI not authenticated. Run: codex login[/red]"
+            )
+            return False
+        except (FileNotFoundError, asyncio.TimeoutError):
+            console.print(
+                "[red]Could not verify Codex authentication.[/red]"
+            )
+            return False

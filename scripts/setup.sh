@@ -72,35 +72,23 @@ if command -v npm &> /dev/null; then
     npx playwright install chromium 2>/dev/null || echo -e "${YELLOW}  Playwright browser install deferred (run 'npx playwright install' when needed)${NC}"
 fi
 
-# Check API keys
+# Check CLI authentication
+# All AI and GitHub access is through CLIs, not API keys.
 echo ""
-echo "--- Checking API keys ---"
+echo "--- Checking CLI authentication ---"
 echo ""
 
-if [ -n "$ANTHROPIC_API_KEY" ]; then
-    echo -e "${GREEN}✓${NC} ANTHROPIC_API_KEY is set"
-else
-    echo -e "${YELLOW}⚠${NC} ANTHROPIC_API_KEY not set (needed for Claude Code)"
+if command -v claude &> /dev/null; then
+    echo -e "${GREEN}✓${NC} Claude Code CLI found"
+    echo "  → Authenticate with: claude (OAuth flow)"
 fi
 
-if [ -n "$OPENAI_API_KEY" ]; then
-    echo -e "${GREEN}✓${NC} OPENAI_API_KEY is set"
-else
-    echo -e "${YELLOW}⚠${NC} OPENAI_API_KEY not set (needed for Codex builders)"
-fi
-
-if [ -n "$GITHUB_TOKEN" ]; then
-    echo -e "${GREEN}✓${NC} GITHUB_TOKEN is set"
-else
-    echo -e "${YELLOW}⚠${NC} GITHUB_TOKEN not set (needed for GitHub MCP server)"
-    echo "  → Run: gh auth login"
-fi
-
-# Check Codex auth
-echo ""
-echo "--- Checking Codex authentication ---"
 if command -v codex &> /dev/null; then
     codex login status 2>/dev/null && echo -e "${GREEN}✓${NC} Codex authenticated" || echo -e "${YELLOW}⚠${NC} Codex not authenticated. Run: codex login"
+fi
+
+if command -v gh &> /dev/null; then
+    gh auth status 2>/dev/null && echo -e "${GREEN}✓${NC} GitHub CLI authenticated" || echo -e "${YELLOW}⚠${NC} GitHub CLI not authenticated. Run: gh auth login"
 fi
 
 # Check Ollama

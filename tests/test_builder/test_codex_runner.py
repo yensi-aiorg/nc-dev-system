@@ -11,7 +11,7 @@ Tests cover:
 - CodexRunner timeout handling
 - CodexRunner binary not found / permission denied
 - CodexRunner.check_available
-- CodexRunner.validate_api_key
+- CodexRunner.check_authenticated
 """
 
 from __future__ import annotations
@@ -326,7 +326,7 @@ class TestCodexRunnerRun:
         mock_process.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            runner = CodexRunner(timeout_seconds=30, api_key="test-key")
+            runner = CodexRunner(timeout_seconds=30)
             result = await runner.run(
                 prompt_path=str(prompt_file),
                 worktree_path=str(worktree),
@@ -343,7 +343,7 @@ class TestCodexRunnerRun:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        runner = CodexRunner(api_key="test-key")
+        runner = CodexRunner()
         with pytest.raises(CodexRunnerError, match="Prompt file not found"):
             await runner.run(
                 prompt_path=str(tmp_path / "nonexistent.md"),
@@ -357,7 +357,7 @@ class TestCodexRunnerRun:
         prompt_file = tmp_path / "prompt.md"
         prompt_file.write_text("Build something")
 
-        runner = CodexRunner(api_key="test-key")
+        runner = CodexRunner()
         with pytest.raises(CodexRunnerError, match="Worktree path not found"):
             await runner.run(
                 prompt_path=str(prompt_file),
@@ -377,7 +377,7 @@ class TestCodexRunnerRun:
             "asyncio.create_subprocess_exec",
             side_effect=FileNotFoundError("codex not found"),
         ):
-            runner = CodexRunner(api_key="test-key", codex_binary="codex-nonexistent")
+            runner = CodexRunner(codex_binary="codex-nonexistent")
             with pytest.raises(CodexRunnerError, match="Codex binary not found"):
                 await runner.run(
                     prompt_path=str(prompt_file),
@@ -397,7 +397,7 @@ class TestCodexRunnerRun:
             "asyncio.create_subprocess_exec",
             side_effect=PermissionError("no perms"),
         ):
-            runner = CodexRunner(api_key="test-key")
+            runner = CodexRunner()
             with pytest.raises(CodexRunnerError, match="Permission denied"):
                 await runner.run(
                     prompt_path=str(prompt_file),
@@ -439,7 +439,7 @@ class TestCodexRunnerTimeout:
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
-                runner = CodexRunner(timeout_seconds=1, api_key="test-key")
+                runner = CodexRunner(timeout_seconds=1)
                 result = await runner.run(
                     prompt_path=str(prompt_file),
                     worktree_path=str(worktree),
@@ -479,7 +479,7 @@ class TestCodexRunnerParseStdout:
         mock_process.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            runner = CodexRunner(timeout_seconds=30, api_key="test-key")
+            runner = CodexRunner(timeout_seconds=30)
             result = await runner.run(
                 prompt_path=str(prompt_file),
                 worktree_path=str(worktree),
@@ -504,7 +504,7 @@ class TestCodexRunnerParseStdout:
         mock_process.returncode = 1
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            runner = CodexRunner(timeout_seconds=30, api_key="test-key")
+            runner = CodexRunner(timeout_seconds=30)
             result = await runner.run(
                 prompt_path=str(prompt_file),
                 worktree_path=str(worktree),
@@ -532,7 +532,7 @@ class TestCodexRunnerCheckAvailable:
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             with patch("asyncio.wait_for", return_value=(b"codex v1.2.3", b"")):
-                runner = CodexRunner(api_key="test-key")
+                runner = CodexRunner()
                 result = await runner.check_available()
 
         assert result is True
@@ -544,31 +544,48 @@ class TestCodexRunnerCheckAvailable:
             "asyncio.create_subprocess_exec",
             side_effect=FileNotFoundError("not found"),
         ):
-            runner = CodexRunner(api_key="test-key")
+            runner = CodexRunner()
             result = await runner.check_available()
 
         assert result is False
 
 
 # ---------------------------------------------------------------------------
-# CodexRunner.validate_api_key
+# CodexRunner.check_authenticated
 # ---------------------------------------------------------------------------
 
 
-class TestCodexRunnerValidateApiKey:
+class TestCodexRunnerCheckAuthenticated:
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_key_set(self):
-        runner = CodexRunner(api_key="sk-test-12345678abcdefgh")
-        result = await runner.validate_api_key()
+    async def test_authenticated(self):
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(
+            return_value=(b"Authenticated", b"")
+        )
+        mock_process.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            with patch("asyncio.wait_for", return_value=(b"Authenticated", b"")):
+                runner = CodexRunner()
+                result = await runner.check_authenticated()
+
         assert result is True
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_key_not_set(self):
-        with patch.dict("os.environ", {}, clear=True):
-            runner = CodexRunner(api_key="")
-            result = await runner.validate_api_key()
+    async def test_not_authenticated(self):
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(
+            return_value=(b"Not logged in", b"")
+        )
+        mock_process.returncode = 1
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            with patch("asyncio.wait_for", return_value=(b"Not logged in", b"")):
+                runner = CodexRunner()
+                result = await runner.check_authenticated()
+
         assert result is False
 
 
@@ -580,19 +597,15 @@ class TestCodexRunnerValidateApiKey:
 class TestCodexRunnerInit:
     @pytest.mark.unit
     def test_default_values(self):
-        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-env-key"}):
-            runner = CodexRunner()
+        runner = CodexRunner()
         assert runner.timeout_seconds == 600.0
-        assert runner.api_key == "sk-env-key"
         assert runner.codex_binary == "codex"
 
     @pytest.mark.unit
     def test_custom_values(self):
         runner = CodexRunner(
             timeout_seconds=300,
-            api_key="custom-key",
             codex_binary="/usr/bin/codex",
         )
         assert runner.timeout_seconds == 300
-        assert runner.api_key == "custom-key"
         assert runner.codex_binary == "/usr/bin/codex"

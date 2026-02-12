@@ -83,8 +83,8 @@ Enable parallel feature building using Codex CLI in git worktree isolation, mana
 
 4. **Implement Codex spawning pattern** — Team Lead runs 3 `codex exec` processes in background:
    ```bash
-   # Each builder is a Codex CLI process
-   OPENAI_API_KEY="$KEY" codex exec --full-auto --json \
+   # Each builder is a Codex CLI process (auth via `codex login`)
+   codex exec --full-auto --json \
      --cd .worktrees/feature-a "build Feature A per spec" \
      -o .nc-dev/codex-results/feature-a.json &
    ```

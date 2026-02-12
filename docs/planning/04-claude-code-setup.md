@@ -15,9 +15,9 @@ pip install claude-agent-sdk
 # Codex SDK (for programmatic builder control)
 npm install @openai/codex-sdk
 
-# Authenticate both
+# Authenticate both (CLIs handle their own auth — no API keys needed)
 claude                          # OAuth flow for Claude Code
-printenv OPENAI_API_KEY | codex login --with-api-key   # API key for Codex
+codex login                     # OAuth flow for Codex
 
 # Verify both
 claude --version
@@ -138,9 +138,7 @@ nc-dev-system/
     "github": {
       "command": "npx",
       "args": ["-y", "@anthropic-ai/mcp-server-github"],
-      "env": {
-        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
-      }
+      "env": {}
     },
     "test-crafter": {
       "type": "http",
@@ -323,7 +321,7 @@ Build the feature specified in $ARGUMENTS using Codex CLI:
 4. Generate the Codex prompt from feature spec + conventions
 5. Spawn Codex builder:
    ```bash
-   OPENAI_API_KEY="${OPENAI_API_KEY}" codex exec --full-auto --json \
+   codex exec --full-auto --json \
      --cd .worktrees/$FEATURE_NAME \
      "$(cat .nc-dev/prompts/build-$FEATURE_NAME.md)" \
      -o .nc-dev/codex-results/$FEATURE_NAME.json &
