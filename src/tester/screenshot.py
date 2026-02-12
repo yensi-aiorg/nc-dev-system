@@ -59,6 +59,8 @@ def _slugify(route: str) -> str:
 
 def _build_playwright_script(url: str, viewport: Viewport, output_path: Path) -> str:
     """Return a self-contained Playwright script for capturing a screenshot."""
+    # Node.js handles forward slashes on all platforms
+    posix_path = output_path.as_posix()
     return textwrap.dedent(f"""\
         const {{ chromium }} = require('playwright');
 
@@ -72,7 +74,7 @@ def _build_playwright_script(url: str, viewport: Viewport, output_path: Path) ->
             try {{
                 await page.goto('{url}', {{ waitUntil: 'networkidle', timeout: 30000 }});
                 await page.waitForTimeout(1000);
-                await page.screenshot({{ path: '{output_path}', fullPage: true }});
+                await page.screenshot({{ path: '{posix_path}', fullPage: true }});
             }} catch (err) {{
                 console.error('Screenshot capture failed:', err.message);
                 process.exit(1);

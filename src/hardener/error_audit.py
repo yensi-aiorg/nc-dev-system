@@ -169,9 +169,9 @@ def _collect_files(root: Path, extensions: set[str]) -> list[Path]:
 def _relative(path: Path, root: Path) -> str:
     """Return *path* relative to *root* as a forward-slash string."""
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def _find_line(content: str, match_start: int) -> int:

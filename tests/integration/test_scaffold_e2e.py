@@ -393,9 +393,14 @@ class TestScaffoldValidation:
     async def test_scripts_are_executable(
         self, sample_requirements: str, tmp_path: Path
     ) -> None:
-        """Verify generated shell scripts have the executable bit set."""
+        """Verify generated shell scripts have the executable bit set.
+
+        On Windows (NTFS) there are no Unix permission bits, so we only
+        verify the scripts exist and have content.
+        """
         import os
         import stat
+        import sys
 
         project_path = await _parse_and_scaffold(sample_requirements, tmp_path)
 
@@ -410,10 +415,11 @@ class TestScaffoldValidation:
             script_path = project_path / "scripts" / script_name
             assert script_path.exists(), f"Missing scripts/{script_name}"
 
-            mode = script_path.stat().st_mode
-            assert mode & stat.S_IXUSR, (
-                f"scripts/{script_name} is not executable (user execute bit missing)"
-            )
+            if sys.platform != "win32":
+                mode = script_path.stat().st_mode
+                assert mode & stat.S_IXUSR, (
+                    f"scripts/{script_name} is not executable (user execute bit missing)"
+                )
 
     async def test_ci_workflow_valid_yaml(
         self, sample_requirements: str, tmp_path: Path

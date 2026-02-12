@@ -403,7 +403,7 @@ class AccessibilityChecker:
                         serious += 1
 
             if violations:
-                rel = str(fpath.relative_to(src_dir.parent.parent))
+                rel = fpath.relative_to(src_dir.parent.parent).as_posix()
                 routes_map[rel] = RouteAccessibility(
                     violations=violations,
                     passes=0,

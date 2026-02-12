@@ -131,14 +131,15 @@ class TemplateRenderer:
 
         for template_file in sorted(prefix_path.rglob("*.j2")):
             rel = template_file.relative_to(prefix_path)
-            rel_str = str(rel)
+            # Jinja2 always uses forward slashes for template keys
+            rel_str = rel.as_posix()
 
             # Skip templates that match any skip pattern
             if any(pat in rel_str for pat in skip_patterns):
                 continue
 
             # Strip the .j2 extension for the output filename
-            output_name = str(rel)[: -len(".j2")] if rel_str.endswith(".j2") else str(rel)
+            output_name = rel_str[: -len(".j2")] if rel_str.endswith(".j2") else rel_str
             output_file = out_base / output_name
 
             template_key = f"{template_prefix}/{rel_str}"
@@ -158,7 +159,7 @@ class TemplateRenderer:
         if not search_dir.is_dir():
             return []
         return sorted(
-            str(p.relative_to(self.template_dir))
+            p.relative_to(self.template_dir).as_posix()
             for p in search_dir.rglob("*.j2")
         )
 

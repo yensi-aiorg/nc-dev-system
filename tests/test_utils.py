@@ -69,23 +69,26 @@ class TestRunCommand:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_failed_command(self):
-        returncode, stdout, stderr = await run_command("false")
+        returncode, stdout, stderr = await run_command(
+            ["python", "-c", "import sys; sys.exit(1)"]
+        )
         assert returncode != 0
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_command_with_cwd(self, tmp_path: Path):
         returncode, stdout, stderr = await run_command(
-            ["pwd"], cwd=tmp_path
+            ["python", "-c", "import os; print(os.getcwd())"], cwd=tmp_path
         )
         assert returncode == 0
-        assert str(tmp_path) in stdout
+        # Resolve both to handle symlinks/case differences across platforms
+        assert Path(stdout.strip()).resolve() == tmp_path.resolve()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_command_timeout(self):
         returncode, stdout, stderr = await run_command(
-            "sleep 10", timeout=1
+            ["python", "-c", "import time; time.sleep(10)"], timeout=1
         )
         assert returncode == -1
         assert "timed out" in stderr
@@ -94,7 +97,7 @@ class TestRunCommand:
     @pytest.mark.asyncio
     async def test_command_with_env(self):
         returncode, stdout, stderr = await run_command(
-            'echo "$TEST_VAR"',
+            ["python", "-c", "import os; print(os.environ['TEST_VAR'])"],
             env={"TEST_VAR": "test_value"},
         )
         assert returncode == 0
@@ -105,16 +108,17 @@ class TestRunCommand:
     async def test_command_nonexistent_shell(self):
         # Use shell mode to avoid FileNotFoundError from create_subprocess_exec
         returncode, stdout, stderr = await run_command(
-            "nonexistent-binary-12345"
+            "nonexistent-binary-12345-xyz"
         )
-        # Shell reports "not found" and returns non-zero
+        # Shell reports "not found" / "not recognized" and returns non-zero
         assert returncode != 0
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_command_returns_stderr(self):
         returncode, stdout, stderr = await run_command(
-            "echo error_msg >&2", timeout=10
+            ["python", "-c", "import sys; sys.stderr.write('error_msg\\n')"],
+            timeout=10,
         )
         # stderr should contain the message
         assert "error_msg" in stderr
