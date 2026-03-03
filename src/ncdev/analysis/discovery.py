@@ -69,6 +69,38 @@ def discover_repo(repo: Path, include_paths: list[str] | None = None, exclude_pa
     entrypoints = _has_any(repo, ["main.py", "app.py", "server.py", "index.ts", "main.ts", "main.tsx"])
     api_surfaces = _has_any(repo, ["openapi.yaml", "openapi.json", "router.py", "routes.py"])
     db_indicators = _has_any(repo, ["alembic.ini", "schema.prisma", "models.py", "migrations.sql"])
+    package_roots = sorted(
+        {
+            str(path.parent.relative_to(repo))
+            for path in repo.rglob("package.json")
+            if path.is_file() and not any(part in exclude_paths for part in path.parts)
+        }
+    )
+    if not package_roots:
+        package_roots = ["."]
+
+    monorepo = len(package_roots) > 1
+    dependency_graph: dict[str, list[str]] = {}
+    for root in package_roots:
+        deps: list[str] = []
+        base = repo / root
+        if (base / "requirements.txt").exists():
+            deps.append("python-runtime")
+        if (base / "package.json").exists():
+            deps.append("node-runtime")
+        if (base / "docker-compose.yml").exists():
+            deps.append("docker")
+        dependency_graph[root] = deps
+
+    hotspots: list[str] = []
+    if monorepo:
+        hotspots.append("monorepo-cross-package-change-risk")
+    if "pytest" not in test_frameworks:
+        hotspots.append("missing-python-tests")
+    if "playwright" not in test_frameworks:
+        hotspots.append("missing-e2e-tests")
+    if not ci_files:
+        hotspots.append("missing-ci-gates")
 
     return RepoInventoryDoc(
         repo_path=str(repo),
@@ -80,6 +112,10 @@ def discover_repo(repo: Path, include_paths: list[str] | None = None, exclude_pa
         entrypoints=entrypoints,
         api_surfaces=api_surfaces,
         db_indicators=db_indicators,
+        monorepo=monorepo,
+        package_roots=package_roots,
+        dependency_graph=dependency_graph,
+        hotspots=hotspots,
     )
 
 

@@ -137,6 +137,46 @@ def _greenfield_batches_from_features(features: dict) -> ChangePlanDoc:
     return ChangePlanDoc(batches=batches)
 
 
+def _fix_retest_loop(
+    project_path: Path,
+    mode: str,
+    test_failures: list[str],
+    max_retries: int,
+    dry_run: bool,
+) -> tuple[bool, list[str]]:
+    if max_retries <= 0:
+        return False, test_failures
+
+    attempts = 0
+    failures = test_failures
+    while attempts < max_retries and failures:
+        attempts += 1
+        fix_plan = ChangePlanDoc(
+            batches=[
+                ChangeBatch(
+                    id=f"fix-{attempts:03d}",
+                    title="Fix test failures",
+                    changes=[f"Address test failures: {', '.join(failures[:3])}"],
+                    validations=["Re-run test suite and verify all failures closed."],
+                    rollback=["Revert fix commit if regressions occur."],
+                )
+            ]
+        )
+        execute_change_plan(
+            project_path=project_path,
+            mode=mode,
+            plan=fix_plan,
+            max_retries=max_retries,
+            dry_run=dry_run,
+        )
+        retest = run_test_pipeline(project_path=project_path, dry_run=dry_run)
+        failures = retest.failures
+        if retest.passed:
+            return True, []
+
+    return False, failures
+
+
 def run_greenfield(
     workspace: Path,
     requirements_path: Path,
@@ -211,12 +251,20 @@ def run_greenfield(
     test_result = run_test_pipeline(project_path=project_path, dry_run=dry_run)
     persist_output_doc(run_dir, "test-result.json", test_result.model_dump(mode="json"))
     if not test_result.passed:
-        _set_task(state, "test", TaskStatus.FAILED, "test failures detected")
-        state.phase = Phase.BLOCKED
-        state.status = TaskStatus.FAILED
-        state.touch()
-        persist_run_state(state)
-        return state
+        fixed, remaining = _fix_retest_loop(
+            project_path=project_path,
+            mode="greenfield",
+            test_failures=test_result.failures,
+            max_retries=config.safety.max_retries,
+            dry_run=dry_run,
+        )
+        if not fixed:
+            _set_task(state, "test", TaskStatus.FAILED, f"test failures remain: {remaining[:2]}")
+            state.phase = Phase.BLOCKED
+            state.status = TaskStatus.FAILED
+            state.touch()
+            persist_run_state(state)
+            return state
     _set_task(state, "test", TaskStatus.PASSED, "test pipeline passed")
 
     harden_report = run_hardening_checks(project_path=project_path)
@@ -305,12 +353,20 @@ def run_brownfield(
     test_result = run_test_pipeline(project_path=repo_path, dry_run=dry_run)
     persist_output_doc(run_dir, "test-result.json", test_result.model_dump(mode="json"))
     if not test_result.passed:
-        _set_task(state, "test", TaskStatus.FAILED, "test failures detected")
-        state.phase = Phase.BLOCKED
-        state.status = TaskStatus.FAILED
-        state.touch()
-        persist_run_state(state)
-        return state
+        fixed, remaining = _fix_retest_loop(
+            project_path=repo_path,
+            mode="brownfield",
+            test_failures=test_result.failures,
+            max_retries=config.safety.max_retries,
+            dry_run=dry_run,
+        )
+        if not fixed:
+            _set_task(state, "test", TaskStatus.FAILED, f"test failures remain: {remaining[:2]}")
+            state.phase = Phase.BLOCKED
+            state.status = TaskStatus.FAILED
+            state.touch()
+            persist_run_state(state)
+            return state
     _set_task(state, "test", TaskStatus.PASSED, "test pipeline passed")
 
     harden_report = run_hardening_checks(project_path=repo_path)

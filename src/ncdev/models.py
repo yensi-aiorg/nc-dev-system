@@ -72,6 +72,10 @@ class RepoInventoryDoc(BaseModel):
     entrypoints: list[str] = Field(default_factory=list)
     api_surfaces: list[str] = Field(default_factory=list)
     db_indicators: list[str] = Field(default_factory=list)
+    monorepo: bool = False
+    package_roots: list[str] = Field(default_factory=list)
+    dependency_graph: dict[str, list[str]] = Field(default_factory=dict)
+    hotspots: list[str] = Field(default_factory=list)
 
 
 class RiskItem(BaseModel):
