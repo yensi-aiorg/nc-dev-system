@@ -20,6 +20,6 @@ def test_adjudicate_blocks_on_failed_model() -> None:
             error="boom",
         ),
     ]
-    result = adjudicate(assessments, 0.6)
+    result = adjudicate(assessments, 0.6, 0.55)
     assert result.decision == "blocked"
     assert result.requires_human is True

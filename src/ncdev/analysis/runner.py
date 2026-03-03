@@ -4,11 +4,27 @@ import shlex
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 
 from ncdev.config import NCDevConfig
 from ncdev.models import ModelAssessment
 from ncdev.utils import sha256_text
+
+
+def _parse_structured_output(output: str) -> tuple[str, dict | None]:
+    text = output.strip()
+    if not text:
+        return "text", None
+    if text.startswith("{") or text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return "json", parsed
+            return "json", {"value": parsed}
+        except json.JSONDecodeError:
+            return "text", None
+    return "text", None
 
 
 def _run_one(model_name: str, command: list[str], prompt: str, timeout_seconds: int) -> ModelAssessment:
@@ -44,6 +60,7 @@ def _run_one(model_name: str, command: list[str], prompt: str, timeout_seconds: 
             confidence = 0.85
         elif len(output) < 80:
             confidence = 0.45
+        output_format, structured = _parse_structured_output(output)
 
         return ModelAssessment(
             task_id="analysis",
@@ -51,6 +68,8 @@ def _run_one(model_name: str, command: list[str], prompt: str, timeout_seconds: 
             input_digest=digest,
             output=output,
             confidence=confidence,
+            output_format=output_format,
+            structured_output=structured,
             risks=[],
             status="ok",
             started_at=started,
@@ -96,6 +115,8 @@ def _dry_run_assessment(model_name: str, prompt: str) -> ModelAssessment:
             "Proposed direction: continue with phase-1 artifacts and consensus gating."
         ),
         confidence=0.8,
+        output_format="text",
+        structured_output=None,
         risks=[],
         status="ok",
         started_at=now,

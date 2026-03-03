@@ -112,6 +112,8 @@ class ModelAssessment(BaseModel):
     input_digest: str
     output: str
     confidence: float = 0.0
+    output_format: str = "text"
+    structured_output: dict[str, Any] | None = None
     risks: list[str] = Field(default_factory=list)
     status: str = "ok"
     error: str | None = None

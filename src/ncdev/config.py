@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class AnalysisConsensusConfig(BaseModel):
     min_agreement_score: float = 0.6
+    min_model_confidence: float = 0.55
     timeout_seconds: int = 120
 
 
@@ -64,6 +65,7 @@ class NCDevConfig(BaseModel):
                 "models": {"required": self.analysis.models_required, "commands": model_commands},
                 "consensus": {
                     "min_agreement_score": self.analysis.consensus.min_agreement_score,
+                    "min_model_confidence": self.analysis.consensus.min_model_confidence,
                     "timeout_seconds": self.analysis.consensus.timeout_seconds,
                 },
             },
@@ -96,6 +98,7 @@ def load_config(workspace: Path) -> NCDevConfig:
             else AnalysisConfig().model_commands,
             consensus=AnalysisConsensusConfig(
                 min_agreement_score=analysis.get("consensus", {}).get("min_agreement_score", 0.6),
+                min_model_confidence=analysis.get("consensus", {}).get("min_model_confidence", 0.55),
                 timeout_seconds=analysis.get("consensus", {}).get("timeout_seconds", 120),
             ),
         ),

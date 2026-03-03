@@ -22,6 +22,7 @@ from ncdev.models import (
 )
 from ncdev.reporter.generate import generate_delivery_report
 from ncdev.scaffolder.renderer import scaffold_greenfield_project
+from ncdev.preflight import required_commands, run_preflight
 from ncdev.state import (
     append_log,
     ensure_schema_files,
@@ -90,7 +91,11 @@ def _gate_consensus(state: RunState, run_dir: Path, prompt: str, dry_run: bool) 
         path = persist_model_assessment(run_dir, item)
         state.model_outputs.append(str(path))
 
-    consensus = adjudicate(assessments, config.analysis.consensus.min_agreement_score)
+    consensus = adjudicate(
+        assessments,
+        config.analysis.consensus.min_agreement_score,
+        config.analysis.consensus.min_model_confidence,
+    )
     cpath = persist_consensus(run_dir, consensus)
     state.model_outputs.append(str(cpath))
 
@@ -109,6 +114,25 @@ def _gate_consensus(state: RunState, run_dir: Path, prompt: str, dry_run: bool) 
     append_log(run_dir, "consensus approved")
     persist_run_state(state)
     return True
+
+
+def _preflight_or_block(state: RunState, run_dir: Path, mode: str, full: bool, dry_run: bool) -> bool:
+    if dry_run:
+        return True
+    req = required_commands(mode=mode, full=full)
+    preflight = run_preflight(req)
+    persist_output_doc(
+        run_dir,
+        "preflight.json",
+        {"ok": preflight.ok, "required": preflight.required, "missing": preflight.missing},
+    )
+    if preflight.ok:
+        return True
+    state.phase = Phase.BLOCKED
+    state.status = TaskStatus.BLOCKED
+    _set_task(state, "analysis", TaskStatus.BLOCKED, f"missing commands: {', '.join(preflight.missing)}")
+    persist_run_state(state)
+    return False
 
 
 def _greenfield_batches_from_features(features: dict) -> ChangePlanDoc:
@@ -192,6 +216,8 @@ def run_greenfield(
     state = _base_state(run_id, command=command, mode="greenfield", workspace=workspace, run_dir=run_dir)
     state.phase = Phase.ANALYZE
     persist_run_state(state)
+    if not _preflight_or_block(state, run_dir, mode="greenfield", full=full, dry_run=dry_run):
+        return state
 
     features, architecture, test_plan = parse_requirements(requirements_path)
     features_path = persist_output_doc(run_dir, "features.json", features.model_dump(mode="json"))
@@ -307,6 +333,8 @@ def run_brownfield(
     state = _base_state(run_id, command=command, mode="brownfield", workspace=workspace, run_dir=run_dir)
     state.phase = Phase.ANALYZE
     persist_run_state(state)
+    if not _preflight_or_block(state, run_dir, mode="brownfield", full=full, dry_run=dry_run):
+        return state
 
     inventory = discover_repo(repo_path, include_paths=include_paths, exclude_paths=exclude_paths)
     risk_map = build_risk_map(inventory)

@@ -24,7 +24,7 @@ def agreement_score(a: str, b: str) -> float:
     return intersection / union
 
 
-def adjudicate(assessments: list[ModelAssessment], min_score: float) -> ConsensusDoc:
+def adjudicate(assessments: list[ModelAssessment], min_score: float, min_model_confidence: float) -> ConsensusDoc:
     if len(assessments) < 2:
         return ConsensusDoc(
             decision="blocked",
@@ -42,6 +42,19 @@ def adjudicate(assessments: list[ModelAssessment], min_score: float) -> Consensu
             agreement_score=0.0,
             merged_output="",
             conflicts=[f"{f.model} failed: {f.error or 'unknown error'}" for f in failures],
+            requires_human=True,
+        )
+
+    low_confidence = [a for a in assessments if a.confidence < min_model_confidence]
+    if low_confidence:
+        return ConsensusDoc(
+            decision="blocked",
+            agreement_score=0.0,
+            merged_output="",
+            conflicts=[
+                f"{a.model} confidence {a.confidence:.2f} below minimum {min_model_confidence:.2f}"
+                for a in low_confidence
+            ],
             requires_human=True,
         )
 
