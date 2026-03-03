@@ -159,6 +159,19 @@ def build_risk_map(inventory: RepoInventoryDoc) -> RiskMapDoc:
 
 
 def build_change_plan(inventory: RepoInventoryDoc, risk_map: RiskMapDoc) -> ChangePlanDoc:
+    if not risk_map.risks and not inventory.hotspots:
+        return ChangePlanDoc(
+            batches=[
+                ChangeBatch(
+                    id="batch-000",
+                    title="No-op: repository already meets baseline gates",
+                    changes=["No code changes required based on current analysis."],
+                    validations=["Record baseline analysis artifacts."],
+                    rollback=["No rollback required."],
+                )
+            ]
+        )
+
     baseline_batch = ChangeBatch(
         id="batch-001",
         title="Introduce NC Dev runtime integration baseline",
