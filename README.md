@@ -62,18 +62,36 @@ claude
 ## Runtime CLI (Implemented in this repo)
 
 ```bash
-# Greenfield analysis kickoff (analysis-only, dry-run model outputs)
+# Greenfield full pipeline (analysis -> scaffold -> build -> test -> harden -> deliver)
 ncdev build --requirements /path/to/requirements.md --mode greenfield --dry-run
 
-# Brownfield analysis kickoff (existing repository)
+# Greenfield analysis only
+ncdev build --requirements /path/to/requirements.md --mode greenfield --analysis-only --dry-run
+
+# Brownfield full pipeline on an existing repository
 ncdev analyze --repo /path/to/existing-repo --mode brownfield --dry-run
+
+# Brownfield analysis only
+ncdev analyze --repo /path/to/existing-repo --mode brownfield --analysis-only --dry-run
 
 # Inspect run status
 ncdev status --run-id <run-id>
 
-# Write delivery stub artifact for a run
+# Resolve delivery artifact path for a run
 ncdev deliver --run-id <run-id>
 ```
+
+## Implemented Runtime Scope
+
+- Greenfield analysis outputs: `features.json`, `architecture.json`, `test-plan.json`
+- Brownfield analysis outputs: `repo-inventory.json`, `risk-map.json`, `change-plan.json`
+- Dual-model consensus gate: Claude CLI + Codex CLI (or simulated in `--dry-run`)
+- Consensus failure output: `human-questions.json`
+- Greenfield scaffolding from Jinja templates under `templates/greenfield/`
+- Builder supervision with retry/fallback strategy and merge governance
+- Test pipeline orchestration with bounded fix-retest loop
+- Hardening audit report generation
+- Delivery report + docs artifact generation
 
 ## Prerequisites
 
