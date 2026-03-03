@@ -42,6 +42,11 @@ OUTPUT:
 ./scripts/setup.sh          # Check prerequisites
 ./scripts/setup-ollama.sh   # Download local AI models
 
+# Python runtime setup (Phase 1 implementation)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
 # Interactive build
 claude
 > /build /path/to/requirements.md
@@ -52,6 +57,22 @@ claude --remote "Build from requirements.md using NC Dev System"
 # Check status
 claude
 > /status
+```
+
+## Runtime CLI (Implemented in this repo)
+
+```bash
+# Greenfield analysis kickoff (analysis-only, dry-run model outputs)
+ncdev build --requirements /path/to/requirements.md --mode greenfield --dry-run
+
+# Brownfield analysis kickoff (existing repository)
+ncdev analyze --repo /path/to/existing-repo --mode brownfield --dry-run
+
+# Inspect run status
+ncdev status --run-id <run-id>
+
+# Write delivery stub artifact for a run
+ncdev deliver --run-id <run-id>
 ```
 
 ## Prerequisites

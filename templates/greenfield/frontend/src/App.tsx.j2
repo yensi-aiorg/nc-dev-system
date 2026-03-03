@@ -1,0 +1,10 @@
+export default function App() {
+  return (
+    <main>
+      <h1>{{ project_name }}</h1>
+      <ul>
+        {% for f in features %}<li>{{ f.name }}</li>{% endfor %}
+      </ul>
+    </main>
+  );
+}
