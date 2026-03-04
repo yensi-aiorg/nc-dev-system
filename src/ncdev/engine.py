@@ -12,6 +12,7 @@ from ncdev.analysis.runner import run_model_assessments
 from ncdev.builder.supervisor import execute_change_plan
 from ncdev.config import ensure_default_config
 from ncdev.hardener.audit import run_hardening_checks
+from ncdev.integrations.clients import TestCrafterClient, VisualDesignerClient
 from ncdev.models import (
     ChangeBatch,
     ChangePlanDoc,
@@ -201,6 +202,46 @@ def _fix_retest_loop(
     return False, failures
 
 
+def _run_optional_integrations(
+    config,
+    run_dir: Path,
+    mode: str,
+    dry_run: bool,
+    repo_path: Path | None = None,
+    requirements_path: Path | None = None,
+) -> None:
+    if dry_run:
+        persist_output_doc(
+            run_dir,
+            "integration-results.json",
+            {"mode": mode, "dry_run": True, "results": ["integration calls skipped in dry-run"]},
+        )
+        return
+
+    results: dict[str, object] = {"mode": mode, "dry_run": False, "results": {}}
+
+    if config.integrations.visual_designer.enabled and requirements_path is not None:
+        try:
+            journey = requirements_path.read_text(encoding="utf-8")[:2000]
+            vd = VisualDesignerClient(base_url=config.integrations.visual_designer.base_url)
+            results["results"]["visual_designer"] = vd.generate_references(journey=journey)
+        except Exception as exc:  # noqa: BLE001
+            results["results"]["visual_designer"] = {"error": str(exc)}
+
+    if config.integrations.test_crafter.enabled and repo_path is not None:
+        try:
+            tc = TestCrafterClient(base_url=config.integrations.test_crafter.base_url)
+            results["results"]["test_crafter"] = tc.run(
+                prd_path=str(requirements_path) if requirements_path else "",
+                target_url="http://localhost:23000",
+                analysis_level="thorough",
+            )
+        except Exception as exc:  # noqa: BLE001
+            results["results"]["test_crafter"] = {"error": str(exc)}
+
+    persist_output_doc(run_dir, "integration-results.json", results)
+
+
 def run_greenfield(
     workspace: Path,
     requirements_path: Path,
@@ -296,6 +337,14 @@ def run_greenfield(
     harden_report = run_hardening_checks(project_path=project_path)
     persist_output_doc(run_dir, "harden-report.json", harden_report.model_dump(mode="json"))
     _set_task(state, "harden", TaskStatus.PASSED, "hardening report generated")
+    _run_optional_integrations(
+        config=config,
+        run_dir=run_dir,
+        mode="greenfield",
+        dry_run=dry_run,
+        repo_path=project_path,
+        requirements_path=requirements_path,
+    )
 
     state.phase = Phase.DELIVER
     delivery = generate_delivery_report(
@@ -400,6 +449,14 @@ def run_brownfield(
     harden_report = run_hardening_checks(project_path=repo_path)
     persist_output_doc(run_dir, "harden-report.json", harden_report.model_dump(mode="json"))
     _set_task(state, "harden", TaskStatus.PASSED, "hardening report generated")
+    _run_optional_integrations(
+        config=config,
+        run_dir=run_dir,
+        mode="brownfield",
+        dry_run=dry_run,
+        repo_path=repo_path,
+        requirements_path=None,
+    )
 
     state.phase = Phase.DELIVER
     delivery = generate_delivery_report(

@@ -5,6 +5,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
+import re
 from pathlib import Path
 
 from ncdev.config import NCDevConfig
@@ -12,8 +13,21 @@ from ncdev.models import ModelAssessment
 from ncdev.utils import sha256_text
 
 
-def _parse_structured_output(output: str) -> tuple[str, dict | None]:
+FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.DOTALL)
+
+
+def _normalize_output(output: str) -> str:
     text = output.strip()
+    if not text:
+        return ""
+    fenced = FENCED_JSON_RE.search(text)
+    if fenced:
+        return fenced.group(1).strip()
+    return text
+
+
+def _parse_structured_output(output: str) -> tuple[str, dict | None]:
+    text = _normalize_output(output)
     if not text:
         return "text", None
     if text.startswith("{") or text.startswith("["):
@@ -41,12 +55,13 @@ def _run_one(model_name: str, command: list[str], prompt: str, timeout_seconds: 
             check=False,
         )
         output = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+        normalized_output = _normalize_output(output)
         if proc.returncode != 0:
             return ModelAssessment(
                 task_id="analysis",
                 model=model_name,
                 input_digest=digest,
-                output=output,
+                output=normalized_output,
                 confidence=0.0,
                 risks=["non-zero-exit"],
                 status="failed",
@@ -56,17 +71,17 @@ def _run_one(model_name: str, command: list[str], prompt: str, timeout_seconds: 
             )
 
         confidence = 0.7
-        if len(output) > 800:
+        if len(normalized_output) > 800:
             confidence = 0.85
-        elif len(output) < 80:
+        elif len(normalized_output) < 80:
             confidence = 0.45
-        output_format, structured = _parse_structured_output(output)
+        output_format, structured = _parse_structured_output(normalized_output)
 
         return ModelAssessment(
             task_id="analysis",
             model=model_name,
             input_digest=digest,
-            output=output,
+            output=normalized_output,
             confidence=confidence,
             output_format=output_format,
             structured_output=structured,

@@ -25,6 +25,18 @@ def _merge_batch(project_path: Path, branch: str) -> tuple[bool, str]:
     return True, out
 
 
+def _current_head_sha(project_path: Path) -> str:
+    rc, out = _run(["git", "rev-parse", "HEAD"], project_path)
+    return out.strip() if rc == 0 else ""
+
+
+def _create_checkpoint(project_path: Path, checkpoint_name: str, sha: str) -> tuple[bool, str]:
+    if not sha:
+        return False, "no head sha available"
+    rc, out = _run(["git", "branch", "-f", checkpoint_name, sha], project_path)
+    return rc == 0, out
+
+
 def _cleanup_worktree(project_path: Path, worktree: Path) -> None:
     _run(["git", "worktree", "remove", str(worktree), "--force"], project_path)
 
@@ -125,10 +137,16 @@ def execute_change_plan(
                 notes=notes,
             )
         )
+        checkpoint_name = f"nc-dev/checkpoint/{batch.id}"
+        checkpoint_sha = _current_head_sha(project_path)
+        checkpoint_ok, checkpoint_out = _create_checkpoint(project_path, checkpoint_name, checkpoint_sha)
         if passed:
             merged, merge_notes = _merge_batch(project_path, branch)
             results[-1].status = "passed" if merged else "failed"
-            results[-1].notes = f"{results[-1].notes}\nmerge: {merge_notes[:300]}"
+            results[-1].notes = (
+                f"{results[-1].notes}\ncheckpoint: {checkpoint_name}@{checkpoint_sha or 'unknown'} "
+                f"({ 'ok' if checkpoint_ok else checkpoint_out[:100] })\nmerge: {merge_notes[:300]}"
+            )
         _cleanup_worktree(project_path, worktree)
 
     return BuildResultDoc(mode=mode, project_path=str(project_path), results=results)

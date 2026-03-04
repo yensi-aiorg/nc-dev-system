@@ -92,6 +92,9 @@ ncdev deliver --run-id <run-id>
 - Test pipeline orchestration with bounded fix-retest loop
 - Hardening audit report generation
 - Delivery report + docs artifact generation
+- Optional integration wiring via `.nc-dev/config.yaml`:
+  - `integrations.test_crafter.enabled`
+  - `integrations.visual_designer.enabled`
 
 ## Prerequisites
 

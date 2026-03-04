@@ -52,11 +52,26 @@ class PortsConfig(BaseModel):
     policy: str = "sequential-start-at-23000"
 
 
+class IntegrationClientConfig(BaseModel):
+    enabled: bool = False
+    base_url: str
+
+
+class IntegrationsConfig(BaseModel):
+    test_crafter: IntegrationClientConfig = Field(
+        default_factory=lambda: IntegrationClientConfig(enabled=False, base_url="http://localhost:16630")
+    )
+    visual_designer: IntegrationClientConfig = Field(
+        default_factory=lambda: IntegrationClientConfig(enabled=False, base_url="http://localhost:12101")
+    )
+
+
 class NCDevConfig(BaseModel):
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     brownfield: BrownfieldConfig = Field(default_factory=BrownfieldConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     ports: PortsConfig = Field(default_factory=PortsConfig)
+    integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)
 
     def to_yaml_dict(self) -> dict[str, Any]:
         model_commands = [{"name": m.name, "command": m.command} for m in self.analysis.model_commands]
@@ -77,6 +92,16 @@ class NCDevConfig(BaseModel):
             },
             "safety": {"max_retries": self.safety.max_retries},
             "ports": {"policy": self.ports.policy},
+            "integrations": {
+                "test_crafter": {
+                    "enabled": self.integrations.test_crafter.enabled,
+                    "base_url": self.integrations.test_crafter.base_url,
+                },
+                "visual_designer": {
+                    "enabled": self.integrations.visual_designer.enabled,
+                    "base_url": self.integrations.visual_designer.base_url,
+                },
+            },
         }
 
 
@@ -112,6 +137,20 @@ def load_config(workspace: Path) -> NCDevConfig:
         ),
         safety=SafetyConfig(max_retries=raw.get("safety", {}).get("max_retries", 2)),
         ports=PortsConfig(policy=raw.get("ports", {}).get("policy", "sequential-start-at-23000")),
+        integrations=IntegrationsConfig(
+            test_crafter=IntegrationClientConfig(
+                enabled=raw.get("integrations", {}).get("test_crafter", {}).get("enabled", False),
+                base_url=raw.get("integrations", {}).get("test_crafter", {}).get(
+                    "base_url", "http://localhost:16630"
+                ),
+            ),
+            visual_designer=IntegrationClientConfig(
+                enabled=raw.get("integrations", {}).get("visual_designer", {}).get("enabled", False),
+                base_url=raw.get("integrations", {}).get("visual_designer", {}).get(
+                    "base_url", "http://localhost:12101"
+                ),
+            ),
+        ),
     )
 
 
