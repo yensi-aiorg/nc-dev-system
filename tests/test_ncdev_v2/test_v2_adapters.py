@@ -44,3 +44,35 @@ def test_claude_adapter_run_task_writes_result_artifact(tmp_path: Path) -> None:
     result_path = tmp_path / "outputs" / "task-results" / "market_research.json"
     assert result_path.exists()
     assert str(result_path) in result.artifact_paths
+
+
+def test_codex_adapter_run_task_writes_result_artifact(tmp_path: Path) -> None:
+    adapter = build_provider_registry()["openai_codex"]
+    task_request = tmp_path / "outputs" / "task-requests" / "test_authoring.json"
+    task_request.parent.mkdir(parents=True, exist_ok=True)
+    task_request.write_text('{"prompt":"Write tests."}', encoding="utf-8")
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = '{"ok": true, "changed": ["frontend/src/app.tsx"]}'
+        stderr = ""
+
+    with patch("shutil.which", return_value="/usr/bin/codex"):
+        with patch("subprocess.run", return_value=FakeCompleted()) as mock_run:
+            result = adapter.run_task(
+                task_type=TaskType.TEST_AUTHORING,
+                artifact_paths=[tmp_path / "outputs" / "build-plan.json"],
+                model="gpt-5.2-codex",
+                options={
+                    "task_request_path": str(task_request),
+                    "target_path": str(tmp_path),
+                },
+            )
+
+    assert result.status == "passed"
+    result_path = tmp_path / "outputs" / "task-results" / "test_authoring.json"
+    assert result_path.exists()
+    assert str(result_path) in result.artifact_paths
+    called_cmd = mock_run.call_args.args[0]
+    assert called_cmd[:4] == ["codex", "exec", "--full-auto", "--json"]
+    assert "--cd" in called_cmd
