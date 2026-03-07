@@ -15,6 +15,7 @@ from ncdev.v2.models import (
     JobQueueDoc,
     JobRunLogDoc,
     JobRunRecord,
+    TaskRequestDoc,
     TaskType,
 )
 
@@ -37,6 +38,10 @@ def _job_artifact_path(run_dir: Path, job_id: str, suffix: str) -> Path:
 
 def _load_json(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _load_task_request(path: str | Path) -> TaskRequestDoc:
+    return TaskRequestDoc.model_validate(_load_json(path))
 
 
 async def _current_branch(repo_path: Path) -> str:
@@ -264,13 +269,18 @@ def _run_delivery_job(job: ExecutionJob, run_dir: Path, records: list[JobRunReco
 async def _run_adapter_job(
     job: ExecutionJob,
     registry: dict[str, ProviderAdapter],
+    *,
+    provider_name: str | None = None,
+    model_name: str | None = None,
 ) -> JobRunRecord:
-    adapter = registry[job.provider]
+    resolved_provider = provider_name or job.provider
+    resolved_model = model_name or job.model
+    adapter = registry[resolved_provider]
     input_paths = [Path(path) for path in job.input_artifacts]
     result = adapter.run_task(
         task_type=job.task_type,
         artifact_paths=input_paths,
-        model=job.model,
+        model=resolved_model,
         options={
             "task_request_path": job.request_artifact,
             "job_id": job.job_id,
@@ -280,14 +290,86 @@ async def _run_adapter_job(
     return JobRunRecord(
         job_id=job.job_id,
         task_type=job.task_type,
-        provider=job.provider,
-        model=job.model,
+        provider=resolved_provider,
+        model=resolved_model,
         status=result.status,
         summary=result.summary,
         request_artifact=job.request_artifact,
         output_artifacts=result.artifact_paths,
         metadata=result.metadata,
     )
+
+
+def _fallback_candidates(job: ExecutionJob) -> list[str]:
+    if Path(job.request_artifact).exists():
+        request = _load_task_request(job.request_artifact)
+        return [provider for provider in request.fallback_providers if provider != job.provider]
+    return [provider for provider in job.metadata.get("fallback_providers", []) if provider != job.provider]
+
+
+def _fallback_model(adapter: ProviderAdapter, preferred_model: str) -> str:
+    models = adapter.available_models()
+    if preferred_model in models:
+        return preferred_model
+    return models[0] if models else preferred_model
+
+
+async def _run_with_fallbacks(
+    job: ExecutionJob,
+    registry: dict[str, ProviderAdapter],
+    primary_record: JobRunRecord,
+) -> JobRunRecord:
+    if primary_record.status in {"passed", "stubbed", "dry-run"}:
+        return primary_record
+
+    fallback_attempts: list[dict[str, str]] = []
+    for provider_name in _fallback_candidates(job):
+        if provider_name not in registry:
+            fallback_attempts.append({"provider": provider_name, "status": "unavailable"})
+            continue
+        adapter = registry[provider_name]
+        model_name = _fallback_model(adapter, job.model)
+        if provider_name == "openai_codex" and job.task_type in {
+            TaskType.BUILD_BATCH,
+            TaskType.TEST_AUTHORING,
+            TaskType.FIX_BATCH,
+        }:
+            fallback_record = await _run_codex_job(
+                ExecutionJob(
+                    job_id=job.job_id,
+                    task_type=job.task_type,
+                    provider=provider_name,
+                    model=model_name,
+                    title=job.title,
+                    request_artifact=job.request_artifact,
+                    target_path=job.target_path,
+                    input_artifacts=job.input_artifacts,
+                    depends_on=job.depends_on,
+                    metadata=job.metadata,
+                ),
+                Path(job.request_artifact).parents[3],
+            )
+        else:
+            fallback_record = await _run_adapter_job(
+                job,
+                registry,
+                provider_name=provider_name,
+                model_name=model_name,
+            )
+        fallback_record.metadata = {
+            **fallback_record.metadata,
+            "fallback_from": primary_record.provider,
+            "fallback_attempts": fallback_attempts + [{"provider": provider_name, "status": fallback_record.status}],
+        }
+        if fallback_record.status in {"passed", "stubbed"}:
+            return fallback_record
+        fallback_attempts.append({"provider": provider_name, "status": fallback_record.status})
+
+    primary_record.metadata = {
+        **primary_record.metadata,
+        "fallback_attempts": fallback_attempts,
+    }
+    return primary_record
 
 
 async def _run_job(
@@ -321,10 +403,12 @@ async def _run_job(
         TaskType.TEST_AUTHORING,
         TaskType.FIX_BATCH,
     }:
-        return await _run_codex_job(job, run_dir)
+        primary_record = await _run_codex_job(job, run_dir)
+        return await _run_with_fallbacks(job, registry, primary_record)
 
     if job.provider in registry:
-        return await _run_adapter_job(job, registry)
+        primary_record = await _run_adapter_job(job, registry)
+        return await _run_with_fallbacks(job, registry, primary_record)
 
     return JobRunRecord(
         job_id=job.job_id,
