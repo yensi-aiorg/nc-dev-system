@@ -232,18 +232,6 @@ class ErrorAuditor:
 
         all_issues: list[AuditIssue] = []
 
-        # Run frontend and backend audits concurrently.
-        frontend_coro = (
-            self._audit_frontend(frontend_dir, root)
-            if frontend_dir.is_dir()
-            else asyncio.coroutine(lambda: [])()  # type: ignore[arg-type]
-        )
-        backend_coro = (
-            self._audit_backend(backend_dir, root)
-            if backend_dir.is_dir()
-            else asyncio.coroutine(lambda: [])()  # type: ignore[arg-type]
-        )
-
         fe_issues, be_issues = await asyncio.gather(
             self._audit_frontend(frontend_dir, root) if frontend_dir.is_dir() else _empty_list(),
             self._audit_backend(backend_dir, root) if backend_dir.is_dir() else _empty_list(),

@@ -570,22 +570,15 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_empty_project_no_frontend_no_backend(self, auditor, tmp_path):
-        """A project with no frontend/ or backend/ dirs hits the deprecated
-        ``asyncio.coroutine`` dead-code path which raises ``AttributeError``
-        on Python 3.11+ (``asyncio.coroutine`` was removed).
-        """
-        # tmp_path exists but has no frontend/ or backend/ subdirectories
-        with pytest.raises(AttributeError, match="coroutine"):
-            await auditor.audit(str(tmp_path))
+        """A project with no frontend/ or backend/ dirs should return a clean result."""
+        result = await auditor.audit(str(tmp_path))
+        assert result.issues == []
+        assert result.warnings == []
+        assert result.score == 100.0
 
     @pytest.mark.asyncio
     async def test_empty_project_with_empty_dirs(self, auditor, tmp_path):
-        """A project with empty frontend/src and backend dirs returns clean result.
-
-        Note: both directories must exist because the source module has a
-        dead-code path using the deprecated ``asyncio.coroutine`` that
-        would crash on Python 3.11+ when either directory is missing.
-        """
+        """A project with empty frontend/src and backend dirs returns clean result."""
         (tmp_path / "frontend" / "src").mkdir(parents=True)
         (tmp_path / "backend").mkdir()
         result = await auditor.audit(str(tmp_path))
