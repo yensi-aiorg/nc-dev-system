@@ -32,6 +32,7 @@ def test_v2_verify_dry_run_persists_verification_artifacts(tmp_path: Path) -> No
 
     verification_payload = json.loads((run_dir / "outputs" / "verification-run.json").read_text(encoding="utf-8"))
     assert verification_payload["dry_run"] is True
+    assert verification_payload["bootstrap_succeeded"] is True
     assert verification_payload["routes"]
 
 
@@ -73,6 +74,7 @@ def test_v2_verification_uses_test_runner_when_not_dry_run(tmp_path: Path, monke
             (screenshots_dir / "home-desktop.png").write_bytes(b"\x89PNG\x00")
             return FakeSuite()
 
+    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", lambda target_path, base_url: (True, ["docker compose up -d"]))
     monkeypatch.setattr("ncdev.v2.verification.TestRunner", FakeRunner)
 
     verification_run, evidence_index = run_v2_verification(
@@ -83,5 +85,33 @@ def test_v2_verification_uses_test_runner_when_not_dry_run(tmp_path: Path, monke
 
     assert verification_run.overall_passed is True
     assert verification_run.base_url == "http://localhost:9999"
+    assert verification_run.bootstrap_succeeded is True
+    assert verification_run.bootstrap_commands == ["docker compose up -d"]
     assert evidence_index.screenshots
     assert evidence_index.reports
+
+
+def test_v2_verification_reports_bootstrap_failure(tmp_path: Path, monkeypatch) -> None:
+    req = tmp_path / "requirements.md"
+    req.write_text(
+        """
+# Product
+- User can sign in
+""".strip(),
+        encoding="utf-8",
+    )
+    prepared = run_v2_prepare(tmp_path, req, dry_run=True)
+    run_dir = Path(prepared.run_dir)
+
+    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", lambda target_path, base_url: (False, ["docker compose up -d"]))
+
+    verification_run, evidence_index = run_v2_verification(
+        run_dir,
+        base_url="http://localhost:9999",
+        dry_run=False,
+    )
+
+    assert verification_run.overall_passed is False
+    assert verification_run.bootstrap_succeeded is False
+    assert verification_run.bootstrap_commands == ["docker compose up -d"]
+    assert evidence_index.project_name == verification_run.project_name

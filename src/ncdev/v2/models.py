@@ -116,6 +116,89 @@ class DesignPackDoc(ArtifactEnvelope):
     component_rules: list[str] = Field(default_factory=list)
 
 
+class TypographySpec(BaseModel):
+    font_display: str = "Inter"
+    font_body: str = "Inter"
+    font_mono: str = "JetBrains Mono"
+    scale: dict[str, str] = Field(default_factory=dict)
+    line_heights: dict[str, str] = Field(default_factory=dict)
+    weights: dict[str, int] = Field(default_factory=dict)
+
+
+class ColorSpec(BaseModel):
+    primary: str = "#0f172a"
+    secondary: str = "#1e293b"
+    accent: str = "#14b8a6"
+    highlight: str = "#f97316"
+    background: str = "#ffffff"
+    surface: str = "#f8fafc"
+    error: str = "#ef4444"
+    warning: str = "#eab308"
+    success: str = "#22c55e"
+    text_primary: str = "#0f172a"
+    text_secondary: str = "#64748b"
+    text_inverse: str = "#ffffff"
+    border: str = "#e2e8f0"
+
+
+class SpacingSpec(BaseModel):
+    unit: str = "4px"
+    scale: dict[str, str] = Field(default_factory=dict)
+
+
+class RadiusShadowSpec(BaseModel):
+    radius: dict[str, str] = Field(default_factory=dict)
+    shadows: dict[str, str] = Field(default_factory=dict)
+
+
+class MotionSpec(BaseModel):
+    duration_fast: str = "100ms"
+    duration_normal: str = "200ms"
+    duration_slow: str = "400ms"
+    easing_default: str = "cubic-bezier(0.4, 0, 0.2, 1)"
+    easing_enter: str = "cubic-bezier(0, 0, 0.2, 1)"
+    easing_exit: str = "cubic-bezier(0.4, 0, 1, 1)"
+    rules: list[str] = Field(default_factory=list)
+
+
+class LayoutSpec(BaseModel):
+    breakpoints: dict[str, str] = Field(default_factory=dict)
+    max_content_width: str = "1280px"
+    grid_columns: int = 12
+    shell_rules: list[str] = Field(default_factory=list)
+
+
+class ComponentDensitySpec(BaseModel):
+    default_density: str = "comfortable"
+    input_height: str = "40px"
+    button_height: str = "40px"
+    rules: list[str] = Field(default_factory=list)
+
+
+class IconographySpec(BaseModel):
+    library: str = "lucide-react"
+    default_size: str = "20px"
+    stroke_width: str = "1.5"
+    rules: list[str] = Field(default_factory=list)
+
+
+class DesignBriefDoc(ArtifactEnvelope):
+    schema_id: str = "design-brief.v2"
+    project_name: str
+    direction_name: str
+    direction_rationale: str
+    direction_traits: list[str] = Field(default_factory=list)
+    typography: TypographySpec = Field(default_factory=TypographySpec)
+    colors: ColorSpec = Field(default_factory=ColorSpec)
+    spacing: SpacingSpec = Field(default_factory=SpacingSpec)
+    radius_shadow: RadiusShadowSpec = Field(default_factory=RadiusShadowSpec)
+    motion: MotionSpec = Field(default_factory=MotionSpec)
+    layout: LayoutSpec = Field(default_factory=LayoutSpec)
+    component_density: ComponentDensitySpec = Field(default_factory=ComponentDensitySpec)
+    iconography: IconographySpec = Field(default_factory=IconographySpec)
+    composition_rules: list[str] = Field(default_factory=list)
+
+
 class BuildBatchV2(BaseModel):
     id: str
     title: str
@@ -269,6 +352,8 @@ class VerificationRunDoc(ArtifactEnvelope):
     base_url: str
     routes: list[str] = Field(default_factory=list)
     dry_run: bool = False
+    bootstrap_succeeded: bool = False
+    bootstrap_commands: list[str] = Field(default_factory=list)
     overall_passed: bool = False
     summary: dict[str, Any] = Field(default_factory=dict)
     report_path: str = ""

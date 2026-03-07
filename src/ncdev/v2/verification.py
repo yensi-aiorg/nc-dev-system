@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from src.tester.results import TestSuiteResults
@@ -54,6 +59,60 @@ def _build_evidence_index(target_path: Path, project_name: str) -> EvidenceIndex
     )
 
 
+def _url_reachable(base_url: str) -> bool:
+    try:
+        with urllib.request.urlopen(base_url, timeout=2.0) as response:
+            return 200 <= response.status < 500
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return False
+
+
+def _bootstrap_target_project(target_path: Path, base_url: str) -> tuple[bool, list[str]]:
+    commands: list[str] = []
+    if _url_reachable(base_url):
+        return True, commands
+
+    compose_candidates = [
+        ["docker", "compose", "up", "-d"],
+        ["docker-compose", "up", "-d"],
+    ]
+    for cmd in compose_candidates:
+        if shutil.which(cmd[0]) is None:
+            continue
+        if not (target_path / "docker-compose.yml").exists():
+            continue
+        commands.append(" ".join(cmd))
+        proc = subprocess.run(
+            cmd,
+            cwd=str(target_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            deadline = time.time() + 45
+            while time.time() < deadline:
+                if _url_reachable(base_url):
+                    return True, commands
+                time.sleep(1)
+
+    setup_script = target_path / "scripts" / "setup.sh"
+    if setup_script.exists():
+        cmd = ["bash", str(setup_script)]
+        commands.append(" ".join(cmd))
+        subprocess.run(
+            cmd,
+            cwd=str(target_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if _url_reachable(base_url):
+            return True, commands
+
+    return _url_reachable(base_url), commands
+
+
 def run_v2_verification(run_dir: Path, *, base_url: str, dry_run: bool) -> tuple[VerificationRunDoc, EvidenceIndexDoc]:
     outputs_dir = run_dir / "outputs"
     scaffold_manifest = _load_json(outputs_dir / "scaffold-manifest.json")
@@ -71,12 +130,35 @@ def run_v2_verification(run_dir: Path, *, base_url: str, dry_run: bool) -> tuple
             base_url=base_url,
             routes=routes,
             dry_run=True,
+            bootstrap_succeeded=True,
+            bootstrap_commands=[],
             overall_passed=True,
             summary={
                 "overall_passed": True,
                 "unit": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
                 "e2e": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
                 "visual": {"screenshots_count": 0, "vision_issues": 0, "comparison_failures": 0},
+            },
+            report_path="",
+        )
+        return verification_run, _build_evidence_index(target_path, project_name)
+
+    bootstrap_succeeded, bootstrap_commands = _bootstrap_target_project(target_path, base_url)
+    if not bootstrap_succeeded:
+        verification_run = VerificationRunDoc(
+            generator="ncdev.v2.verification",
+            source_inputs=[str(target_path)],
+            project_name=project_name,
+            target_path=str(target_path),
+            base_url=base_url,
+            routes=routes,
+            dry_run=False,
+            bootstrap_succeeded=False,
+            bootstrap_commands=bootstrap_commands,
+            overall_passed=False,
+            summary={
+                "overall_passed": False,
+                "bootstrap_error": f"Could not reach {base_url} after bootstrap attempts.",
             },
             report_path="",
         )
@@ -93,6 +175,8 @@ def run_v2_verification(run_dir: Path, *, base_url: str, dry_run: bool) -> tuple
         base_url=base_url,
         routes=routes,
         dry_run=False,
+        bootstrap_succeeded=bootstrap_succeeded,
+        bootstrap_commands=bootstrap_commands,
         overall_passed=suite.overall_passed,
         summary=suite.summary_dict(),
         report_path=str(report_path),
