@@ -14,6 +14,7 @@ from ncdev.discovery.pipeline import run_discovery_pipeline
 from ncdev.utils import make_run_id
 from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
+from ncdev.v2.routing import resolve_routing_plan
 
 
 def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2RunState:
@@ -24,6 +25,7 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
         run_dir=str(run_dir),
         tasks=[
             V2TaskState(name="capability_probe", status=V2TaskStatus.RUNNING),
+            V2TaskState(name="routing"),
             V2TaskState(name="source_ingest"),
             V2TaskState(name="discovery"),
         ],
@@ -41,7 +43,7 @@ def _set_task(state: V2RunState, name: str, status: V2TaskStatus, message: str =
 
 
 def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command: str = "discover-v2") -> V2RunState:
-    ensure_default_v2_config(workspace)
+    config = ensure_default_v2_config(workspace)
     ensure_v2_schema_files(workspace)
 
     run_id = make_run_id("v2")
@@ -65,6 +67,21 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         V2TaskStatus.PASSED,
         "provider capabilities probed",
         artifacts=[str(capability_path)],
+    )
+
+    routing_doc = resolve_routing_plan(config, registry)
+    routing_path = persist_v2_artifact(
+        run_dir,
+        "routing-plan.json",
+        routing_doc.model_dump(mode="json"),
+    )
+    state.artifacts.append(str(routing_path))
+    _set_task(
+        state,
+        "routing",
+        V2TaskStatus.PASSED,
+        "routing plan resolved",
+        artifacts=[str(routing_path)],
     )
 
     source_pack, research_pack, feature_map, design_pack, build_plan = run_discovery_pipeline(source_path, dry_run=dry_run)
@@ -94,6 +111,7 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
     state.phase = V2Phase.COMPLETE
     state.status = V2TaskStatus.PASSED
     state.metadata["dry_run"] = dry_run
+    state.metadata["routing_decisions"] = len(routing_doc.decisions)
     state.touch()
     persist_v2_run_state(state)
     return state

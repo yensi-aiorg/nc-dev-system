@@ -164,6 +164,19 @@ class CapabilitySnapshotDoc(ArtifactEnvelope):
     snapshots: list[ProviderCapabilitySnapshot] = Field(default_factory=list)
 
 
+class RoutingDecision(BaseModel):
+    task_type: TaskType
+    provider: str
+    model: str
+    rationale: str
+    fallback_providers: list[str] = Field(default_factory=list)
+
+
+class RoutingPlanDoc(ArtifactEnvelope):
+    schema_id: str = "routing-plan.v2"
+    decisions: list[RoutingDecision] = Field(default_factory=list)
+
+
 class V2TaskState(BaseModel):
     name: str
     status: V2TaskStatus = V2TaskStatus.PENDING
