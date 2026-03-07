@@ -490,12 +490,18 @@ class FullRunReportDoc(ArtifactEnvelope):
     project_name: str = ""
     target_path: str = ""
     final_status: str
+    readiness_decision: str = "blocked"
+    release_recommendation: str = "hold"
+    readiness_score: int = 0
     verification_passed: bool = False
     bootstrap_succeeded: bool = False
     teardown_succeeded: bool = False
+    evidence_complete: bool = False
+    human_approval_required: bool = True
     repair_cycles_requested: int = 0
     repair_cycles_run: int = 0
     tasks: dict[str, str] = Field(default_factory=dict)
     failed_tasks: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

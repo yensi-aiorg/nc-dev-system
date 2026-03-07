@@ -42,6 +42,7 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="repair_queue"),
             V2TaskState(name="repair_execution"),
             V2TaskState(name="delivery_summary"),
+            V2TaskState(name="release_gate"),
             V2TaskState(name="final_report"),
         ],
     )
@@ -354,6 +355,14 @@ def run_v2_full(
     state.metadata["repair_cycles_run"] = cycles_run
 
     report = _build_full_run_report(state)
+    _set_task(
+        state,
+        "release_gate",
+        V2TaskStatus.PASSED if report.readiness_decision != "blocked" else V2TaskStatus.FAILED,
+        f"release gate decision: {report.readiness_decision}",
+    )
+    if report.readiness_decision == "blocked":
+        state.status = V2TaskStatus.FAILED
     report_path = persist_v2_artifact(Path(state.run_dir), "full-run-report.json", report.model_dump(mode="json"))
     summary_path = Path(state.run_dir) / "outputs" / "full-run-summary.md"
     write_text(summary_path, _render_full_run_summary(report))
@@ -389,6 +398,9 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
     outputs_dir = run_dir / "outputs"
     scaffold_manifest_path = outputs_dir / "scaffold-manifest.json"
     verification_run_path = outputs_dir / "verification-run.json"
+    evidence_index_path = outputs_dir / "evidence-index.json"
+    verification_contract_path = outputs_dir / "verification-contract.json"
+    verification_issues_path = outputs_dir / "verification-issues.json"
 
     project_name = ""
     target_path = ""
@@ -401,18 +413,86 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
     bootstrap_succeeded = bool(state.metadata.get("bootstrap_succeeded", False))
     teardown_succeeded = bool(state.metadata.get("teardown_succeeded", False))
     verification_summary: dict[str, object] = {}
+    verification_issue_count = int(state.metadata.get("verification_issue_count", 0))
+    issue_categories: list[str] = []
+    evidence_complete = False
     if verification_run_path.exists():
         verification_payload = json.loads(verification_run_path.read_text(encoding="utf-8"))
         verification_passed = bool(verification_payload.get("overall_passed", verification_passed))
         verification_summary = dict(verification_payload.get("summary", {}))
+    if verification_issues_path.exists():
+        issues_payload = json.loads(verification_issues_path.read_text(encoding="utf-8"))
+        verification_issue_count = int(issues_payload.get("issue_count", verification_issue_count))
+        issue_categories = sorted({str(issue.get("category", "")) for issue in issues_payload.get("issues", []) if issue.get("category")})
+        evidence_complete = all(str(issue.get("category", "")) != "evidence" for issue in issues_payload.get("issues", []))
+    if not evidence_complete and evidence_index_path.exists() and verification_contract_path.exists():
+        evidence_payload = json.loads(evidence_index_path.read_text(encoding="utf-8"))
+        verification_contract = json.loads(verification_contract_path.read_text(encoding="utf-8"))
+        target_root = Path(target_path) if target_path else None
+        if target_root:
+            evidence_complete = all((target_root / rel_path).exists() for rel_path in verification_contract.get("evidence_paths", []))
+        else:
+            evidence_complete = bool(
+                evidence_payload.get("screenshots")
+                or evidence_payload.get("reports")
+                or evidence_payload.get("videos")
+                or evidence_payload.get("traces")
+            )
 
     tasks = {task.name: task.status.value for task in state.tasks}
     failed_tasks = [task.name for task in state.tasks if task.status in {V2TaskStatus.FAILED, V2TaskStatus.BLOCKED}]
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if not verification_passed:
+        blockers.append("Verification did not pass.")
+    if not bootstrap_succeeded:
+        blockers.append("Target application did not bootstrap successfully.")
+    if not evidence_complete:
+        blockers.append("Required verification evidence is incomplete.")
+    if int(state.metadata.get("job_failed_count", 0)) > 0:
+        blockers.append("One or more execution jobs failed.")
+    if int(state.metadata.get("repair_failed_count", 0)) > 0:
+        blockers.append("One or more repair jobs failed.")
+    if verification_issue_count > 0:
+        blockers.append(f"Verification reported {verification_issue_count} issue(s).")
+    if failed_tasks:
+        blockers.append(f"Run contains failed tasks: {', '.join(failed_tasks)}.")
+    if verification_summary.get("runner_error"):
+        blockers.append("Verification runner reported an exception.")
+    if not teardown_succeeded and bootstrap_succeeded:
+        warnings.append("Verification teardown did not fully succeed.")
+
+    dry_run = bool(state.metadata.get("dry_run", False))
+    readiness_score = 100
+    readiness_score -= min(50, verification_issue_count * 10)
+    readiness_score -= min(20, int(state.metadata.get("job_failed_count", 0)) * 10)
+    readiness_score -= min(20, int(state.metadata.get("repair_failed_count", 0)) * 10)
+    if not verification_passed:
+        readiness_score -= 30
+    if not evidence_complete:
+        readiness_score -= 20
+    if not bootstrap_succeeded:
+        readiness_score -= 20
+    if not teardown_succeeded and bootstrap_succeeded:
+        readiness_score -= 5
+    readiness_score = max(0, min(100, readiness_score))
+
     next_actions: list[str] = []
-    if verification_passed and state.status == V2TaskStatus.PASSED:
+    if dry_run:
+        readiness_decision = "simulation_only"
+        release_recommendation = "do_not_release"
+        next_actions.append("Run the flow again without --dry-run before making any release decision.")
+        next_actions.append("Review generated artifacts and verification contracts for realism.")
+    elif not blockers:
+        readiness_decision = "ready_for_human_review"
+        release_recommendation = "human_approval_required"
         next_actions.append("Review the delivery pack and verification evidence before release.")
         next_actions.append("Run a human acceptance pass on the generated target project.")
+        if warnings:
+            next_actions.extend(warnings)
     else:
+        readiness_decision = "blocked"
+        release_recommendation = "hold"
         next_actions.append("Inspect verification-run.json and repair-run-log.json for unresolved failures.")
         if not bootstrap_succeeded:
             next_actions.append("Confirm the target project's local startup commands and base URL are correct.")
@@ -420,6 +500,8 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
             next_actions.append("Stabilize the verification harness before another repair cycle.")
         if state.metadata.get("repair_cycles_run", 0) >= state.metadata.get("repair_cycles_requested", 0):
             next_actions.append("Increase repair cycles or intervene manually on the failed target project.")
+        if warnings:
+            next_actions.extend(warnings)
 
     return FullRunReportDoc(
         generator="ncdev.v2.engine",
@@ -429,18 +511,27 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
         project_name=project_name,
         target_path=target_path,
         final_status=state.status.value,
+        readiness_decision=readiness_decision,
+        release_recommendation=release_recommendation,
+        readiness_score=readiness_score,
         verification_passed=verification_passed,
         bootstrap_succeeded=bootstrap_succeeded,
         teardown_succeeded=teardown_succeeded,
+        evidence_complete=evidence_complete,
+        human_approval_required=True,
         repair_cycles_requested=int(state.metadata.get("repair_cycles_requested", 0)),
         repair_cycles_run=int(state.metadata.get("repair_cycles_run", 0)),
         tasks=tasks,
         failed_tasks=failed_tasks,
+        blockers=blockers,
         next_actions=next_actions,
         metadata={
             "verification_summary": verification_summary,
             "job_failed_count": state.metadata.get("job_failed_count", 0),
             "repair_failed_count": state.metadata.get("repair_failed_count", 0),
+            "verification_issue_count": verification_issue_count,
+            "issue_categories": issue_categories,
+            "warnings": warnings,
         },
     )
 
@@ -457,11 +548,16 @@ def _render_full_run_summary(report: FullRunReportDoc) -> str:
             f"- Project: `{report.project_name}`",
             f"- Target Path: `{report.target_path}`",
             f"- Final Status: `{report.final_status}`",
+            f"- Readiness Decision: `{report.readiness_decision}`",
+            f"- Release Recommendation: `{report.release_recommendation}`",
+            f"- Readiness Score: `{report.readiness_score}`",
             f"- Verification Passed: `{report.verification_passed}`",
             f"- Bootstrap Succeeded: `{report.bootstrap_succeeded}`",
             f"- Teardown Succeeded: `{report.teardown_succeeded}`",
+            f"- Evidence Complete: `{report.evidence_complete}`",
             f"- Repair Cycles: `{report.repair_cycles_run}` / `{report.repair_cycles_requested}`",
             f"- Failed Tasks: {failed}",
+            f"- Blockers: {', '.join(report.blockers) if report.blockers else 'none'}",
             "",
             "## Next Actions",
             actions,

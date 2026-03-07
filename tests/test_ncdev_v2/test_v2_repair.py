@@ -162,3 +162,112 @@ def test_v2_full_dry_run_completes_without_repairs(tmp_path: Path) -> None:
     assert state.metadata["repair_cycles_run"] == 0
     assert (run_dir / "outputs" / "full-run-report.json").exists()
     assert (run_dir / "outputs" / "full-run-summary.md").exists()
+    report = json.loads((run_dir / "outputs" / "full-run-report.json").read_text(encoding="utf-8"))
+    assert report["readiness_decision"] == "simulation_only"
+    assert report["release_recommendation"] == "do_not_release"
+
+
+def test_v2_full_report_blocks_when_verification_fails(tmp_path: Path) -> None:
+    req = tmp_path / "requirements.md"
+    req.write_text(
+        """
+# Product
+- User can sign in
+""".strip(),
+        encoding="utf-8",
+    )
+    prepared = run_v2_prepare(tmp_path, req, dry_run=True)
+    run_dir = Path(prepared.run_dir)
+
+    (run_dir / "outputs" / "job-run-log.json").write_text(
+        json.dumps(
+            {
+                "generator": "test",
+                "schema_id": "job-run-log.v2",
+                "version": "v2",
+                "generated_at": "2026-03-07T00:00:00+00:00",
+                "source_inputs": [],
+                "project_name": "requirements",
+                "records": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "outputs" / "verification-run.json").write_text(
+        json.dumps(
+            {
+                "generator": "test",
+                "schema_id": "verification-run.v2",
+                "version": "v2",
+                "generated_at": "2026-03-07T00:00:00+00:00",
+                "source_inputs": [],
+                "project_name": "requirements",
+                "target_path": prepared.metadata["target_project_path"],
+                "base_url": "http://localhost:23000",
+                "routes": ["/"],
+                "dry_run": False,
+                "bootstrap_succeeded": False,
+                "overall_passed": False,
+                "summary": {"overall_passed": False, "bootstrap_error": "unreachable"},
+                "report_path": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "outputs" / "verification-issues.json").write_text(
+        json.dumps(
+            {
+                "generator": "test",
+                "schema_id": "verification-issues.v2",
+                "version": "v2",
+                "generated_at": "2026-03-07T00:00:00+00:00",
+                "source_inputs": [],
+                "project_name": "requirements",
+                "target_path": prepared.metadata["target_project_path"],
+                "issue_count": 2,
+                "issues": [
+                    {"issue_id": "bootstrap-unreachable", "title": "bootstrap", "severity": "high", "category": "bootstrap", "expected": "", "actual": "", "related_artifacts": []},
+                    {"issue_id": "missing-evidence", "title": "evidence", "severity": "medium", "category": "evidence", "expected": "", "actual": "", "related_artifacts": []},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "outputs" / "evidence-index.json").write_text(
+        json.dumps(
+            {
+                "generator": "test",
+                "schema_id": "evidence-index.v2",
+                "version": "v2",
+                "generated_at": "2026-03-07T00:00:00+00:00",
+                "source_inputs": [],
+                "project_name": "requirements",
+                "target_path": prepared.metadata["target_project_path"],
+                "screenshots": [],
+                "reports": [],
+                "videos": [],
+                "traces": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from ncdev.artifacts.state import persist_v2_run_state
+    from ncdev.v2.engine import load_v2_run_state, run_v2_deliver, _build_full_run_report
+
+    state = load_v2_run_state(tmp_path, prepared.run_id)
+    state.metadata["dry_run"] = False
+    state.metadata["verification_passed"] = False
+    state.metadata["bootstrap_succeeded"] = False
+    state.metadata["teardown_succeeded"] = False
+    state.metadata["verification_issue_count"] = 2
+    state.metadata["repair_cycles_requested"] = 1
+    state.metadata["repair_cycles_run"] = 1
+    persist_v2_run_state(state)
+    run_v2_deliver(tmp_path, prepared.run_id)
+    state = load_v2_run_state(tmp_path, prepared.run_id)
+    report = _build_full_run_report(state)
+
+    assert report.readiness_decision == "blocked"
+    assert report.release_recommendation == "hold"
+    assert report.blockers
