@@ -12,6 +12,7 @@ from ncdev.engine import (
     run_greenfield,
     summarize_status,
 )
+from ncdev.v2.engine import load_v2_run_state, run_v2_discovery, summarize_v2_status
 
 console = Console()
 
@@ -47,6 +48,15 @@ def build_parser() -> argparse.ArgumentParser:
     deliver = sub.add_parser("deliver", help="Generate delivery summary artifact")
     deliver.add_argument("--run-id", required=True)
     deliver.add_argument("--workspace", default=None)
+
+    discover_v2 = sub.add_parser("discover-v2", help="Run V2 source-ingest and discovery pipeline")
+    discover_v2.add_argument("--source", required=True, help="Path to source requirements or discovery input")
+    discover_v2.add_argument("--workspace", default=None)
+    discover_v2.add_argument("--dry-run", action="store_true", help="Use local heuristic discovery only")
+
+    status_v2 = sub.add_parser("status-v2", help="Print V2 run status")
+    status_v2.add_argument("--run-id", required=True)
+    status_v2.add_argument("--workspace", default=None)
 
     return parser
 
@@ -94,6 +104,25 @@ def main() -> int:
         workspace = _workspace(args.workspace)
         artifact = deliver_for_run(workspace, args.run_id)
         console.print(f"delivery_artifact={artifact}")
+        return 0
+
+    if args.command == "discover-v2":
+        workspace = _workspace(args.workspace)
+        state = run_v2_discovery(
+            workspace=workspace,
+            source_path=Path(args.source).resolve(),
+            dry_run=bool(args.dry_run),
+            command="discover-v2",
+        )
+        console.print(summarize_v2_status(state))
+        console.print(f"run_dir={state.run_dir}")
+        return 0
+
+    if args.command == "status-v2":
+        workspace = _workspace(args.workspace)
+        state = load_v2_run_state(workspace, args.run_id)
+        console.print(summarize_v2_status(state))
+        console.print(f"run_dir={state.run_dir}")
         return 0
 
     parser.print_help()

@@ -12,3 +12,15 @@ def test_cli_analyze_defaults() -> None:
     args = parser.parse_args(["analyze", "--repo", "/tmp/repo"])
     assert args.mode == "brownfield"
     assert args.analysis_only is False
+
+
+def test_cli_discover_v2_defaults() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["discover-v2", "--source", "/tmp/requirements.md"])
+    assert args.dry_run is False
+
+
+def test_cli_status_v2_parses_run_id() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["status-v2", "--run-id", "v2-123"])
+    assert args.run_id == "v2-123"
