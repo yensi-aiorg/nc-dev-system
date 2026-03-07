@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ncdev.utils import read_text, sha256_text
+from ncdev.discovery.ingest import IngestedSource, ingest_source
+from ncdev.utils import sha256_text
 from ncdev.v2.models import (
     BuildBatchV2,
     BuildPlanDoc,
@@ -20,10 +21,6 @@ from ncdev.v2.models import (
 )
 
 
-def _project_name(source_path: Path) -> str:
-    return source_path.stem or source_path.name or "project"
-
-
 def _feature_lines(text: str) -> list[str]:
     lines = []
     for raw in text.splitlines():
@@ -38,36 +35,32 @@ def _feature_lines(text: str) -> list[str]:
 
 
 def run_discovery_pipeline(
-    source_path: Path,
+    source_path: Path | str,
     dry_run: bool,
 ) -> tuple[SourcePackDoc, ResearchPackDoc, FeatureMapDoc, DesignPackDoc, BuildPlanDoc, TargetProjectContractDoc, ScaffoldPlanDoc]:
-    text = read_text(source_path)
-    digest = sha256_text(text)
-    project_name = _project_name(source_path)
+    ingested: IngestedSource = ingest_source(str(source_path))
+    text = ingested.content
+    project_name = ingested.project_name
     feature_lines = _feature_lines(text)
     if not feature_lines:
         feature_lines = ["Core delivery workflow", "Primary user journey", "Admin and support baseline"]
 
     source_pack = SourcePackDoc(
         generator="ncdev.v2.discovery.pipeline",
-        source_inputs=[str(source_path)],
+        source_inputs=[ingested.primary_source],
         project_name=project_name,
-        source_kind="requirements_markdown",
-        primary_source=str(source_path),
+        source_kind=ingested.source_kind,
+        primary_source=ingested.primary_source,
         assets=[
-            SourceAsset(
-                path=str(source_path),
-                kind="requirements_markdown",
-                digest=digest,
-                bytes=len(text.encode("utf-8")),
-            )
+            SourceAsset(path=asset.path, kind=asset.kind, digest=asset.digest, bytes=asset.bytes)
+            for asset in ingested.assets
         ],
-        notes=["dry-run discovery heuristics applied" if dry_run else "local discovery heuristics applied"],
+        notes=ingested.notes + ["dry-run discovery heuristics applied" if dry_run else "local discovery heuristics applied"],
     )
 
     research_pack = ResearchPackDoc(
         generator="ncdev.v2.discovery.pipeline",
-        source_inputs=[str(source_path)],
+        source_inputs=[ingested.primary_source],
         project_name=project_name,
         market_present=False,
         user_segments=["primary operator", "end user", "administrator"],
@@ -100,7 +93,7 @@ def run_discovery_pipeline(
     ]
     feature_map = FeatureMapDoc(
         generator="ncdev.v2.discovery.pipeline",
-        source_inputs=[str(source_path)],
+        source_inputs=[ingested.primary_source],
         project_name=project_name,
         features=features,
         ux_principles=[
@@ -113,7 +106,7 @@ def run_discovery_pipeline(
 
     design_pack = DesignPackDoc(
         generator="ncdev.v2.discovery.pipeline",
-        source_inputs=[str(source_path)],
+        source_inputs=[ingested.primary_source],
         project_name=project_name,
         selected_direction="electric",
         directions=[
@@ -137,7 +130,7 @@ def run_discovery_pipeline(
 
     build_plan = BuildPlanDoc(
         generator="ncdev.v2.discovery.pipeline",
-        source_inputs=[str(source_path)],
+        source_inputs=[ingested.primary_source],
         project_name=project_name,
         batches=[
             BuildBatchV2(
@@ -156,7 +149,7 @@ def run_discovery_pipeline(
     )
     target_contract = TargetProjectContractDoc(
         generator="ncdev.v2.discovery.pipeline",
-        source_inputs=[str(source_path)],
+        source_inputs=[ingested.primary_source],
         project_name=project_name,
         target_type="web",
         stack={
@@ -180,7 +173,7 @@ def run_discovery_pipeline(
     )
     scaffold_plan = ScaffoldPlanDoc(
         generator="ncdev.v2.discovery.pipeline",
-        source_inputs=[str(source_path)],
+        source_inputs=[ingested.primary_source],
         project_name=project_name,
         directories=[
             "frontend/src",
