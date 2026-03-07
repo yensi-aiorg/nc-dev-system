@@ -76,6 +76,17 @@ def _build_verification_issues(
     verification_contract: dict,
 ) -> VerificationIssueBundleDoc:
     issues: list[VerificationIssue] = []
+    required_viewports = [
+        str(viewport).strip()
+        for viewport in verification_contract.get("required_viewports", [])
+        if str(viewport).strip()
+    ]
+    required_checks = {
+        str(check).strip()
+        for check in verification_contract.get("required_checks", [])
+        if str(check).strip()
+    }
+    expected_screenshots = len(verification_run.routes) * len(required_viewports)
 
     bootstrap_commands = [record.command for record in getattr(bootstrap_run, "commands", [])]
     teardown_attempted = bool(getattr(bootstrap_run, "teardown_attempted", False))
@@ -141,6 +152,48 @@ def _build_verification_issues(
                 expected="All required evidence directories should exist after verification.",
                 actual=", ".join(missing_evidence),
                 related_artifacts=missing_evidence,
+            )
+        )
+
+    if required_viewports and expected_screenshots > 0 and len(evidence_index.screenshots) < expected_screenshots:
+        issues.append(
+            VerificationIssue(
+                issue_id="missing-screenshots",
+                title="Required screenshot coverage is incomplete",
+                severity="high",
+                category="evidence",
+                expected=(
+                    f"{expected_screenshots} screenshots across "
+                    f"{len(verification_run.routes)} routes and {len(required_viewports)} viewports."
+                ),
+                actual=f"Only {len(evidence_index.screenshots)} screenshots were captured.",
+                related_artifacts=evidence_index.screenshots,
+            )
+        )
+
+    if {"unit", "integration", "e2e"} & required_checks and not evidence_index.reports:
+        issues.append(
+            VerificationIssue(
+                issue_id="missing-test-reports",
+                title="Verification reports are missing",
+                severity="high",
+                category="evidence",
+                expected="Verification should emit at least one persisted test report artifact.",
+                actual="No report files were found in the configured evidence locations.",
+                related_artifacts=[str(target_path / rel_path) for rel_path in verification_contract.get("evidence_paths", [])],
+            )
+        )
+
+    if isinstance(e2e_summary, dict) and int(e2e_summary.get("failed", 0)) > 0 and not (evidence_index.traces or evidence_index.videos):
+        issues.append(
+            VerificationIssue(
+                issue_id="missing-e2e-diagnostics",
+                title="E2E failures did not produce trace or video diagnostics",
+                severity="medium",
+                category="evidence",
+                expected="Failed E2E runs should capture trace or video artifacts for triage.",
+                actual="No trace.zip or .webm files were found for the failing E2E run.",
+                related_artifacts=evidence_index.reports,
             )
         )
 

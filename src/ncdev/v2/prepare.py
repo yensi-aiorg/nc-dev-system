@@ -155,6 +155,10 @@ def prepare_target_project(
         ],
         startup_commands=startup_commands,
         teardown_commands=teardown_commands,
+        required_viewports=[
+            "desktop",
+            "mobile",
+        ],
         evidence_paths=[
             "docs/evidence",
             "frontend/test-results",

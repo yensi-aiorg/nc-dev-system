@@ -228,3 +228,65 @@ def test_v2_verification_reports_runner_errors_and_teardown(tmp_path: Path, monk
     assert bootstrap_run.teardown_succeeded is False
     assert issue_bundle.issue_count >= 1
     assert evidence_index.project_name == verification_run.project_name
+
+
+def test_v2_verification_flags_missing_screenshot_coverage_and_reports(tmp_path: Path, monkeypatch) -> None:
+    req = tmp_path / "requirements.md"
+    req.write_text(
+        """
+# Product
+- User can sign in
+- User can manage projects
+""".strip(),
+        encoding="utf-8",
+    )
+    prepared = run_v2_prepare(tmp_path, req, dry_run=True)
+    run_dir = Path(prepared.run_dir)
+
+    class FakeSuite:
+        overall_passed = True
+
+        def summary_dict(self):
+            return {
+                "overall_passed": True,
+                "unit": {"total": 2, "passed": 2, "failed": 0, "skipped": 0},
+                "e2e": {"total": 1, "passed": 1, "failed": 0, "skipped": 0},
+                "visual": {"screenshots_count": 1, "vision_issues": 0, "comparison_failures": 0},
+            }
+
+    class FakeRunner:
+        def __init__(self, project_path: Path, *, base_url: str = "http://localhost:23000", **kwargs):
+            self.project_path = Path(project_path)
+            self.base_url = base_url
+
+        async def run_all(self, routes=None):
+            screenshots_dir = self.project_path / ".nc-dev" / "screenshots" / "root"
+            screenshots_dir.mkdir(parents=True, exist_ok=True)
+            (screenshots_dir / "desktop.png").write_bytes(b"\x89PNG\x00")
+            return FakeSuite()
+
+    class FakeBootstrap:
+        bootstrap_succeeded = True
+        started_services = False
+        teardown_succeeded = True
+        commands = []
+
+    monkeypatch.setattr(
+        "ncdev.v2.verification._bootstrap_target_project",
+        lambda target_path, *, project_name, base_url, log_dir, verification_contract: FakeBootstrap(),
+    )
+    monkeypatch.setattr("ncdev.v2.verification.TestRunner", FakeRunner)
+
+    verification_run, evidence_index, bootstrap_run, issue_bundle = run_v2_verification(
+        run_dir,
+        base_url="http://localhost:9999",
+        dry_run=False,
+    )
+
+    issue_ids = {issue.issue_id for issue in issue_bundle.issues}
+    assert verification_run.overall_passed is True
+    assert bootstrap_run.bootstrap_succeeded is True
+    assert "missing-screenshots" in issue_ids
+    assert "missing-test-reports" in issue_ids
+    assert len(evidence_index.screenshots) == 1
+    assert not evidence_index.reports

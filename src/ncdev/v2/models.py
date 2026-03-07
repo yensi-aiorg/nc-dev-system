@@ -246,6 +246,7 @@ class VerificationContractDoc(ArtifactEnvelope):
     commands: list[str] = Field(default_factory=list)
     startup_commands: list[str] = Field(default_factory=list)
     teardown_commands: list[str] = Field(default_factory=list)
+    required_viewports: list[str] = Field(default_factory=list)
     evidence_paths: list[str] = Field(default_factory=list)
     required_checks: list[str] = Field(default_factory=list)
     issue_bundle_fields: list[str] = Field(default_factory=list)
