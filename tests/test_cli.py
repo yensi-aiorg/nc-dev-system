@@ -24,3 +24,9 @@ def test_cli_status_v2_parses_run_id() -> None:
     parser = build_parser()
     args = parser.parse_args(["status-v2", "--run-id", "v2-123"])
     assert args.run_id == "v2-123"
+
+
+def test_cli_prepare_v2_defaults() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["prepare-v2", "--source", "/tmp/requirements.md"])
+    assert args.dry_run is False

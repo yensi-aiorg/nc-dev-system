@@ -149,6 +149,23 @@ class ScaffoldPlanDoc(ArtifactEnvelope):
     test_harness: list[str] = Field(default_factory=list)
 
 
+class ScaffoldManifestDocV2(ArtifactEnvelope):
+    schema_id: str = "scaffold-manifest.v2"
+    project_name: str
+    target_path: str
+    files_written: list[str] = Field(default_factory=list)
+    initialized_git: bool = False
+
+
+class VerificationContractDoc(ArtifactEnvelope):
+    schema_id: str = "verification-contract.v2"
+    project_name: str
+    commands: list[str] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+    required_checks: list[str] = Field(default_factory=list)
+    issue_bundle_fields: list[str] = Field(default_factory=list)
+
+
 class CapabilityDescriptor(BaseModel):
     planning: bool = False
     implementation: bool = False

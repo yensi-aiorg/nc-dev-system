@@ -14,6 +14,7 @@ from ncdev.discovery.pipeline import run_discovery_pipeline
 from ncdev.utils import make_run_id
 from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
+from ncdev.v2.prepare import prepare_target_project
 from ncdev.v2.routing import resolve_routing_plan
 
 
@@ -28,6 +29,7 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="routing"),
             V2TaskState(name="source_ingest"),
             V2TaskState(name="discovery"),
+            V2TaskState(name="prepare_target"),
         ],
     )
 
@@ -117,6 +119,42 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
     state.status = V2TaskStatus.PASSED
     state.metadata["dry_run"] = dry_run
     state.metadata["routing_decisions"] = len(routing_doc.decisions)
+    state.touch()
+    persist_v2_run_state(state)
+    return state
+
+
+def run_v2_prepare(workspace: Path, source_path: Path, dry_run: bool, command: str = "prepare-v2") -> V2RunState:
+    state = run_v2_discovery(workspace=workspace, source_path=source_path, dry_run=dry_run, command=command)
+    run_dir = Path(state.run_dir)
+    outputs_dir = run_dir / "outputs"
+    feature_map = json.loads((outputs_dir / "feature-map.json").read_text(encoding="utf-8"))
+    target_contract = json.loads((outputs_dir / "target-project-contract.json").read_text(encoding="utf-8"))
+    scaffold_plan = json.loads((outputs_dir / "scaffold-plan.json").read_text(encoding="utf-8"))
+
+    from ncdev.v2.models import FeatureMapDoc, ScaffoldPlanDoc, TargetProjectContractDoc
+
+    manifest, verification_contract = prepare_target_project(
+        output_root=workspace / ".nc-dev" / "v2" / "generated" / state.run_id,
+        feature_map=FeatureMapDoc.model_validate(feature_map),
+        target_contract=TargetProjectContractDoc.model_validate(target_contract),
+        scaffold_plan=ScaffoldPlanDoc.model_validate(scaffold_plan),
+    )
+    manifest_path = persist_v2_artifact(run_dir, "scaffold-manifest.json", manifest.model_dump(mode="json"))
+    verification_path = persist_v2_artifact(
+        run_dir,
+        "verification-contract.json",
+        verification_contract.model_dump(mode="json"),
+    )
+    state.artifacts.extend([str(manifest_path), str(verification_path)])
+    _set_task(
+        state,
+        "prepare_target",
+        V2TaskStatus.PASSED,
+        "target project scaffold prepared",
+        artifacts=[str(manifest_path), str(verification_path)],
+    )
+    state.metadata["target_project_path"] = manifest.target_path
     state.touch()
     persist_v2_run_state(state)
     return state

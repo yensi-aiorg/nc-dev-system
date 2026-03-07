@@ -12,7 +12,7 @@ from ncdev.engine import (
     run_greenfield,
     summarize_status,
 )
-from ncdev.v2.engine import load_v2_run_state, run_v2_discovery, summarize_v2_status
+from ncdev.v2.engine import load_v2_run_state, run_v2_discovery, run_v2_prepare, summarize_v2_status
 
 console = Console()
 
@@ -57,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
     status_v2 = sub.add_parser("status-v2", help="Print V2 run status")
     status_v2.add_argument("--run-id", required=True)
     status_v2.add_argument("--workspace", default=None)
+
+    prepare_v2 = sub.add_parser("prepare-v2", help="Run V2 discovery and scaffold a target project")
+    prepare_v2.add_argument("--source", required=True, help="Path to source requirements or discovery input")
+    prepare_v2.add_argument("--workspace", default=None)
+    prepare_v2.add_argument("--dry-run", action="store_true", help="Use local heuristic discovery only")
 
     return parser
 
@@ -121,6 +126,18 @@ def main() -> int:
     if args.command == "status-v2":
         workspace = _workspace(args.workspace)
         state = load_v2_run_state(workspace, args.run_id)
+        console.print(summarize_v2_status(state))
+        console.print(f"run_dir={state.run_dir}")
+        return 0
+
+    if args.command == "prepare-v2":
+        workspace = _workspace(args.workspace)
+        state = run_v2_prepare(
+            workspace=workspace,
+            source_path=Path(args.source).resolve(),
+            dry_run=bool(args.dry_run),
+            command="prepare-v2",
+        )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
         return 0
