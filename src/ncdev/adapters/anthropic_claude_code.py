@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from ncdev.adapters.base import ProviderAdapter, ProviderVersionInfo, TaskExecutionResult
+from ncdev.utils import write_json
 from ncdev.v2.models import CapabilityDescriptor, TaskRequestDoc, TaskType
 
 
@@ -77,6 +79,17 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
     def supports_feature(self, feature_name: str) -> bool:
         return feature_name in {"subagents", "hooks", "mcp", "structured_output"}
 
+    @staticmethod
+    def _result_path(task_request_path: str) -> Path | None:
+        if not task_request_path:
+            return None
+        request_path = Path(task_request_path)
+        if request_path.parent.name == "task-requests":
+            return request_path.parent.parent / "task-results" / request_path.name
+        if request_path.parent.name == "requests":
+            return request_path.parent.parent / "results" / request_path.name
+        return request_path.with_name(f"{request_path.stem}.result.json")
+
     def build_task_request(
         self,
         task_type: TaskType,
@@ -117,16 +130,84 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
         model: str,
         options: dict[str, Any] | None = None,
     ) -> TaskExecutionResult:
-        task_request_path = str((options or {}).get("task_request_path", ""))
+        options = options or {}
+        task_request_path = str(options.get("task_request_path", ""))
         resolved_inputs = [str(path) for path in artifact_paths]
+        if options.get("dry_run"):
+            return TaskExecutionResult(
+                provider=self.name(),
+                model=model,
+                task_type=task_type,
+                status="stubbed",
+                summary=f"Claude dry-run prepared {task_type.value} using {len(artifact_paths)} input artifact(s).",
+                input_artifact=resolved_inputs[0] if resolved_inputs else "",
+                input_artifacts=resolved_inputs,
+                artifact_paths=[task_request_path] if task_request_path else [],
+                metadata=options,
+            )
+        if not self.healthcheck():
+            return TaskExecutionResult(
+                provider=self.name(),
+                model=model,
+                task_type=task_type,
+                status="skipped",
+                summary=f"Claude CLI unavailable for {task_type.value}.",
+                input_artifact=resolved_inputs[0] if resolved_inputs else "",
+                input_artifacts=resolved_inputs,
+                artifact_paths=[task_request_path] if task_request_path else [],
+                metadata=options,
+            )
+
+        task_request = options.get("task_request")
+        if not task_request and task_request_path and Path(task_request_path).exists():
+            task_request = json.loads(Path(task_request_path).read_text(encoding="utf-8"))
+        prompt = ""
+        if isinstance(task_request, dict):
+            prompt = str(task_request.get("prompt", ""))
+        if not prompt:
+            prompt = f"Complete task {task_type.value} using the provided artifacts."
+
+        cmd = [
+            self.cli_name,
+            "-p",
+            prompt,
+            "--output-format",
+            "json",
+            "--model",
+            model,
+        ]
+        target_path = str(options.get("target_path", "")).strip()
+        if target_path:
+            cmd.extend(["--cd", target_path])
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+        result_path = self._result_path(task_request_path)
+        if result_path is not None:
+            payload = {
+                "task_type": task_type.value,
+                "provider": self.name(),
+                "model": model,
+                "returncode": proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+            write_json(result_path, payload)
+        summary = stdout[:500] if stdout else (stderr[:500] if stderr else f"Claude task {task_type.value} completed.")
         return TaskExecutionResult(
             provider=self.name(),
             model=model,
             task_type=task_type,
-            status="stubbed",
-            summary=f"Claude Code adapter stub prepared {task_type.value} using {len(artifact_paths)} input artifact(s).",
+            status="passed" if proc.returncode == 0 else "failed",
+            summary=summary,
             input_artifact=resolved_inputs[0] if resolved_inputs else "",
             input_artifacts=resolved_inputs,
-            artifact_paths=[task_request_path] if task_request_path else [],
-            metadata=options or {},
+            artifact_paths=[path for path in [task_request_path, str(result_path) if result_path else ""] if path],
+            metadata={**options, "returncode": proc.returncode},
         )

@@ -9,6 +9,7 @@ from ncdev.v2.models import (
     BuildPlanDoc,
     ExecutionJob,
     JobQueueDoc,
+    JobRunLogDoc,
     RoutingDecision,
     RoutingPlanDoc,
     ScaffoldManifestDocV2,
@@ -191,5 +192,134 @@ def materialize_job_queue(
         generator="ncdev.v2.jobs",
         source_inputs=[str(outputs_dir)],
         project_name=build_plan.project_name,
+        jobs=jobs,
+    )
+
+
+def materialize_repair_job_queue(
+    run_dir: Path,
+    registry: dict[str, ProviderAdapter],
+) -> JobQueueDoc:
+    outputs_dir = run_dir / "outputs"
+    routing_plan = _load_doc(outputs_dir / "routing-plan.json", RoutingPlanDoc)
+    target_contract = _load_doc(outputs_dir / "target-project-contract.json", TargetProjectContractDoc)
+    scaffold_manifest = _load_doc(outputs_dir / "scaffold-manifest.json", ScaffoldManifestDocV2)
+    verification_contract = _load_doc(outputs_dir / "verification-contract.json", VerificationContractDoc)
+    job_run_log = _load_doc(outputs_dir / "job-run-log.json", JobRunLogDoc)
+    verification_run_path = outputs_dir / "verification-run.json"
+    verification_run = json.loads(verification_run_path.read_text(encoding="utf-8")) if verification_run_path.exists() else {}
+
+    routing = _routing_map(routing_plan)
+    fix_decision = routing.get(TaskType.FIX_BATCH)
+    if not fix_decision or fix_decision.provider not in registry:
+        return JobQueueDoc(
+            generator="ncdev.v2.jobs",
+            source_inputs=[str(outputs_dir / "job-run-log.json")],
+            project_name=target_contract.project_name,
+            jobs=[],
+        )
+
+    adapter = registry[fix_decision.provider]
+    jobs: list[ExecutionJob] = []
+    failed_records = [record for record in job_run_log.records if record.status == "failed"]
+
+    for idx, record in enumerate(failed_records, start=1):
+        job_id = f"fix-{idx:03d}"
+        artifact_paths = [
+            outputs_dir / "build-plan.json",
+            outputs_dir / "scaffold-manifest.json",
+            outputs_dir / "verification-contract.json",
+            outputs_dir / "job-run-log.json",
+        ]
+        artifact_paths.extend(Path(path) for path in record.output_artifacts if Path(path).exists())
+        if verification_run_path.exists():
+            artifact_paths.append(verification_run_path)
+        request = adapter.build_task_request(
+            task_type=TaskType.FIX_BATCH,
+            artifact_paths=artifact_paths,
+            model=fix_decision.model,
+            options={"fallback_providers": fix_decision.fallback_providers},
+        )
+        request.title = f"Repair failed job: {record.job_id}"
+        request.prompt = _append_lines(
+            request.prompt,
+            [
+                f"Failed job id: {record.job_id}",
+                f"Failed task type: {record.task_type.value}",
+                f"Failure summary: {record.summary}",
+                "Repair the target project so the original job and downstream verification pass.",
+            ],
+        )
+        request.metadata.update(
+            {
+                "repair_target_job_id": record.job_id,
+                "repair_target_task_type": record.task_type.value,
+                "target_path": scaffold_manifest.target_path,
+            }
+        )
+        request_path = _persist_request(_job_request_path(outputs_dir, job_id), request)
+        jobs.append(
+            ExecutionJob(
+                job_id=job_id,
+                task_type=TaskType.FIX_BATCH,
+                provider=fix_decision.provider,
+                model=fix_decision.model,
+                title=f"Repair {record.job_id}",
+                request_artifact=request_path,
+                target_path=scaffold_manifest.target_path,
+                input_artifacts=[str(path) for path in artifact_paths],
+                depends_on=[],
+                metadata={"repair_target_job_id": record.job_id},
+            )
+        )
+
+    if verification_run and not verification_run.get("overall_passed", True) and not failed_records:
+        job_id = "fix-verification"
+        artifact_paths = [
+            outputs_dir / "verification-run.json",
+            outputs_dir / "evidence-index.json",
+            outputs_dir / "verification-contract.json",
+            outputs_dir / "scaffold-manifest.json",
+        ]
+        artifact_paths = [path for path in artifact_paths if path.exists()]
+        request = adapter.build_task_request(
+            task_type=TaskType.FIX_BATCH,
+            artifact_paths=artifact_paths,
+            model=fix_decision.model,
+            options={"fallback_providers": fix_decision.fallback_providers},
+        )
+        request.title = "Repair verification failures"
+        request.prompt = _append_lines(
+            request.prompt,
+            [
+                "Verification did not pass after the initial execution phase.",
+                f"Verification summary: {verification_run.get('summary', {})}",
+                "Apply fixes in the target project and add regression coverage where possible.",
+            ],
+        )
+        request.metadata.update({"repair_target_job_id": "verification"})
+        request_path = _persist_request(_job_request_path(outputs_dir, job_id), request)
+        jobs.append(
+            ExecutionJob(
+                job_id=job_id,
+                task_type=TaskType.FIX_BATCH,
+                provider=fix_decision.provider,
+                model=fix_decision.model,
+                title="Repair verification failures",
+                request_artifact=request_path,
+                target_path=scaffold_manifest.target_path,
+                input_artifacts=[str(path) for path in artifact_paths],
+                depends_on=[],
+                metadata={"repair_target_job_id": "verification"},
+            )
+        )
+
+    return JobQueueDoc(
+        generator="ncdev.v2.jobs",
+        source_inputs=[
+            str(outputs_dir / "job-run-log.json"),
+            str(verification_run_path) if verification_run_path.exists() else "",
+        ],
+        project_name=target_contract.project_name,
         jobs=jobs,
     )

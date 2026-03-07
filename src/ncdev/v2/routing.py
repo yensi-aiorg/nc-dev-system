@@ -40,12 +40,13 @@ def resolve_routing_plan(config: NCDevV2Config, registry: dict[str, ProviderAdap
         TaskType.REPO_ANALYSIS,
         TaskType.MARKET_RESEARCH,
         TaskType.FEATURE_EXTRACTION,
-        TaskType.DESIGN_BRIEF,
-        TaskType.BUILD_BATCH,
-        TaskType.TEST_AUTHORING,
-        TaskType.QA_SWEEP,
-        TaskType.DELIVERY_PACK,
-    ]
+    TaskType.DESIGN_BRIEF,
+    TaskType.BUILD_BATCH,
+    TaskType.FIX_BATCH,
+    TaskType.TEST_AUTHORING,
+    TaskType.QA_SWEEP,
+    TaskType.DELIVERY_PACK,
+]
     decisions: list[RoutingDecision] = []
 
     for task_type in task_types:

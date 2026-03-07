@@ -45,3 +45,18 @@ def test_cli_verify_v2_defaults() -> None:
     assert args.run_id == "v2-123"
     assert args.base_url == "http://localhost:23000"
     assert args.dry_run is False
+
+
+def test_cli_repair_v2_defaults() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["repair-v2", "--run-id", "v2-123"])
+    assert args.run_id == "v2-123"
+    assert args.dry_run is False
+
+
+def test_cli_full_v2_defaults() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["full-v2", "--source", "/tmp/requirements.md"])
+    assert args.base_url == "http://localhost:23000"
+    assert args.repair_cycles == 1
+    assert args.dry_run is False

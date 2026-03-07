@@ -342,8 +342,10 @@ def run_job_queue(
     run_dir: Path,
     registry: dict[str, ProviderAdapter],
     dry_run: bool,
+    queue_name: str = "job-queue.json",
 ) -> JobRunLogDoc:
-    job_queue = _load_job_queue(run_dir / "outputs" / "job-queue.json")
+    queue_path = run_dir / "outputs" / queue_name
+    job_queue = _load_job_queue(queue_path)
     records: list[JobRunRecord] = []
     completed: dict[str, str] = {}
 
@@ -372,7 +374,7 @@ def run_job_queue(
 
     return JobRunLogDoc(
         generator="ncdev.v2.job_runner",
-        source_inputs=[str(run_dir / "outputs" / "job-queue.json")],
+        source_inputs=[str(queue_path)],
         project_name=job_queue.project_name,
         records=records,
     )

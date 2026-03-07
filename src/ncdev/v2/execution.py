@@ -46,6 +46,8 @@ def execute_routed_tasks(
     routing_plan: RoutingPlanDoc,
     registry: dict[str, ProviderAdapter],
     outputs_dir: Path,
+    *,
+    dry_run: bool,
 ) -> ExecutionLogDoc:
     results: list[TaskExecutionRecord] = []
     for decision in routing_plan.decisions:
@@ -100,6 +102,7 @@ def execute_routed_tasks(
             artifact_paths=artifact_paths,
             model=decision.model,
             options={
+                "dry_run": dry_run,
                 "fallback_providers": decision.fallback_providers,
                 "task_request_path": task_request_path,
                 "task_request": task_request.model_dump(mode="json"),

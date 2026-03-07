@@ -15,7 +15,7 @@ from ncdev.utils import make_run_id
 from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.execution import execute_routed_tasks
 from ncdev.v2.job_runner import run_job_queue
-from ncdev.v2.jobs import materialize_job_queue
+from ncdev.v2.jobs import materialize_job_queue, materialize_repair_job_queue
 from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
 from ncdev.v2.prepare import prepare_target_project
 from ncdev.v2.routing import resolve_routing_plan
@@ -38,6 +38,8 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="job_queue"),
             V2TaskState(name="job_execution"),
             V2TaskState(name="verification"),
+            V2TaskState(name="repair_queue"),
+            V2TaskState(name="repair_execution"),
         ],
     )
 
@@ -50,6 +52,14 @@ def _set_task(state: V2RunState, name: str, status: V2TaskStatus, message: str =
             if artifacts is not None:
                 task.artifacts = artifacts
             return
+    state.tasks.append(
+        V2TaskState(
+            name=name,
+            status=status,
+            message=message,
+            artifacts=artifacts or [],
+        )
+    )
 
 
 def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command: str = "discover-v2") -> V2RunState:
@@ -123,7 +133,7 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         "discovery artifacts generated",
         artifacts=[str(path) for path in output_paths[1:]],
     )
-    execution_doc = execute_routed_tasks(routing_doc, registry, run_dir / "outputs")
+    execution_doc = execute_routed_tasks(routing_doc, registry, run_dir / "outputs", dry_run=dry_run)
     execution_path = persist_v2_artifact(run_dir, "execution-log.json", execution_doc.model_dump(mode="json"))
     state.artifacts.append(str(execution_path))
     _set_task(
@@ -247,6 +257,68 @@ def run_v2_verify(
     )
     state.metadata["verification_passed"] = verification_run.overall_passed
     state.status = V2TaskStatus.PASSED if verification_run.overall_passed else V2TaskStatus.FAILED
+    state.touch()
+    persist_v2_run_state(state)
+    return state
+
+
+def run_v2_repair(workspace: Path, run_id: str, dry_run: bool, command: str = "repair-v2") -> V2RunState:
+    state = load_v2_run_state(workspace, run_id)
+    run_dir = Path(state.run_dir)
+    state.command = command
+
+    registry = build_provider_registry()
+    repair_queue = materialize_repair_job_queue(run_dir, registry)
+    repair_queue_path = persist_v2_artifact(run_dir, "repair-queue.json", repair_queue.model_dump(mode="json"))
+    state.artifacts.append(str(repair_queue_path))
+    _set_task(
+        state,
+        "repair_queue",
+        V2TaskStatus.PASSED,
+        f"materialized {len(repair_queue.jobs)} repair jobs",
+        artifacts=[str(repair_queue_path)],
+    )
+
+    repair_run_log = run_job_queue(run_dir, registry, dry_run=dry_run, queue_name="repair-queue.json")
+    repair_run_log_path = persist_v2_artifact(run_dir, "repair-run-log.json", repair_run_log.model_dump(mode="json"))
+    state.artifacts.append(str(repair_run_log_path))
+    failed = sum(1 for record in repair_run_log.records if record.status == "failed")
+    state.metadata["repair_job_count"] = len(repair_run_log.records)
+    state.metadata["repair_failed_count"] = failed
+    _set_task(
+        state,
+        "repair_execution",
+        V2TaskStatus.PASSED if failed == 0 else V2TaskStatus.FAILED,
+        f"executed {len(repair_run_log.records)} repair jobs with {failed} failures",
+        artifacts=[str(repair_run_log_path)],
+    )
+    state.status = V2TaskStatus.PASSED if failed == 0 else V2TaskStatus.FAILED
+    state.touch()
+    persist_v2_run_state(state)
+    return state
+
+
+def run_v2_full(
+    workspace: Path,
+    source_path: Path,
+    *,
+    base_url: str,
+    dry_run: bool,
+    repair_cycles: int = 1,
+    command: str = "full-v2",
+) -> V2RunState:
+    state = run_v2_prepare(workspace=workspace, source_path=source_path, dry_run=dry_run, command=command)
+    state = run_v2_execute(workspace=workspace, run_id=state.run_id, dry_run=dry_run, command=command)
+    state = run_v2_verify(workspace=workspace, run_id=state.run_id, base_url=base_url, dry_run=dry_run, command=command)
+
+    cycles_run = 0
+    while cycles_run < repair_cycles and state.status != V2TaskStatus.PASSED:
+        cycles_run += 1
+        state = run_v2_repair(workspace=workspace, run_id=state.run_id, dry_run=dry_run, command=command)
+        state = run_v2_verify(workspace=workspace, run_id=state.run_id, base_url=base_url, dry_run=dry_run, command=command)
+
+    state.metadata["repair_cycles_requested"] = repair_cycles
+    state.metadata["repair_cycles_run"] = cycles_run
     state.touch()
     persist_v2_run_state(state)
     return state

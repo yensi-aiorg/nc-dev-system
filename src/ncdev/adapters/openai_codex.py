@@ -108,7 +108,8 @@ class OpenAICodexAdapter(ProviderAdapter):
         model: str,
         options: dict[str, Any] | None = None,
     ) -> TaskExecutionResult:
-        task_request_path = str((options or {}).get("task_request_path", ""))
+        options = options or {}
+        task_request_path = str(options.get("task_request_path", ""))
         resolved_inputs = [str(path) for path in artifact_paths]
         return TaskExecutionResult(
             provider=self.name(),
@@ -119,5 +120,5 @@ class OpenAICodexAdapter(ProviderAdapter):
             input_artifact=resolved_inputs[0] if resolved_inputs else "",
             input_artifacts=resolved_inputs,
             artifact_paths=[task_request_path] if task_request_path else [],
-            metadata=options or {},
+            metadata=options,
         )

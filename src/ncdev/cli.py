@@ -13,10 +13,12 @@ from ncdev.engine import (
     summarize_status,
 )
 from ncdev.v2.engine import (
+    run_v2_full,
     load_v2_run_state,
     run_v2_discovery,
     run_v2_execute,
     run_v2_prepare,
+    run_v2_repair,
     run_v2_verify,
     summarize_v2_status,
 )
@@ -80,6 +82,18 @@ def build_parser() -> argparse.ArgumentParser:
     verify_v2.add_argument("--workspace", default=None)
     verify_v2.add_argument("--base-url", default="http://localhost:23000")
     verify_v2.add_argument("--dry-run", action="store_true", help="Do not invoke project test or browser commands")
+
+    repair_v2 = sub.add_parser("repair-v2", help="Run V2 repair jobs for failed execution or verification")
+    repair_v2.add_argument("--run-id", required=True)
+    repair_v2.add_argument("--workspace", default=None)
+    repair_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs")
+
+    full_v2 = sub.add_parser("full-v2", help="Run the full V2 flow: prepare, execute, verify, and repair if needed")
+    full_v2.add_argument("--source", required=True, help="Path to source requirements or discovery input")
+    full_v2.add_argument("--workspace", default=None)
+    full_v2.add_argument("--base-url", default="http://localhost:23000")
+    full_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs or test/browser commands")
+    full_v2.add_argument("--repair-cycles", type=int, default=1)
 
     return parser
 
@@ -180,6 +194,32 @@ def main() -> int:
             base_url=args.base_url,
             dry_run=bool(args.dry_run),
             command="verify-v2",
+        )
+        console.print(summarize_v2_status(state))
+        console.print(f"run_dir={state.run_dir}")
+        return 0
+
+    if args.command == "repair-v2":
+        workspace = _workspace(args.workspace)
+        state = run_v2_repair(
+            workspace=workspace,
+            run_id=args.run_id,
+            dry_run=bool(args.dry_run),
+            command="repair-v2",
+        )
+        console.print(summarize_v2_status(state))
+        console.print(f"run_dir={state.run_dir}")
+        return 0
+
+    if args.command == "full-v2":
+        workspace = _workspace(args.workspace)
+        state = run_v2_full(
+            workspace=workspace,
+            source_path=Path(args.source).resolve(),
+            base_url=args.base_url,
+            dry_run=bool(args.dry_run),
+            repair_cycles=int(args.repair_cycles),
+            command="full-v2",
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")

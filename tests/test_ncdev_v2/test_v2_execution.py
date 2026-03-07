@@ -30,7 +30,7 @@ def test_execute_routed_tasks_records_stubbed_results(tmp_path: Path) -> None:
             RoutingDecision(task_type=TaskType.TEST_AUTHORING, provider="openai_codex", model="gpt-5.2-codex", rationale="test"),
         ],
     )
-    log = execute_routed_tasks(routing, build_provider_registry(), outputs)
+    log = execute_routed_tasks(routing, build_provider_registry(), outputs, dry_run=True)
     assert len(log.results) == 6
     assert all(result.status == "stubbed" for result in log.results)
     assert all(result.artifact_paths for result in log.results)
