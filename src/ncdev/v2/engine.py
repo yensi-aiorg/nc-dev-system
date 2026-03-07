@@ -13,6 +13,7 @@ from ncdev.artifacts.state import (
 from ncdev.discovery.pipeline import run_discovery_pipeline
 from ncdev.utils import make_run_id
 from ncdev.v2.config import ensure_default_v2_config
+from ncdev.v2.execution import execute_routed_tasks
 from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
 from ncdev.v2.prepare import prepare_target_project
 from ncdev.v2.routing import resolve_routing_plan
@@ -29,6 +30,7 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="routing"),
             V2TaskState(name="source_ingest"),
             V2TaskState(name="discovery"),
+            V2TaskState(name="execution"),
             V2TaskState(name="prepare_target"),
         ],
     )
@@ -105,7 +107,7 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         state,
         "source_ingest",
         V2TaskStatus.PASSED,
-        f"source normalized from {source_path.name}",
+        f"source normalized from {Path(str(source_path)).name}",
         artifacts=[str(output_paths[0])],
     )
     _set_task(
@@ -114,6 +116,16 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         V2TaskStatus.PASSED,
         "discovery artifacts generated",
         artifacts=[str(path) for path in output_paths[1:]],
+    )
+    execution_doc = execute_routed_tasks(routing_doc, registry, run_dir / "outputs")
+    execution_path = persist_v2_artifact(run_dir, "execution-log.json", execution_doc.model_dump(mode="json"))
+    state.artifacts.append(str(execution_path))
+    _set_task(
+        state,
+        "execution",
+        V2TaskStatus.PASSED,
+        f"executed {len(execution_doc.results)} routed discovery tasks",
+        artifacts=[str(execution_path)],
     )
     state.phase = V2Phase.COMPLETE
     state.status = V2TaskStatus.PASSED

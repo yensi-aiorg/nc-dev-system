@@ -66,5 +66,6 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
             task_type=task_type,
             status="stubbed",
             summary=f"Claude Code adapter stub invoked for {task_type.value} using {artifact_path.name}",
+            input_artifact=str(artifact_path),
             metadata=options or {},
         )

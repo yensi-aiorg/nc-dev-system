@@ -163,18 +163,15 @@ class ProjectGenerator:
         # 11. Generate shell scripts
         await self._render_scripts(project_root, context)
 
-        # 12. Generate CI/CD config
-        await self._render_ci(project_root, context)
-
-        # 13. Generate Makefile
+        # 12. Generate Makefile
         await self.renderer.render_to_file(
             "Makefile.j2", project_root / "Makefile", context
         )
 
-        # 14. Generate env files
+        # 13. Generate env files
         await self._render_env_files(project_root, context)
 
-        # 15. Generate README
+        # 14. Generate README
         await self.renderer.render_to_file(
             "README.md.j2", project_root / "README.md", context
         )
@@ -259,7 +256,6 @@ class ProjectGenerator:
             "frontend/public",
             "scripts",
             "docs/screenshots",
-            ".github/workflows",
         ]
         if self.config.auth_required:
             dirs.append("keycloak/themes")
@@ -376,16 +372,6 @@ class ProjectGenerator:
             await self.renderer.render_to_file(template_name, out, ctx)
             # Set executable permission
             await asyncio.to_thread(_make_executable, out)
-
-    # -- CI/CD -------------------------------------------------------------
-
-    async def _render_ci(self, root: Path, ctx: dict[str, Any]) -> None:
-        """Render GitHub Actions CI workflow."""
-        await self.renderer.render_to_file(
-            ".github/workflows/ci.yml.j2",
-            root / ".github" / "workflows" / "ci.yml",
-            ctx,
-        )
 
     # -- Env files ---------------------------------------------------------
 

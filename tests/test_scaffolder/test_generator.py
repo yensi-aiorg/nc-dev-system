@@ -572,7 +572,7 @@ class TestProjectGenerator:
         assert (root / "frontend" / "tests" / "e2e").is_dir()
         assert (root / "scripts").is_dir()
         assert (root / "docs" / "screenshots").is_dir()
-        assert (root / ".github" / "workflows").is_dir()
+        assert not (root / ".github" / "workflows").exists()
 
     async def test_create_directory_structure_with_auth(self, auth_config, tmp_path):
         gen = ProjectGenerator(auth_config)

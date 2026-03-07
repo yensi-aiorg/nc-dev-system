@@ -146,8 +146,8 @@ class TestScaffoldValidation:
             "Missing .env.development"
         )
         assert (project_path / ".env.test").exists(), "Missing .env.test"
-        assert (project_path / ".github" / "workflows" / "ci.yml").exists(), (
-            "Missing .github/workflows/ci.yml"
+        assert not (project_path / ".github" / "workflows" / "ci.yml").exists(), (
+            "Unexpected .github/workflows/ci.yml"
         )
         assert (project_path / "scripts" / "setup.sh").exists(), (
             "Missing scripts/setup.sh"
@@ -421,23 +421,11 @@ class TestScaffoldValidation:
                     f"scripts/{script_name} is not executable (user execute bit missing)"
                 )
 
-    async def test_ci_workflow_valid_yaml(
+    async def test_ci_workflow_not_generated(
         self, sample_requirements: str, tmp_path: Path
     ) -> None:
-        """Verify the GitHub Actions CI workflow is valid YAML."""
+        """Verify the scaffold no longer emits a GitHub Actions CI workflow."""
         project_path = await _parse_and_scaffold(sample_requirements, tmp_path)
 
         ci_path = project_path / ".github" / "workflows" / "ci.yml"
-        assert ci_path.exists(), "Missing .github/workflows/ci.yml"
-
-        content = ci_path.read_text(encoding="utf-8")
-        assert content.strip(), "ci.yml is empty"
-
-        parsed = yaml.safe_load(content)
-        assert parsed is not None, "ci.yml parsed to None"
-        assert isinstance(parsed, dict), "ci.yml is not a YAML mapping"
-
-        # A valid GitHub Actions workflow should have 'name' or 'on' keys
-        assert "name" in parsed or "on" in parsed, (
-            "ci.yml missing 'name' or 'on' key -- not a valid GitHub Actions workflow"
-        )
+        assert not ci_path.exists(), "Unexpected .github/workflows/ci.yml"

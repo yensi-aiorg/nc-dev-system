@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ncdev.v2.models import CapabilityDescriptor, TaskType
+from ncdev.v2.models import CapabilityDescriptor, TaskExecutionRecord, TaskType
 
 
 class ProviderVersionInfo(BaseModel):
@@ -15,14 +15,7 @@ class ProviderVersionInfo(BaseModel):
     version: str = "unknown"
 
 
-class TaskExecutionResult(BaseModel):
-    provider: str
-    model: str
-    task_type: TaskType
-    status: str
-    summary: str
-    artifact_paths: list[str] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+TaskExecutionResult = TaskExecutionRecord
 
 
 class ProviderAdapter(ABC):

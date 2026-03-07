@@ -212,6 +212,22 @@ class RoutingPlanDoc(ArtifactEnvelope):
     decisions: list[RoutingDecision] = Field(default_factory=list)
 
 
+class TaskExecutionRecord(BaseModel):
+    provider: str
+    model: str
+    task_type: TaskType
+    status: str
+    summary: str
+    input_artifact: str = ""
+    artifact_paths: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionLogDoc(ArtifactEnvelope):
+    schema_id: str = "execution-log.v2"
+    results: list[TaskExecutionRecord] = Field(default_factory=list)
+
+
 class V2TaskState(BaseModel):
     name: str
     status: V2TaskStatus = V2TaskStatus.PENDING

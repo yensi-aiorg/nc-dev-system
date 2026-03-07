@@ -27,3 +27,4 @@ def test_v2_discovery_writes_contract_artifacts(tmp_path: Path) -> None:
     assert (run_dir / "outputs" / "scaffold-plan.json").exists()
     assert (run_dir / "outputs" / "capability-snapshot.json").exists()
     assert (run_dir / "outputs" / "routing-plan.json").exists()
+    assert (run_dir / "outputs" / "execution-log.json").exists()
