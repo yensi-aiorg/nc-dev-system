@@ -11,7 +11,9 @@ from ncdev.v2.models import (
     FeatureMapDoc,
     ResearchPackDoc,
     RoutingPlanDoc,
+    ScaffoldPlanDoc,
     SourcePackDoc,
+    TargetProjectContractDoc,
     V2RunState,
 )
 
@@ -25,6 +27,8 @@ def ensure_v2_schema_files(workspace: Path) -> None:
         "feature-map.v2.json": FeatureMapDoc.model_json_schema(),
         "design-pack.v2.json": DesignPackDoc.model_json_schema(),
         "build-plan.v2.json": BuildPlanDoc.model_json_schema(),
+        "target-project-contract.v2.json": TargetProjectContractDoc.model_json_schema(),
+        "scaffold-plan.v2.json": ScaffoldPlanDoc.model_json_schema(),
         "capability-snapshot.v2.json": CapabilitySnapshotDoc.model_json_schema(),
         "routing-plan.v2.json": RoutingPlanDoc.model_json_schema(),
         "run-state.v2.json": V2RunState.model_json_schema(),

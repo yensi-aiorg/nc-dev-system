@@ -131,6 +131,24 @@ class BuildPlanDoc(ArtifactEnvelope):
     risks: list[str] = Field(default_factory=list)
 
 
+class TargetProjectContractDoc(ArtifactEnvelope):
+    schema_id: str = "target-project-contract.v2"
+    project_name: str
+    target_type: str
+    stack: dict[str, str] = Field(default_factory=dict)
+    ownership_rules: list[str] = Field(default_factory=list)
+    required_artifacts: list[str] = Field(default_factory=list)
+
+
+class ScaffoldPlanDoc(ArtifactEnvelope):
+    schema_id: str = "scaffold-plan.v2"
+    project_name: str
+    directories: list[str] = Field(default_factory=list)
+    files: list[str] = Field(default_factory=list)
+    commands: list[str] = Field(default_factory=list)
+    test_harness: list[str] = Field(default_factory=list)
+
+
 class CapabilityDescriptor(BaseModel):
     planning: bool = False
     implementation: bool = False

@@ -12,9 +12,11 @@ from ncdev.v2.models import (
     FeatureMapDoc,
     ResearchFinding,
     ResearchPackDoc,
+    ScaffoldPlanDoc,
     SourceAsset,
     SourcePackDoc,
     TaskType,
+    TargetProjectContractDoc,
 )
 
 
@@ -35,7 +37,10 @@ def _feature_lines(text: str) -> list[str]:
     return lines
 
 
-def run_discovery_pipeline(source_path: Path, dry_run: bool) -> tuple[SourcePackDoc, ResearchPackDoc, FeatureMapDoc, DesignPackDoc, BuildPlanDoc]:
+def run_discovery_pipeline(
+    source_path: Path,
+    dry_run: bool,
+) -> tuple[SourcePackDoc, ResearchPackDoc, FeatureMapDoc, DesignPackDoc, BuildPlanDoc, TargetProjectContractDoc, ScaffoldPlanDoc]:
     text = read_text(source_path)
     digest = sha256_text(text)
     project_name = _project_name(source_path)
@@ -149,4 +154,60 @@ def run_discovery_pipeline(source_path: Path, dry_run: bool) -> tuple[SourcePack
             "Design pack is generated locally and should later integrate visual-designer exports.",
         ],
     )
-    return source_pack, research_pack, feature_map, design_pack, build_plan
+    target_contract = TargetProjectContractDoc(
+        generator="ncdev.v2.discovery.pipeline",
+        source_inputs=[str(source_path)],
+        project_name=project_name,
+        target_type="web",
+        stack={
+            "frontend": "React 19 + Vite + TypeScript",
+            "backend": "FastAPI + Python 3.12",
+            "storage": "MongoDB",
+            "e2e": "Playwright",
+        },
+        ownership_rules=[
+            "All generated application code belongs in the target project.",
+            "All generated tests belong in the target project.",
+            "NC Dev System only retains orchestration metadata and evidence artifacts.",
+        ],
+        required_artifacts=[
+            "frontend/",
+            "backend/",
+            "docker-compose.yml",
+            "playwright.config.ts",
+            "test-results/",
+        ],
+    )
+    scaffold_plan = ScaffoldPlanDoc(
+        generator="ncdev.v2.discovery.pipeline",
+        source_inputs=[str(source_path)],
+        project_name=project_name,
+        directories=[
+            "frontend/src",
+            "frontend/e2e",
+            "backend/app",
+            "backend/tests",
+            "docs/evidence",
+        ],
+        files=[
+            "frontend/package.json",
+            "frontend/playwright.config.ts",
+            "backend/pyproject.toml",
+            "docker-compose.yml",
+            "scripts/run-tests.sh",
+        ],
+        commands=[
+            "npm install",
+            "python -m venv .venv",
+            "pytest -q",
+            "npx playwright test",
+        ],
+        test_harness=[
+            "frontend unit tests",
+            "backend unit tests",
+            "integration tests",
+            "playwright e2e tests",
+            "evidence capture directory",
+        ],
+    )
+    return source_pack, research_pack, feature_map, design_pack, build_plan, target_contract, scaffold_plan

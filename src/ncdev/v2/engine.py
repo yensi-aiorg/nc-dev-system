@@ -84,7 +84,10 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         artifacts=[str(routing_path)],
     )
 
-    source_pack, research_pack, feature_map, design_pack, build_plan = run_discovery_pipeline(source_path, dry_run=dry_run)
+    source_pack, research_pack, feature_map, design_pack, build_plan, target_contract, scaffold_plan = run_discovery_pipeline(
+        source_path,
+        dry_run=dry_run,
+    )
     state.phase = V2Phase.DISCOVERY
     output_paths = [
         persist_v2_artifact(run_dir, "source-pack.json", source_pack.model_dump(mode="json")),
@@ -92,6 +95,8 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         persist_v2_artifact(run_dir, "feature-map.json", feature_map.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "design-pack.json", design_pack.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "build-plan.json", build_plan.model_dump(mode="json")),
+        persist_v2_artifact(run_dir, "target-project-contract.json", target_contract.model_dump(mode="json")),
+        persist_v2_artifact(run_dir, "scaffold-plan.json", scaffold_plan.model_dump(mode="json")),
     ]
     state.artifacts.extend([str(path) for path in output_paths])
     _set_task(
