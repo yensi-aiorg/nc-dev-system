@@ -14,6 +14,7 @@ from ncdev.discovery.pipeline import run_discovery_pipeline
 from ncdev.utils import make_run_id
 from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.execution import execute_routed_tasks
+from ncdev.v2.job_runner import run_job_queue
 from ncdev.v2.jobs import materialize_job_queue
 from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
 from ncdev.v2.prepare import prepare_target_project
@@ -34,6 +35,7 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="execution"),
             V2TaskState(name="prepare_target"),
             V2TaskState(name="job_queue"),
+            V2TaskState(name="job_execution"),
         ],
     )
 
@@ -181,6 +183,34 @@ def run_v2_prepare(workspace: Path, source_path: Path, dry_run: bool, command: s
         artifacts=[str(job_queue_path)],
     )
     state.metadata["job_count"] = len(job_queue.jobs)
+    state.touch()
+    persist_v2_run_state(state)
+    return state
+
+
+def run_v2_execute(workspace: Path, run_id: str, dry_run: bool, command: str = "execute-v2") -> V2RunState:
+    state = load_v2_run_state(workspace, run_id)
+    run_dir = Path(state.run_dir)
+    state.command = command
+    state.phase = V2Phase.COMPLETE
+
+    registry = build_provider_registry()
+    job_run_log = run_job_queue(run_dir, registry, dry_run=dry_run)
+    job_run_log_path = persist_v2_artifact(run_dir, "job-run-log.json", job_run_log.model_dump(mode="json"))
+    state.artifacts.append(str(job_run_log_path))
+    passed = sum(1 for record in job_run_log.records if record.status in {"passed", "stubbed", "dry-run"})
+    failed = sum(1 for record in job_run_log.records if record.status == "failed")
+    blocked = sum(1 for record in job_run_log.records if record.status == "blocked")
+    _set_task(
+        state,
+        "job_execution",
+        V2TaskStatus.PASSED if failed == 0 else V2TaskStatus.FAILED,
+        f"executed {len(job_run_log.records)} jobs: {passed} passed, {failed} failed, {blocked} blocked",
+        artifacts=[str(job_run_log_path)],
+    )
+    state.metadata["job_run_count"] = len(job_run_log.records)
+    state.metadata["job_failed_count"] = failed
+    state.status = V2TaskStatus.PASSED if failed == 0 else V2TaskStatus.FAILED
     state.touch()
     persist_v2_run_state(state)
     return state

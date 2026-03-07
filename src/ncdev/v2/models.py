@@ -244,6 +244,24 @@ class JobQueueDoc(ArtifactEnvelope):
     jobs: list[ExecutionJob] = Field(default_factory=list)
 
 
+class JobRunRecord(BaseModel):
+    job_id: str
+    task_type: TaskType
+    provider: str
+    model: str
+    status: str
+    summary: str
+    request_artifact: str
+    output_artifacts: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobRunLogDoc(ArtifactEnvelope):
+    schema_id: str = "job-run-log.v2"
+    project_name: str
+    records: list[JobRunRecord] = Field(default_factory=list)
+
+
 class TaskExecutionRecord(BaseModel):
     provider: str
     model: str
