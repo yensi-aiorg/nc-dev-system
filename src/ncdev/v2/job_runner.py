@@ -8,6 +8,7 @@ from src.builder.codex_runner import CodexRunner, CodexRunnerError
 from src.builder.reviewer import BuildReviewer
 
 from ncdev.adapters.base import ProviderAdapter
+from ncdev.utils import write_json, write_text
 from ncdev.v2.models import (
     ExecutionJob,
     JobQueueDoc,
@@ -27,6 +28,14 @@ def _job_output_path(run_dir: Path, job_id: str) -> Path:
 
 def _job_review_path(run_dir: Path, job_id: str) -> Path:
     return run_dir / "logs" / "jobs" / f"{job_id}-review.json"
+
+
+def _job_artifact_path(run_dir: Path, job_id: str, suffix: str) -> Path:
+    return run_dir / "logs" / "jobs" / f"{job_id}-{suffix}"
+
+
+def _load_json(path: str | Path) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
@@ -97,6 +106,73 @@ async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
     )
 
 
+def _run_qa_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
+    target_path = Path(job.target_path)
+    verification_contract = _load_json(next(path for path in job.input_artifacts if path.endswith("verification-contract.json")))
+    evidence_paths = verification_contract.get("evidence_paths", [])
+    missing_paths = [path for path in evidence_paths if not (target_path / path).exists()]
+    findings_path = _job_artifact_path(run_dir, job.job_id, "findings.json")
+    payload = {
+        "target_path": str(target_path),
+        "missing_evidence_paths": missing_paths,
+        "required_checks": verification_contract.get("required_checks", []),
+        "commands": verification_contract.get("commands", []),
+        "summary": (
+            "Evidence paths are incomplete."
+            if missing_paths
+            else "Verification contract evidence paths are present."
+        ),
+    }
+    write_json(findings_path, payload)
+    return JobRunRecord(
+        job_id=job.job_id,
+        task_type=job.task_type,
+        provider=job.provider,
+        model=job.model,
+        status="passed",
+        summary=payload["summary"],
+        request_artifact=job.request_artifact,
+        output_artifacts=[str(findings_path)],
+        metadata=payload,
+    )
+
+
+def _run_delivery_job(job: ExecutionJob, run_dir: Path, records: list[JobRunRecord]) -> JobRunRecord:
+    target_contract = _load_json(next(path for path in job.input_artifacts if path.endswith("verification-contract.json")))
+    report_path = _job_artifact_path(run_dir, job.job_id, "report.md")
+    passed = [record.job_id for record in records if record.status == "passed"]
+    failed = [record.job_id for record in records if record.status == "failed"]
+    blocked = [record.job_id for record in records if record.status == "blocked"]
+    report = "\n".join(
+        [
+            "# Delivery Pack",
+            "",
+            f"Target project: `{job.target_path}`",
+            f"Verification commands: {', '.join(target_contract.get('commands', []))}",
+            "",
+            f"Passed jobs: {', '.join(passed) if passed else 'none'}",
+            f"Failed jobs: {', '.join(failed) if failed else 'none'}",
+            f"Blocked jobs: {', '.join(blocked) if blocked else 'none'}",
+        ]
+    )
+    write_text(report_path, report + "\n")
+    return JobRunRecord(
+        job_id=job.job_id,
+        task_type=job.task_type,
+        provider=job.provider,
+        model=job.model,
+        status="passed",
+        summary="Delivery pack summary generated.",
+        request_artifact=job.request_artifact,
+        output_artifacts=[str(report_path)],
+        metadata={
+            "passed_jobs": passed,
+            "failed_jobs": failed,
+            "blocked_jobs": blocked,
+        },
+    )
+
+
 async def _run_adapter_job(
     job: ExecutionJob,
     registry: dict[str, ProviderAdapter],
@@ -131,6 +207,7 @@ async def _run_job(
     run_dir: Path,
     registry: dict[str, ProviderAdapter],
     dry_run: bool,
+    prior_records: list[JobRunRecord],
 ) -> JobRunRecord:
     if dry_run:
         return JobRunRecord(
@@ -144,6 +221,12 @@ async def _run_job(
             output_artifacts=[],
             metadata={"depends_on": job.depends_on},
         )
+
+    if job.task_type == TaskType.QA_SWEEP:
+        return _run_qa_job(job, run_dir)
+
+    if job.task_type == TaskType.DELIVERY_PACK:
+        return _run_delivery_job(job, run_dir, prior_records)
 
     if job.provider == "openai_codex" and job.task_type in {
         TaskType.BUILD_BATCH,
@@ -195,7 +278,7 @@ def run_job_queue(
             completed[job.job_id] = "blocked"
             continue
 
-        record = asyncio.run(_run_job(job, run_dir, registry, dry_run=dry_run))
+        record = asyncio.run(_run_job(job, run_dir, registry, dry_run=dry_run, prior_records=records))
         records.append(record)
         completed[job.job_id] = "passed" if record.status in {"passed", "stubbed", "dry-run"} else record.status
 

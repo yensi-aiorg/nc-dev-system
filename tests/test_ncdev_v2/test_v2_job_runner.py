@@ -82,3 +82,9 @@ def test_run_job_queue_executes_codex_jobs_with_mocked_runner(tmp_path: Path, mo
     assert build_records
     assert all(record.status == "passed" for record in build_records)
     assert any(Path(path).name.endswith("-review.json") for record in build_records for path in record.output_artifacts)
+    qa_record = next(record for record in log.records if record.job_id == "qa-sweep")
+    delivery_record = next(record for record in log.records if record.job_id == "delivery-pack")
+    assert qa_record.status == "passed"
+    assert delivery_record.status == "passed"
+    assert any(Path(path).name.endswith("-findings.json") for path in qa_record.output_artifacts)
+    assert any(Path(path).name.endswith("-report.md") for path in delivery_record.output_artifacts)
