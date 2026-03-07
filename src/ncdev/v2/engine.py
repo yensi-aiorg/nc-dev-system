@@ -19,6 +19,7 @@ from ncdev.v2.jobs import materialize_job_queue
 from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
 from ncdev.v2.prepare import prepare_target_project
 from ncdev.v2.routing import resolve_routing_plan
+from ncdev.v2.verification import run_v2_verification
 
 
 def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2RunState:
@@ -36,6 +37,7 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="prepare_target"),
             V2TaskState(name="job_queue"),
             V2TaskState(name="job_execution"),
+            V2TaskState(name="verification"),
         ],
     )
 
@@ -211,6 +213,40 @@ def run_v2_execute(workspace: Path, run_id: str, dry_run: bool, command: str = "
     state.metadata["job_run_count"] = len(job_run_log.records)
     state.metadata["job_failed_count"] = failed
     state.status = V2TaskStatus.PASSED if failed == 0 else V2TaskStatus.FAILED
+    state.touch()
+    persist_v2_run_state(state)
+    return state
+
+
+def run_v2_verify(
+    workspace: Path,
+    run_id: str,
+    *,
+    base_url: str,
+    dry_run: bool,
+    command: str = "verify-v2",
+) -> V2RunState:
+    state = load_v2_run_state(workspace, run_id)
+    run_dir = Path(state.run_dir)
+    state.command = command
+
+    verification_run, evidence_index = run_v2_verification(
+        run_dir,
+        base_url=base_url,
+        dry_run=dry_run,
+    )
+    verification_path = persist_v2_artifact(run_dir, "verification-run.json", verification_run.model_dump(mode="json"))
+    evidence_path = persist_v2_artifact(run_dir, "evidence-index.json", evidence_index.model_dump(mode="json"))
+    state.artifacts.extend([str(verification_path), str(evidence_path)])
+    _set_task(
+        state,
+        "verification",
+        V2TaskStatus.PASSED if verification_run.overall_passed else V2TaskStatus.FAILED,
+        f"verification completed with overall_passed={verification_run.overall_passed}",
+        artifacts=[str(verification_path), str(evidence_path)],
+    )
+    state.metadata["verification_passed"] = verification_run.overall_passed
+    state.status = V2TaskStatus.PASSED if verification_run.overall_passed else V2TaskStatus.FAILED
     state.touch()
     persist_v2_run_state(state)
     return state

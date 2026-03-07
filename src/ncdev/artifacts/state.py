@@ -20,6 +20,8 @@ from ncdev.v2.models import (
     TaskRequestDoc,
     TargetProjectContractDoc,
     VerificationContractDoc,
+    VerificationRunDoc,
+    EvidenceIndexDoc,
     V2RunState,
 )
 
@@ -41,6 +43,8 @@ def ensure_v2_schema_files(workspace: Path) -> None:
         "job-queue.v2.json": JobQueueDoc.model_json_schema(),
         "job-run-log.v2.json": JobRunLogDoc.model_json_schema(),
         "task-request.v2.json": TaskRequestDoc.model_json_schema(),
+        "verification-run.v2.json": VerificationRunDoc.model_json_schema(),
+        "evidence-index.v2.json": EvidenceIndexDoc.model_json_schema(),
         "capability-snapshot.v2.json": CapabilitySnapshotDoc.model_json_schema(),
         "routing-plan.v2.json": RoutingPlanDoc.model_json_schema(),
         "run-state.v2.json": V2RunState.model_json_schema(),

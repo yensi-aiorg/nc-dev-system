@@ -37,3 +37,11 @@ def test_cli_execute_v2_defaults() -> None:
     args = parser.parse_args(["execute-v2", "--run-id", "v2-123"])
     assert args.run_id == "v2-123"
     assert args.dry_run is False
+
+
+def test_cli_verify_v2_defaults() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["verify-v2", "--run-id", "v2-123"])
+    assert args.run_id == "v2-123"
+    assert args.base_url == "http://localhost:23000"
+    assert args.dry_run is False

@@ -262,6 +262,28 @@ class JobRunLogDoc(ArtifactEnvelope):
     records: list[JobRunRecord] = Field(default_factory=list)
 
 
+class VerificationRunDoc(ArtifactEnvelope):
+    schema_id: str = "verification-run.v2"
+    project_name: str
+    target_path: str
+    base_url: str
+    routes: list[str] = Field(default_factory=list)
+    dry_run: bool = False
+    overall_passed: bool = False
+    summary: dict[str, Any] = Field(default_factory=dict)
+    report_path: str = ""
+
+
+class EvidenceIndexDoc(ArtifactEnvelope):
+    schema_id: str = "evidence-index.v2"
+    project_name: str
+    target_path: str
+    screenshots: list[str] = Field(default_factory=list)
+    reports: list[str] = Field(default_factory=list)
+    videos: list[str] = Field(default_factory=list)
+    traces: list[str] = Field(default_factory=list)
+
+
 class TaskExecutionRecord(BaseModel):
     provider: str
     model: str

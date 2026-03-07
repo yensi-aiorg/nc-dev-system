@@ -17,6 +17,7 @@ from ncdev.v2.engine import (
     run_v2_discovery,
     run_v2_execute,
     run_v2_prepare,
+    run_v2_verify,
     summarize_v2_status,
 )
 
@@ -73,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     execute_v2.add_argument("--run-id", required=True)
     execute_v2.add_argument("--workspace", default=None)
     execute_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs")
+
+    verify_v2 = sub.add_parser("verify-v2", help="Run V2 verification against the prepared target project")
+    verify_v2.add_argument("--run-id", required=True)
+    verify_v2.add_argument("--workspace", default=None)
+    verify_v2.add_argument("--base-url", default="http://localhost:23000")
+    verify_v2.add_argument("--dry-run", action="store_true", help="Do not invoke project test or browser commands")
 
     return parser
 
@@ -160,6 +167,19 @@ def main() -> int:
             run_id=args.run_id,
             dry_run=bool(args.dry_run),
             command="execute-v2",
+        )
+        console.print(summarize_v2_status(state))
+        console.print(f"run_dir={state.run_dir}")
+        return 0
+
+    if args.command == "verify-v2":
+        workspace = _workspace(args.workspace)
+        state = run_v2_verify(
+            workspace=workspace,
+            run_id=args.run_id,
+            base_url=args.base_url,
+            dry_run=bool(args.dry_run),
+            command="verify-v2",
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
