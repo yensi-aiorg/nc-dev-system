@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 
 from ncdev.v2.engine import run_v2_prepare, run_v2_verify
-from ncdev.v2.verification import _apply_contract_teardown, _bootstrap_target_project, run_v2_verification
+from ncdev.v2.verification import (
+    _apply_contract_teardown,
+    _bootstrap_target_project,
+    _resolve_healthcheck_url,
+    run_v2_verification,
+)
 
 
 def test_v2_verify_dry_run_persists_verification_artifacts(tmp_path: Path) -> None:
@@ -302,7 +307,10 @@ def test_v2_bootstrap_supports_background_startup_commands(tmp_path: Path, monke
         pid = 43210
 
     monkeypatch.setattr("ncdev.v2.verification._url_reachable", lambda base_url: False)
-    monkeypatch.setattr("ncdev.v2.verification._wait_for_reachability", lambda base_url, timeout_seconds=45: True)
+    monkeypatch.setattr(
+        "ncdev.v2.verification._wait_for_reachability",
+        lambda base_url, timeout_seconds=45, interval_seconds=1: True,
+    )
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess())
 
@@ -366,3 +374,59 @@ def test_v2_teardown_terminates_background_startup_processes(tmp_path: Path, mon
     assert killed
     assert updated.teardown_commands
     assert updated.teardown_commands[0].background is True
+
+
+def test_v2_healthcheck_url_resolution_uses_contract_override() -> None:
+    assert _resolve_healthcheck_url(
+        "http://localhost:3000",
+        {"healthcheck_url": "http://localhost:3001/readyz", "healthcheck_path": "/ignored"},
+    ) == "http://localhost:3001/readyz"
+
+
+def test_v2_bootstrap_uses_healthcheck_path_and_timeout(tmp_path: Path, monkeypatch) -> None:
+    target_path = tmp_path / "target"
+    target_path.mkdir()
+    (target_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    calls: list[tuple[str, int, int]] = []
+
+    monkeypatch.setattr("ncdev.v2.verification._url_reachable", lambda base_url: False)
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+
+    def fake_wait(url: str, timeout_seconds: int = 45, interval_seconds: int = 1) -> bool:
+        calls.append((url, timeout_seconds, interval_seconds))
+        return True
+
+    monkeypatch.setattr("ncdev.v2.verification._wait_for_reachability", fake_wait)
+    monkeypatch.setattr(
+        "ncdev.v2.verification._run_logged_command",
+        lambda target_path, log_dir, prefix, stage, cmd: type(
+            "CommandRecord",
+            (),
+            {
+                "command": " ".join(cmd),
+                "succeeded": True,
+                "background": False,
+                "pid": None,
+            },
+        )(),
+    )
+
+    bootstrap_run = _bootstrap_target_project(
+        target_path,
+        project_name="target",
+        base_url="http://localhost:3000",
+        log_dir=log_dir,
+        verification_contract={
+            "startup_commands": ["docker compose up -d"],
+            "teardown_commands": ["docker compose down"],
+            "healthcheck_path": "/healthz",
+            "startup_timeout_seconds": 90,
+            "healthcheck_interval_seconds": 2,
+        },
+    )
+
+    assert bootstrap_run.bootstrap_succeeded is True
+    assert calls == [("http://localhost:3000/healthz", 90, 2)]

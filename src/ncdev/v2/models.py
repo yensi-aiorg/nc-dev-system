@@ -246,6 +246,10 @@ class VerificationContractDoc(ArtifactEnvelope):
     commands: list[str] = Field(default_factory=list)
     startup_commands: list[str] = Field(default_factory=list)
     teardown_commands: list[str] = Field(default_factory=list)
+    healthcheck_url: str = ""
+    healthcheck_path: str = "/"
+    startup_timeout_seconds: int = 45
+    healthcheck_interval_seconds: int = 1
     required_viewports: list[str] = Field(default_factory=list)
     evidence_paths: list[str] = Field(default_factory=list)
     required_checks: list[str] = Field(default_factory=list)

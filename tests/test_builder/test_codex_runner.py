@@ -536,9 +536,8 @@ class TestCodexRunnerCheckAvailable:
         mock_process.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            with patch("asyncio.wait_for", return_value=(b"codex v1.2.3", b"")):
-                runner = CodexRunner()
-                result = await runner.check_available()
+            runner = CodexRunner()
+            result = await runner.check_available()
 
         assert result is True
 
@@ -571,9 +570,8 @@ class TestCodexRunnerCheckAuthenticated:
         mock_process.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            with patch("asyncio.wait_for", return_value=(b"Authenticated", b"")):
-                runner = CodexRunner()
-                result = await runner.check_authenticated()
+            runner = CodexRunner()
+            result = await runner.check_authenticated()
 
         assert result is True
 
@@ -587,9 +585,8 @@ class TestCodexRunnerCheckAuthenticated:
         mock_process.returncode = 1
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            with patch("asyncio.wait_for", return_value=(b"Not logged in", b"")):
-                runner = CodexRunner()
-                result = await runner.check_authenticated()
+            runner = CodexRunner()
+            result = await runner.check_authenticated()
 
         assert result is False
 

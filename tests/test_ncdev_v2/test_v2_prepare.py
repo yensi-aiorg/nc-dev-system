@@ -30,5 +30,7 @@ def test_v2_prepare_generates_target_project_and_verification_contract(tmp_path:
     verification_contract = json.loads((run_dir / "outputs" / "verification-contract.json").read_text(encoding="utf-8"))
     assert verification_contract["startup_commands"]
     assert verification_contract["teardown_commands"]
+    assert verification_contract["healthcheck_path"] == "/"
+    assert verification_contract["startup_timeout_seconds"] == 45
     assert verification_contract["required_viewports"] == ["desktop", "mobile"]
     assert state.metadata["job_count"] >= 3

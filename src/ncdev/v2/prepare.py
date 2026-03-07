@@ -155,6 +155,9 @@ def prepare_target_project(
         ],
         startup_commands=startup_commands,
         teardown_commands=teardown_commands,
+        healthcheck_path="/",
+        startup_timeout_seconds=45,
+        healthcheck_interval_seconds=1,
         required_viewports=[
             "desktop",
             "mobile",

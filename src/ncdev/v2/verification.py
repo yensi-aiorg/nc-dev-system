@@ -234,12 +234,24 @@ def _command_log_path(log_dir: Path, prefix: str, stream: str) -> Path:
     return log_dir / f"{prefix}-{stream}.log"
 
 
-def _wait_for_reachability(base_url: str, timeout_seconds: int = 45) -> bool:
+def _resolve_healthcheck_url(base_url: str, verification_contract: dict) -> str:
+    override = str(verification_contract.get("healthcheck_url", "")).strip()
+    if override:
+        return override
+    healthcheck_path = str(verification_contract.get("healthcheck_path", "/")).strip() or "/"
+    if healthcheck_path.startswith(("http://", "https://")):
+        return healthcheck_path
+    normalized_base = base_url.rstrip("/")
+    normalized_path = healthcheck_path if healthcheck_path.startswith("/") else f"/{healthcheck_path}"
+    return f"{normalized_base}{normalized_path}"
+
+
+def _wait_for_reachability(base_url: str, timeout_seconds: int = 45, interval_seconds: int = 1) -> bool:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         if _url_reachable(base_url):
             return True
-        time.sleep(1)
+        time.sleep(max(1, interval_seconds))
     return False
 
 
@@ -360,7 +372,10 @@ def _bootstrap_target_project(
     log_dir: Path,
     verification_contract: dict,
 ) -> BootstrapRunDoc:
-    reachable_before = _url_reachable(base_url)
+    healthcheck_url = _resolve_healthcheck_url(base_url, verification_contract)
+    startup_timeout_seconds = int(verification_contract.get("startup_timeout_seconds", 45) or 45)
+    healthcheck_interval_seconds = int(verification_contract.get("healthcheck_interval_seconds", 1) or 1)
+    reachable_before = _url_reachable(healthcheck_url)
     bootstrap_run = BootstrapRunDoc(
         generator="ncdev.v2.verification",
         source_inputs=[str(target_path)],
@@ -370,10 +385,10 @@ def _bootstrap_target_project(
         reachable_before_bootstrap=reachable_before,
         bootstrap_succeeded=reachable_before,
         started_services=False,
-        summary={"base_url": base_url},
+        summary={"base_url": base_url, "healthcheck_url": healthcheck_url},
     )
     if reachable_before:
-        bootstrap_run.summary["note"] = "Base URL already reachable before bootstrap."
+        bootstrap_run.summary["note"] = "Healthcheck URL already reachable before bootstrap."
         return bootstrap_run
 
     configured_startup = [str(command).strip() for command in verification_contract.get("startup_commands", []) if str(command).strip()]
@@ -395,7 +410,11 @@ def _bootstrap_target_project(
             record = _run_logged_command(target_path, log_dir, f"bootstrap-{index:02d}", "bootstrap", cmd)
         bootstrap_run.commands.append(record)
         if record.succeeded:
-            if _wait_for_reachability(base_url):
+            if _wait_for_reachability(
+                healthcheck_url,
+                timeout_seconds=startup_timeout_seconds,
+                interval_seconds=healthcheck_interval_seconds,
+            ):
                 bootstrap_run.bootstrap_succeeded = True
                 bootstrap_run.started_services = True
                 bootstrap_run.summary["note"] = "Target project became reachable after bootstrap."
@@ -415,13 +434,17 @@ def _bootstrap_target_project(
             cmd,
         )
         bootstrap_run.commands.append(record)
-        if _wait_for_reachability(base_url, timeout_seconds=10):
+        if _wait_for_reachability(
+            healthcheck_url,
+            timeout_seconds=min(10, startup_timeout_seconds),
+            interval_seconds=healthcheck_interval_seconds,
+        ):
             bootstrap_run.bootstrap_succeeded = True
             bootstrap_run.started_services = True
             bootstrap_run.summary["note"] = "Target project became reachable after setup script."
             return bootstrap_run
 
-    bootstrap_run.bootstrap_succeeded = _url_reachable(base_url)
+    bootstrap_run.bootstrap_succeeded = _url_reachable(healthcheck_url)
     if not bootstrap_run.commands:
         bootstrap_run.summary["note"] = "No bootstrap commands were available."
     return bootstrap_run

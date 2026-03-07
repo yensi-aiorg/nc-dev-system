@@ -33,6 +33,23 @@ from src.tester.vision import (
 )
 
 
+class _FakeAsyncClient:
+    def __init__(self, response=None, error: Exception | None = None):
+        self._response = response
+        self._error = error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, *args, **kwargs):
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
 # ---------------------------------------------------------------------------
 # _encode_image_base64
 # ---------------------------------------------------------------------------
@@ -223,12 +240,7 @@ class TestAnalyzeScreenshotOllamaSuccess:
         mock_response.json.return_value = {"response": json.dumps(ollama_response_data)}
         mock_response.raise_for_status = MagicMock()
 
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(response=mock_response)):
             result = await analyzer.analyze_screenshot(screenshot, route="/", viewport="desktop")
 
         assert result.passed is True
@@ -260,11 +272,6 @@ class TestAnalyzeScreenshotEscalation:
         mock_ollama_resp.json.return_value = {"response": json.dumps(ollama_data)}
         mock_ollama_resp.raise_for_status = MagicMock()
 
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_ollama_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
         # Claude returns higher confidence
         claude_data = json.dumps({
             "passed": True,
@@ -277,10 +284,9 @@ class TestAnalyzeScreenshotEscalation:
         mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
         mock_proc.returncode = 0
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(response=mock_ollama_resp)):
             with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-                with patch("asyncio.wait_for", return_value=(claude_data.encode(), b"")):
-                    result = await analyzer.analyze_screenshot(screenshot, route="/", viewport="desktop")
+                result = await analyzer.analyze_screenshot(screenshot, route="/", viewport="desktop")
 
         assert result.analyzer == "claude"
         assert result.confidence == 0.92
@@ -305,11 +311,6 @@ class TestAnalyzeScreenshotEscalation:
         mock_ollama_resp.json.return_value = {"response": json.dumps(ollama_data)}
         mock_ollama_resp.raise_for_status = MagicMock()
 
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_ollama_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
         # Claude confirms
         claude_data = json.dumps({
             "passed": False,
@@ -321,10 +322,9 @@ class TestAnalyzeScreenshotEscalation:
         mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
         mock_proc.returncode = 0
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(response=mock_ollama_resp)):
             with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-                with patch("asyncio.wait_for", return_value=(claude_data.encode(), b"")):
-                    result = await analyzer.analyze_screenshot(screenshot, route="/")
+                result = await analyzer.analyze_screenshot(screenshot, route="/")
 
         assert result.analyzer == "claude"
         assert result.passed is False
@@ -344,11 +344,6 @@ class TestAnalyzeScreenshotOllamaUnavailable:
 
         import httpx
 
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
         # Claude fallback
         claude_data = json.dumps({
             "passed": True,
@@ -360,10 +355,9 @@ class TestAnalyzeScreenshotOllamaUnavailable:
         mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
         mock_proc.returncode = 0
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(error=httpx.ConnectError("Connection refused"))):
             with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-                with patch("asyncio.wait_for", return_value=(claude_data.encode(), b"")):
-                    result = await analyzer.analyze_screenshot(screenshot, route="/")
+                result = await analyzer.analyze_screenshot(screenshot, route="/")
 
         assert result.analyzer == "claude"
 
@@ -376,20 +370,14 @@ class TestAnalyzeScreenshotOllamaUnavailable:
 
         import httpx
 
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("Timed out"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
         claude_data = json.dumps({"passed": True, "confidence": 0.9, "issues": [], "suggestions": []})
         mock_proc = AsyncMock()
         mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
         mock_proc.returncode = 0
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(error=httpx.TimeoutException("Timed out"))):
             with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-                with patch("asyncio.wait_for", return_value=(claude_data.encode(), b"")):
-                    result = await analyzer.analyze_screenshot(screenshot, route="/")
+                result = await analyzer.analyze_screenshot(screenshot, route="/")
 
         assert result.analyzer == "claude"
 
@@ -473,8 +461,8 @@ class TestAnalyzeBatch:
                 analyzer="mock",
             )
 
-        with patch.object(analyzer, "analyze_screenshot", side_effect=_mock_analyze):
-            results = await analyzer.analyze_batch(screenshots)
+        analyzer.analyze_screenshot = _mock_analyze  # type: ignore[method-assign]
+        results = await analyzer.analyze_batch(screenshots)
 
         assert len(results) == 2
         routes_found = {r.route for r in results}

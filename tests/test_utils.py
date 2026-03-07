@@ -419,12 +419,17 @@ class TestWaitForHealth:
         mock_response = MagicMock()
         mock_response.status_code = 200
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        class FakeClient:
+            async def __aenter__(self):
+                return self
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url):
+                return mock_response
+
+        with patch("httpx.AsyncClient", return_value=FakeClient()):
             result = await wait_for_health(
                 "http://localhost:23001/health",
                 timeout=5,
@@ -436,12 +441,17 @@ class TestWaitForHealth:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_timeout_returns_false(self):
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        class FakeClient:
+            async def __aenter__(self):
+                return self
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url):
+                raise httpx.ConnectError("refused")
+
+        with patch("httpx.AsyncClient", return_value=FakeClient()):
             result = await wait_for_health(
                 "http://localhost:23001/health",
                 timeout=2,
@@ -464,12 +474,17 @@ class TestWaitForHealth:
             mock_resp.status_code = 200
             return mock_resp
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=get_side_effect)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        class FakeClient:
+            async def __aenter__(self):
+                return self
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url):
+                return await get_side_effect(url)
+
+        with patch("httpx.AsyncClient", return_value=FakeClient()):
             result = await wait_for_health(
                 "http://localhost:23001/health",
                 timeout=30,
@@ -494,12 +509,17 @@ class TestWaitForHealth:
                 mock_resp.status_code = 200
             return mock_resp
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=get_side_effect)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        class FakeClient:
+            async def __aenter__(self):
+                return self
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, url):
+                return await get_side_effect(url)
+
+        with patch("httpx.AsyncClient", return_value=FakeClient()):
             result = await wait_for_health(
                 "http://localhost:23001/health",
                 timeout=30,
