@@ -27,3 +27,14 @@ def test_v2_discovery_accepts_repository_directory_input(tmp_path: Path) -> None
     run_dir = Path(state.run_dir)
     source_pack = (run_dir / "outputs" / "source-pack.json").read_text(encoding="utf-8")
     assert '"source_kind": "repo_directory"' in source_pack
+
+
+def test_ingest_directory_bundle_reads_nonstandard_markdown_names(tmp_path: Path) -> None:
+    docs = tmp_path / "planning"
+    docs.mkdir()
+    (docs / "01-PROBLEM-STATEMENT.md").write_text(
+        "# Problem\n\n1. Authentication\n2. Authorization\n",
+        encoding="utf-8",
+    )
+    ingested = ingest_source(str(docs))
+    assert "Authentication" in ingested.content

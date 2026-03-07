@@ -10,7 +10,7 @@ from ncdev.artifacts.state import (
     persist_v2_artifact,
     persist_v2_run_state,
 )
-from ncdev.discovery.pipeline import run_discovery_pipeline
+from ncdev.discovery.pipeline import run_discovery_pipeline_with_target
 from ncdev.utils import make_run_id, write_text
 from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.execution import execute_routed_tasks
@@ -66,7 +66,14 @@ def _set_task(state: V2RunState, name: str, status: V2TaskStatus, message: str =
     )
 
 
-def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command: str = "discover-v2") -> V2RunState:
+def run_v2_discovery(
+    workspace: Path,
+    source_path: Path,
+    dry_run: bool,
+    command: str = "discover-v2",
+    *,
+    target_repo_path: Path | None = None,
+) -> V2RunState:
     config = ensure_default_v2_config(workspace)
     ensure_v2_schema_files(workspace)
 
@@ -108,9 +115,10 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         artifacts=[str(routing_path)],
     )
 
-    source_pack, research_pack, feature_map, design_pack, design_brief, build_plan, target_contract, scaffold_plan = run_discovery_pipeline(
+    source_pack, research_pack, feature_map, design_pack, design_brief, build_plan, phase_plan, target_contract, scaffold_plan = run_discovery_pipeline_with_target(
         source_path,
         dry_run=dry_run,
+        target_repo_path=target_repo_path,
     )
     state.phase = V2Phase.DISCOVERY
     output_paths = [
@@ -120,6 +128,7 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         persist_v2_artifact(run_dir, "design-pack.json", design_pack.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "design-brief.json", design_brief.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "build-plan.json", build_plan.model_dump(mode="json")),
+        persist_v2_artifact(run_dir, "phase-plan.json", phase_plan.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "target-project-contract.json", target_contract.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "scaffold-plan.json", scaffold_plan.model_dump(mode="json")),
     ]
@@ -153,13 +162,28 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
     state.metadata["dry_run"] = dry_run
     state.metadata["project_name"] = feature_map.project_name
     state.metadata["routing_decisions"] = len(routing_doc.decisions)
+    if target_repo_path is not None:
+        state.metadata["target_repo_path"] = str(target_repo_path)
     state.touch()
     persist_v2_run_state(state)
     return state
 
 
-def run_v2_prepare(workspace: Path, source_path: Path, dry_run: bool, command: str = "prepare-v2") -> V2RunState:
-    state = run_v2_discovery(workspace=workspace, source_path=source_path, dry_run=dry_run, command=command)
+def run_v2_prepare(
+    workspace: Path,
+    source_path: Path,
+    dry_run: bool,
+    command: str = "prepare-v2",
+    *,
+    target_repo_path: Path | None = None,
+) -> V2RunState:
+    state = run_v2_discovery(
+        workspace=workspace,
+        source_path=source_path,
+        dry_run=dry_run,
+        command=command,
+        target_repo_path=target_repo_path,
+    )
     run_dir = Path(state.run_dir)
     outputs_dir = run_dir / "outputs"
     feature_map = json.loads((outputs_dir / "feature-map.json").read_text(encoding="utf-8"))
@@ -173,6 +197,7 @@ def run_v2_prepare(workspace: Path, source_path: Path, dry_run: bool, command: s
         feature_map=FeatureMapDoc.model_validate(feature_map),
         target_contract=TargetProjectContractDoc.model_validate(target_contract),
         scaffold_plan=ScaffoldPlanDoc.model_validate(scaffold_plan),
+        target_root=target_repo_path,
     )
     manifest_path = persist_v2_artifact(run_dir, "scaffold-manifest.json", manifest.model_dump(mode="json"))
     verification_path = persist_v2_artifact(
@@ -185,7 +210,7 @@ def run_v2_prepare(workspace: Path, source_path: Path, dry_run: bool, command: s
         state,
         "prepare_target",
         V2TaskStatus.PASSED,
-        "target project scaffold prepared",
+        "existing target repository prepared" if manifest.existing_repo else "target project scaffold prepared",
         artifacts=[str(manifest_path), str(verification_path)],
     )
     state.metadata["target_project_path"] = manifest.target_path
@@ -351,8 +376,15 @@ def run_v2_full(
     dry_run: bool,
     repair_cycles: int = 1,
     command: str = "full-v2",
+    target_repo_path: Path | None = None,
 ) -> V2RunState:
-    state = run_v2_prepare(workspace=workspace, source_path=source_path, dry_run=dry_run, command=command)
+    state = run_v2_prepare(
+        workspace=workspace,
+        source_path=source_path,
+        dry_run=dry_run,
+        command=command,
+        target_repo_path=target_repo_path,
+    )
     state = run_v2_execute(workspace=workspace, run_id=state.run_id, dry_run=dry_run, command=command)
     state = run_v2_verify(workspace=workspace, run_id=state.run_id, base_url=base_url, dry_run=dry_run, command=command)
 

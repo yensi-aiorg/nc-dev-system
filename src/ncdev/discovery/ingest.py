@@ -34,19 +34,44 @@ def _is_url(value: str) -> bool:
 
 
 def _candidate_files(root: Path) -> list[Path]:
-    names = [
+    preferred_names = [
         "README.md",
         "requirements.md",
         "spec.md",
         "prd.md",
         "architecture.md",
+        "technical.md",
+        "prompt.md",
+        "CLAUDE.md",
+        "AGENTS.md",
         "package.json",
         "pyproject.toml",
     ]
-    paths: list[Path] = []
-    for name in names:
-        paths.extend([path for path in root.rglob(name) if path.is_file()])
-    return sorted(set(paths), key=lambda path: str(path))
+    preferred_paths: list[Path] = []
+    for name in preferred_names:
+        preferred_paths.extend([path for path in root.rglob(name) if path.is_file()])
+
+    markdown_paths = [
+        path
+        for path in root.rglob("*.md")
+        if path.is_file() and ".git" not in path.parts and "node_modules" not in path.parts
+    ]
+    toml_json_paths = [
+        path
+        for pattern in ("*.toml", "*.json", "*.yaml", "*.yml")
+        for path in root.rglob(pattern)
+        if path.is_file() and ".git" not in path.parts and "node_modules" not in path.parts
+    ]
+
+    ordered: list[Path] = []
+    seen: set[str] = set()
+    for path in preferred_paths + markdown_paths + toml_json_paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(path)
+    return ordered[:60]
 
 
 def _combine_text(paths: Iterable[Path], root: Path, limit: int = 20000) -> tuple[str, list[IngestedAsset]]:

@@ -18,6 +18,7 @@ def test_cli_discover_v2_defaults() -> None:
     parser = build_parser()
     args = parser.parse_args(["discover-v2", "--source", "/tmp/requirements.md"])
     assert args.dry_run is False
+    assert args.target_repo is None
 
 
 def test_cli_status_v2_parses_run_id() -> None:
@@ -30,6 +31,7 @@ def test_cli_prepare_v2_defaults() -> None:
     parser = build_parser()
     args = parser.parse_args(["prepare-v2", "--source", "/tmp/requirements.md"])
     assert args.dry_run is False
+    assert args.target_repo is None
 
 
 def test_cli_execute_v2_defaults() -> None:
@@ -60,3 +62,4 @@ def test_cli_full_v2_defaults() -> None:
     assert args.base_url == "http://localhost:23000"
     assert args.repair_cycles == 1
     assert args.dry_run is False
+    assert args.target_repo is None

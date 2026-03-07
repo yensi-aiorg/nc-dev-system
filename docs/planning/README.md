@@ -5,7 +5,9 @@ An autonomous development agent that takes a requirements document and delivers 
 Current direction:
 
 - V1 planning documents capture the original architecture assumptions.
-- [`11-v2-control-plane-spec.md`](./11-v2-control-plane-spec.md) is the active V2 direction and should be treated as the primary planning reference for future implementation.
+- [`11-v2-control-plane-spec.md`](./11-v2-control-plane-spec.md) defines the thin control-plane direction.
+- [`12-website-saas-operating-spec.md`](./12-website-saas-operating-spec.md) is the current operating model for near-term implementation: Claude-led control, Codex implementation, target-repo execution, and evidence-heavy website SaaS delivery.
+- [`13-operator-quickstart.md`](./13-operator-quickstart.md) is the practical usage guide for running the current website SaaS mode against a real target repository.
 
 ## Document Index
 
@@ -23,6 +25,8 @@ Current direction:
 | [09-implementation-phases.md](./09-implementation-phases.md) | 5-phase build plan (Foundation → Build Engine → Testing → Integration → Remote) |
 | [10-openclaw-telegram-integration.md](./10-openclaw-telegram-integration.md) | Telegram bot via OpenClaw, conversation flow, plugin architecture |
 | [11-v2-control-plane-spec.md](./11-v2-control-plane-spec.md) | V2 direction: thin control plane, provider adapters, artifact contracts, target-project ownership |
+| [12-website-saas-operating-spec.md](./12-website-saas-operating-spec.md) | Active operating model: website SaaS mode, Claude as controller, Codex as implementer, target-repo-first execution |
+| [13-operator-quickstart.md](./13-operator-quickstart.md) | Operator usage guide: setup, discovery, prepare, full loop, evidence review |
 
 ## Architecture Summary
 

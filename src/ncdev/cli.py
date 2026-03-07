@@ -61,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     discover_v2 = sub.add_parser("discover-v2", help="Run V2 source-ingest and discovery pipeline")
     discover_v2.add_argument("--source", required=True, help="Path to source requirements or discovery input")
+    discover_v2.add_argument("--target-repo", default=None, help="Existing target repository to inspect and operate on")
     discover_v2.add_argument("--workspace", default=None)
     discover_v2.add_argument("--dry-run", action="store_true", help="Use local heuristic discovery only")
 
@@ -70,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare_v2 = sub.add_parser("prepare-v2", help="Run V2 discovery and scaffold a target project")
     prepare_v2.add_argument("--source", required=True, help="Path to source requirements or discovery input")
+    prepare_v2.add_argument("--target-repo", default=None, help="Existing target repository to prepare instead of scaffolding a hidden one")
     prepare_v2.add_argument("--workspace", default=None)
     prepare_v2.add_argument("--dry-run", action="store_true", help="Use local heuristic discovery only")
 
@@ -95,6 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     full_v2 = sub.add_parser("full-v2", help="Run the full V2 flow: prepare, execute, verify, and repair if needed")
     full_v2.add_argument("--source", required=True, help="Path to source requirements or discovery input")
+    full_v2.add_argument("--target-repo", default=None, help="Existing target repository to inspect, modify, and verify")
     full_v2.add_argument("--workspace", default=None)
     full_v2.add_argument("--base-url", default="http://localhost:23000")
     full_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs or test/browser commands")
@@ -155,6 +158,7 @@ def main() -> int:
             source_path=Path(args.source).resolve(),
             dry_run=bool(args.dry_run),
             command="discover-v2",
+            target_repo_path=Path(args.target_repo).resolve() if args.target_repo else None,
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -174,6 +178,7 @@ def main() -> int:
             source_path=Path(args.source).resolve(),
             dry_run=bool(args.dry_run),
             command="prepare-v2",
+            target_repo_path=Path(args.target_repo).resolve() if args.target_repo else None,
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -236,6 +241,7 @@ def main() -> int:
             dry_run=bool(args.dry_run),
             repair_cycles=int(args.repair_cycles),
             command="full-v2",
+            target_repo_path=Path(args.target_repo).resolve() if args.target_repo else None,
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")

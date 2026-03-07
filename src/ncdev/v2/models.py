@@ -214,10 +214,29 @@ class BuildPlanDoc(ArtifactEnvelope):
     risks: list[str] = Field(default_factory=list)
 
 
+class PhaseDefinition(BaseModel):
+    phase_id: str
+    title: str
+    goal: str
+    feature_ids: list[str] = Field(default_factory=list)
+    deliverables: list[str] = Field(default_factory=list)
+    exit_criteria: list[str] = Field(default_factory=list)
+
+
+class PhasePlanDoc(ArtifactEnvelope):
+    schema_id: str = "phase-plan.v2"
+    project_name: str
+    operating_mode: str = "website_saas"
+    target_repo_path: str = ""
+    phases: list[PhaseDefinition] = Field(default_factory=list)
+
+
 class TargetProjectContractDoc(ArtifactEnvelope):
     schema_id: str = "target-project-contract.v2"
     project_name: str
     target_type: str
+    operating_mode: str = "website_saas"
+    target_repo_path: str = ""
     stack: dict[str, str] = Field(default_factory=dict)
     ownership_rules: list[str] = Field(default_factory=list)
     required_artifacts: list[str] = Field(default_factory=list)
@@ -238,6 +257,8 @@ class ScaffoldManifestDocV2(ArtifactEnvelope):
     target_path: str
     files_written: list[str] = Field(default_factory=list)
     initialized_git: bool = False
+    existing_repo: bool = False
+    scaffold_applied: bool = True
 
 
 class VerificationContractDoc(ArtifactEnvelope):

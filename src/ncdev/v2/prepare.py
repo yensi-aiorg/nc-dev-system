@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 
@@ -105,67 +106,64 @@ def _verification_startup_commands(project_root: Path) -> tuple[list[str], list[
     return startup_commands, teardown_commands
 
 
-def prepare_target_project(
-    output_root: Path,
-    feature_map: FeatureMapDoc,
-    target_contract: TargetProjectContractDoc,
-    scaffold_plan: ScaffoldPlanDoc,
-) -> tuple[ScaffoldManifestDocV2, VerificationContractDoc]:
-    _ = scaffold_plan
-    project_config = _to_project_config(feature_map, target_contract)
-    generator = ProjectGenerator(project_config)
-    project_root = asyncio.run(generator.generate(output_root))
+def _has_non_git_content(project_root: Path) -> bool:
+    return any(path.name != ".git" for path in project_root.iterdir())
 
+
+def _ensure_website_saas_baseline(project_root: Path) -> None:
     evidence_dir = project_root / "docs" / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
     write_text(
         evidence_dir / "README.md",
-        "# Evidence\n\nStore screenshots, traces, videos, and issue bundles here.\n",
+        "# Evidence\n\nStore screenshots, traces, videos, issue bundles, and review notes here.\n",
     )
-    write_text(
-        project_root / "scripts" / "run-evidence-checks.sh",
-        "#!/usr/bin/env bash\nset -euo pipefail\npytest -q\n(cd frontend && npx playwright test)\n",
-    )
-    initialized_git = _init_git_repo(project_root)
+    screenshots_dir = project_root / "frontend" / "e2e" / "screenshots"
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    gitkeep = screenshots_dir / ".gitkeep"
+    if not gitkeep.exists():
+        write_text(gitkeep, "")
+    scripts_dir = project_root / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    run_evidence = scripts_dir / "run-evidence-checks.sh"
+    if not run_evidence.exists():
+        write_text(
+            run_evidence,
+            "#!/usr/bin/env bash\nset -euo pipefail\n"
+            "if [ -d backend ]; then (cd backend && pytest -q); else pytest -q; fi\n"
+            "if [ -f frontend/package.json ]; then (cd frontend && npm run test -- --run); fi\n"
+            "if [ -f frontend/playwright.config.ts ]; then (cd frontend && npx playwright test); fi\n",
+        )
+        run_evidence.chmod(0o755)
 
-    files_written = sorted(
-        [
-            str(path.relative_to(project_root))
-            for path in project_root.rglob("*")
-            if path.is_file()
-        ]
-    )
+
+def _verification_contract_for_target(project_root: Path, project_name: str) -> VerificationContractDoc:
+    commands: list[str] = []
+    if (project_root / "backend").exists():
+        commands.append("cd backend && pytest -q")
+    else:
+        commands.append("pytest -q")
+    if (project_root / "frontend" / "package.json").exists():
+        commands.append("cd frontend && npm run test -- --run")
+    if (project_root / "frontend" / "playwright.config.ts").exists():
+        commands.append("cd frontend && npx playwright test")
+
     startup_commands, teardown_commands = _verification_startup_commands(project_root)
-    manifest = ScaffoldManifestDocV2(
-        generator="ncdev.v2.prepare",
-        source_inputs=[feature_map.project_name],
-        project_name=feature_map.project_name,
-        target_path=str(project_root),
-        files_written=files_written,
-        initialized_git=initialized_git,
-    )
-    verification_contract = VerificationContractDoc(
+    return VerificationContractDoc(
         generator="ncdev.v2.prepare",
         source_inputs=[str(project_root)],
-        project_name=feature_map.project_name,
-        commands=[
-            "pytest -q",
-            "cd frontend && npm run test",
-            "cd frontend && npx playwright test",
-        ],
+        project_name=project_name,
+        commands=commands,
         startup_commands=startup_commands,
         teardown_commands=teardown_commands,
         healthcheck_path="/",
         startup_timeout_seconds=45,
         healthcheck_interval_seconds=1,
-        required_viewports=[
-            "desktop",
-            "mobile",
-        ],
+        required_viewports=["desktop", "mobile"],
         evidence_paths=[
             "docs/evidence",
+            "frontend/e2e/screenshots",
             "frontend/test-results",
-            "playwright-report",
+            "frontend/playwright-report",
         ],
         required_checks=[
             "unit",
@@ -183,4 +181,48 @@ def prepare_target_project(
             "network_requests",
         ],
     )
+
+
+def prepare_target_project(
+    output_root: Path,
+    feature_map: FeatureMapDoc,
+    target_contract: TargetProjectContractDoc,
+    scaffold_plan: ScaffoldPlanDoc,
+    *,
+    target_root: Path | None = None,
+) -> tuple[ScaffoldManifestDocV2, VerificationContractDoc]:
+    _ = scaffold_plan
+    existing_repo = False
+    scaffold_applied = True
+    if target_root is not None:
+        project_root = target_root.resolve()
+        project_root.mkdir(parents=True, exist_ok=True)
+        existing_repo = (project_root / ".git").exists() or _has_non_git_content(project_root)
+        scaffold_applied = False
+    else:
+        project_config = _to_project_config(feature_map, target_contract)
+        generator = ProjectGenerator(project_config)
+        project_root = asyncio.run(generator.generate(output_root))
+
+    _ensure_website_saas_baseline(project_root)
+    initialized_git = (project_root / ".git").exists() or _init_git_repo(project_root)
+
+    files_written = sorted(
+        [
+            str(path.relative_to(project_root))
+            for path in project_root.rglob("*")
+            if path.is_file()
+        ]
+    )
+    manifest = ScaffoldManifestDocV2(
+        generator="ncdev.v2.prepare",
+        source_inputs=[feature_map.project_name],
+        project_name=feature_map.project_name,
+        target_path=str(project_root),
+        files_written=files_written,
+        initialized_git=initialized_git,
+        existing_repo=existing_repo,
+        scaffold_applied=scaffold_applied,
+    )
+    verification_contract = _verification_contract_for_target(project_root, feature_map.project_name)
     return manifest, verification_contract

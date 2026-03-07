@@ -45,12 +45,24 @@ def _derive_routes(feature_map: dict) -> list[str]:
 
 
 def _build_evidence_index(target_path: Path, project_name: str) -> EvidenceIndexDoc:
-    screenshots_dir = target_path / ".nc-dev" / "screenshots"
+    screenshot_dirs = [
+        target_path / ".nc-dev" / "screenshots",
+        target_path / "frontend" / "e2e" / "screenshots",
+    ]
     reports_dir = target_path / ".nc-dev" / "test-reports"
     playwright_report = target_path / "frontend" / "playwright-report"
     test_results_dir = target_path / "frontend" / "test-results"
 
-    screenshots = sorted(str(path) for path in screenshots_dir.rglob("*") if path.is_file()) if screenshots_dir.exists() else []
+    screenshots: list[str] = []
+    for screenshots_dir in screenshot_dirs:
+        if screenshots_dir.exists():
+            screenshots.extend(
+                sorted(
+                    str(path)
+                    for path in screenshots_dir.rglob("*")
+                    if path.is_file() and path.name != ".gitkeep"
+                )
+            )
     reports = sorted(str(path) for path in reports_dir.rglob("*") if path.is_file()) if reports_dir.exists() else []
     videos = sorted(str(path) for path in test_results_dir.rglob("*.webm")) if test_results_dir.exists() else []
     traces = sorted(str(path) for path in test_results_dir.rglob("trace.zip")) if test_results_dir.exists() else []

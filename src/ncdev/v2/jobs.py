@@ -10,6 +10,7 @@ from ncdev.v2.models import (
     ExecutionJob,
     JobQueueDoc,
     JobRunLogDoc,
+    PhasePlanDoc,
     RoutingDecision,
     RoutingPlanDoc,
     ScaffoldManifestDocV2,
@@ -48,6 +49,7 @@ def materialize_job_queue(
 ) -> JobQueueDoc:
     outputs_dir = run_dir / "outputs"
     build_plan = _load_doc(outputs_dir / "build-plan.json", BuildPlanDoc)
+    phase_plan = _load_doc(outputs_dir / "phase-plan.json", PhasePlanDoc)
     routing_plan = _load_doc(outputs_dir / "routing-plan.json", RoutingPlanDoc)
     target_contract = _load_doc(outputs_dir / "target-project-contract.json", TargetProjectContractDoc)
     scaffold_manifest = _load_doc(outputs_dir / "scaffold-manifest.json", ScaffoldManifestDocV2)
@@ -62,6 +64,7 @@ def materialize_job_queue(
         adapter = registry[build_decision.provider]
         build_inputs = [
             outputs_dir / "build-plan.json",
+            outputs_dir / "phase-plan.json",
             outputs_dir / "target-project-contract.json",
             outputs_dir / "scaffold-plan.json",
             outputs_dir / "scaffold-manifest.json",
@@ -80,6 +83,8 @@ def materialize_job_queue(
                 [
                     f"Batch ID: {batch.id}",
                     f"Batch summary: {batch.summary}",
+                    "Work only inside the target repository referenced in the input artifacts.",
+                    "Follow feature-first implementation and preserve the website SaaS operating mode defaults unless the source artifacts explicitly override them.",
                     "Acceptance criteria:",
                     *[f"- {criterion}" for criterion in batch.acceptance_criteria],
                 ],
@@ -162,6 +167,7 @@ def materialize_job_queue(
         extra_lines=[
             "Write or update tests inside the target project only.",
             "Include unit, integration, and Playwright coverage where applicable.",
+            "Capture named Playwright screenshots for key workflow states, not only on failure.",
             f"Required verification commands: {', '.join(verification_contract.commands)}",
         ],
     )
@@ -174,6 +180,7 @@ def materialize_job_queue(
         extra_lines=[
             "Review the generated test strategy against the target-project contract.",
             "Identify missing evidence paths, flaky areas, and user-visible risk.",
+            f"Planned phases: {', '.join(phase.title for phase in phase_plan.phases)}",
         ],
     )
     _append_single_job(

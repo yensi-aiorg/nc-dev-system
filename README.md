@@ -1,6 +1,6 @@
 # NC Dev System
 
-An autonomous development agent that takes a requirements document and delivers a tested, production-ready codebase.
+A target-repo-first autonomous development controller for website SaaS projects.
 
 ## What It Does
 
@@ -47,54 +47,60 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Interactive build
-claude
-> /build /path/to/requirements.md
+# Discover phases against an existing target repo
+PYTHONPATH=src python -m ncdev.cli discover-v2 \
+  --source /path/to/requirements-or-doc-folder \
+  --target-repo /path/to/target-repo \
+  --dry-run
 
-# Remote build (CLI)
-claude --remote "Build from requirements.md using NC Dev System"
+# Prepare the target repo
+PYTHONPATH=src python -m ncdev.cli prepare-v2 \
+  --source /path/to/requirements-or-doc-folder \
+  --target-repo /path/to/target-repo
 
-# Check status
-claude
-> /status
+# Run the full loop
+PYTHONPATH=src python -m ncdev.cli full-v2 \
+  --source /path/to/requirements-or-doc-folder \
+  --target-repo /path/to/target-repo \
+  --base-url http://localhost:23000
 ```
 
-## Runtime CLI (Implemented in this repo)
+The active operating model is documented in:
+
+- [`docs/planning/12-website-saas-operating-spec.md`](./docs/planning/12-website-saas-operating-spec.md)
+- [`docs/planning/13-operator-quickstart.md`](./docs/planning/13-operator-quickstart.md)
+
+## Runtime CLI
 
 ```bash
-# Greenfield full pipeline (analysis -> scaffold -> build -> test -> harden -> deliver)
-ncdev build --requirements /path/to/requirements.md --mode greenfield --dry-run
+# Discovery against docs plus an existing target repo
+ncdev discover-v2 --source /path/to/docs --target-repo /path/to/repo --dry-run
 
-# Greenfield analysis only
-ncdev build --requirements /path/to/requirements.md --mode greenfield --analysis-only --dry-run
+# Prepare the target repo for execution
+ncdev prepare-v2 --source /path/to/docs --target-repo /path/to/repo
 
-# Brownfield full pipeline on an existing repository
-ncdev analyze --repo /path/to/existing-repo --mode brownfield --dry-run
+# Execute queued jobs for a prepared run
+ncdev execute-v2 --run-id <run-id>
 
-# Brownfield analysis only
-ncdev analyze --repo /path/to/existing-repo --mode brownfield --analysis-only --dry-run
+# Verify the prepared target app
+ncdev verify-v2 --run-id <run-id> --base-url http://localhost:23000
+
+# Full loop: prepare -> execute -> verify -> repair -> deliver
+ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000
 
 # Inspect run status
-ncdev status --run-id <run-id>
-
-# Resolve delivery artifact path for a run
-ncdev deliver --run-id <run-id>
+ncdev status-v2 --run-id <run-id>
 ```
 
 ## Implemented Runtime Scope
 
-- Greenfield analysis outputs: `features.json`, `architecture.json`, `test-plan.json`
-- Brownfield analysis outputs: `repo-inventory.json`, `risk-map.json`, `change-plan.json`
-- Dual-model consensus gate: Claude CLI + Codex CLI (or simulated in `--dry-run`)
-- Consensus failure output: `human-questions.json`
-- Greenfield scaffolding from Jinja templates under `templates/greenfield/`
-- Builder supervision with retry/fallback strategy and merge governance
-- Test pipeline orchestration with bounded fix-retest loop
-- Hardening audit report generation
-- Delivery report + docs artifact generation
-- Optional integration wiring via `.nc-dev/config.yaml`:
-  - `integrations.test_crafter.enabled`
-  - `integrations.visual_designer.enabled`
+- Target-repo-first V2 flow for website SaaS projects
+- Claude-led discovery and phase planning artifacts
+- Codex-backed implementation in isolated worktrees
+- Verification contracts and evidence expectations persisted per run
+- Playwright screenshot/report recognition inside the target repo
+- Delivery summary and release-gate reporting
+- Optional generated scaffold when no `--target-repo` is supplied
 
 ## Prerequisites
 
