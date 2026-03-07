@@ -14,6 +14,7 @@ from ncdev.discovery.pipeline import run_discovery_pipeline
 from ncdev.utils import make_run_id
 from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.execution import execute_routed_tasks
+from ncdev.v2.jobs import materialize_job_queue
 from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
 from ncdev.v2.prepare import prepare_target_project
 from ncdev.v2.routing import resolve_routing_plan
@@ -32,6 +33,7 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="discovery"),
             V2TaskState(name="execution"),
             V2TaskState(name="prepare_target"),
+            V2TaskState(name="job_queue"),
         ],
     )
 
@@ -167,6 +169,18 @@ def run_v2_prepare(workspace: Path, source_path: Path, dry_run: bool, command: s
         artifacts=[str(manifest_path), str(verification_path)],
     )
     state.metadata["target_project_path"] = manifest.target_path
+    registry = build_provider_registry()
+    job_queue = materialize_job_queue(run_dir, registry)
+    job_queue_path = persist_v2_artifact(run_dir, "job-queue.json", job_queue.model_dump(mode="json"))
+    state.artifacts.append(str(job_queue_path))
+    _set_task(
+        state,
+        "job_queue",
+        V2TaskStatus.PASSED,
+        f"materialized {len(job_queue.jobs)} execution jobs",
+        artifacts=[str(job_queue_path)],
+    )
+    state.metadata["job_count"] = len(job_queue.jobs)
     state.touch()
     persist_v2_run_state(state)
     return state

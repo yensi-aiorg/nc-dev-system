@@ -225,6 +225,25 @@ class TaskRequestDoc(ArtifactEnvelope):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ExecutionJob(BaseModel):
+    job_id: str
+    task_type: TaskType
+    provider: str
+    model: str
+    title: str
+    request_artifact: str
+    target_path: str = ""
+    input_artifacts: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobQueueDoc(ArtifactEnvelope):
+    schema_id: str = "job-queue.v2"
+    project_name: str
+    jobs: list[ExecutionJob] = Field(default_factory=list)
+
+
 class TaskExecutionRecord(BaseModel):
     provider: str
     model: str
