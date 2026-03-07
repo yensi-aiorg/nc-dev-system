@@ -62,6 +62,8 @@ class ReviewIssue:
 class TestRunResult:
     """Result from running a test suite."""
 
+    __test__ = False
+
     passed: int = 0
     failed: int = 0
     errors: int = 0

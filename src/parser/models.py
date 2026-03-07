@@ -41,6 +41,9 @@ class HTTPMethod(str, Enum):
 
 class TestType(str, Enum):
     """Classification of test scenarios."""
+
+    __test__ = False
+
     UNIT = "unit"
     INTEGRATION = "integration"
     E2E = "e2e"
@@ -193,6 +196,9 @@ class Architecture(BaseModel):
 
 class TestScenario(BaseModel):
     """A single test scenario."""
+
+    __test__ = False
+
     name: str = Field(..., description="Test scenario name")
     description: str = Field(default="", description="What this test verifies")
     steps: list[str] = Field(default_factory=list, description="Ordered test steps")
@@ -214,6 +220,9 @@ class VisualCheckpoint(BaseModel):
 
 class TestPlan(BaseModel):
     """Complete test plan for a project."""
+
+    __test__ = False
+
     scenarios: list[TestScenario] = Field(
         default_factory=list, description="All test scenarios"
     )

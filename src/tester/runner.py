@@ -241,8 +241,10 @@ class TestRunner:
         Directory for storing captured screenshots.
     reference_dir:
         Directory containing reference/baseline screenshots for
-        comparison.  If ``None``, visual comparison is skipped.
+    comparison.  If ``None``, visual comparison is skipped.
     """
+
+    __test__ = False
 
     def __init__(
         self,

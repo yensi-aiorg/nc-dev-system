@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field, computed_field
 class TestFailure(BaseModel):
     """A single failed test case with diagnostic details."""
 
+    __test__ = False
+
     test_name: str = Field(..., description="Fully-qualified test name")
     file: str = Field(..., description="Relative file path containing the test")
     error: str = Field(..., description="Error message or assertion details")
@@ -35,6 +37,8 @@ class TestFailure(BaseModel):
 
 class TestResults(BaseModel):
     """Results from a single test suite execution (e.g. pytest or vitest)."""
+
+    __test__ = False
 
     suite_name: str = Field(default="", description="Name such as 'backend-unit' or 'frontend-vitest'")
     total: int = Field(default=0, ge=0)
@@ -131,6 +135,8 @@ class VisualTestResults(BaseModel):
 
 class TestSuiteResults(BaseModel):
     """Complete test-run summary spanning unit, E2E, and visual testing."""
+
+    __test__ = False
 
     unit: TestResults = Field(default_factory=TestResults)
     e2e: TestResults = Field(default_factory=TestResults)
