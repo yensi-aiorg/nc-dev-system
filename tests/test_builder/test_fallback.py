@@ -218,8 +218,13 @@ class TestSonnetRunner:
 
         mock_process.communicate = mock_communicate
 
+        async def raise_timeout(awaitable, timeout):
+            if hasattr(awaitable, "close"):
+                awaitable.close()
+            raise asyncio.TimeoutError()
+
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
+            with patch("asyncio.wait_for", side_effect=raise_timeout):
                 runner = SonnetRunner(timeout_seconds=1)
                 result = await runner.run(
                     prompt="Build something",

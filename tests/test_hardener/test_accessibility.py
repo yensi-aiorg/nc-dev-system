@@ -361,7 +361,12 @@ class TestAxeAuditSubprocess:
             mock_proc.communicate = AsyncMock(side_effect=aio.TimeoutError)
             mock_exec.return_value = mock_proc
 
-            with patch("asyncio.wait_for", side_effect=aio.TimeoutError):
+            async def raise_timeout(awaitable, timeout):
+                if hasattr(awaitable, "close"):
+                    awaitable.close()
+                raise aio.TimeoutError()
+
+            with patch("asyncio.wait_for", side_effect=raise_timeout):
                 result = await checker.check(
                     project_url="http://localhost:23000",
                     routes=["/"],

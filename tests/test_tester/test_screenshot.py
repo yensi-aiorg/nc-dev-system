@@ -343,8 +343,13 @@ class TestTryNpxScreenshot:
         mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
         mock_proc.returncode = -1
 
+        async def raise_timeout(awaitable, timeout):
+            if hasattr(awaitable, "close"):
+                awaitable.close()
+            raise asyncio.TimeoutError()
+
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            with patch("asyncio.wait_for", side_effect=raise_timeout):
                 result = await capture._try_npx_screenshot(
                     "http://x", DESKTOP, tmp_path / "ss.png"
                 )
