@@ -2,6 +2,11 @@
 
 An autonomous development agent that takes a requirements document and delivers a tested, production-ready codebase. Triggered remotely via Telegram (OpenClaw), Claude Code Web, or CLI.
 
+Current direction:
+
+- V1 planning documents capture the original architecture assumptions.
+- [`11-v2-control-plane-spec.md`](./11-v2-control-plane-spec.md) is the active V2 direction and should be treated as the primary planning reference for future implementation.
+
 ## Document Index
 
 | Document | Description |
@@ -17,6 +22,7 @@ An autonomous development agent that takes a requirements document and delivers 
 | [08-integration-map.md](./08-integration-map.md) | How all existing tools connect, MCP adapters needed, dependency graph |
 | [09-implementation-phases.md](./09-implementation-phases.md) | 5-phase build plan (Foundation → Build Engine → Testing → Integration → Remote) |
 | [10-openclaw-telegram-integration.md](./10-openclaw-telegram-integration.md) | Telegram bot via OpenClaw, conversation flow, plugin architecture |
+| [11-v2-control-plane-spec.md](./11-v2-control-plane-spec.md) | V2 direction: thin control plane, provider adapters, artifact contracts, target-project ownership |
 
 ## Architecture Summary
 
