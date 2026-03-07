@@ -56,17 +56,17 @@ def test_assemble_delivery_summary_maps_batches() -> None:
     assert summary.stack == {"frontend": "React 19 + Vite", "backend": "FastAPI"}
     assert summary.batch_count == 2
     assert len(summary.batches) == 2
-    assert summary.batches[0].id == "batch-001"
+    assert summary.batches[0].batch_id == "batch-001"
     assert summary.batches[0].title == "Implement auth"
     assert summary.batches[0].acceptance_criteria == ["Auth flow works end-to-end"]
-    assert summary.batches[1].id == "batch-002"
+    assert summary.batches[1].batch_id == "batch-002"
 
 
 def test_assemble_delivery_summary_includes_execution_steps() -> None:
     summary = assemble_delivery_summary(_make_build_plan(), _make_target_contract())
 
-    assert len(summary.instructions) > 0
-    steps_text = "\n".join(summary.instructions)
+    assert len(summary.execution_steps) > 0
+    steps_text = "\n".join(summary.execution_steps)
     assert "frontend/" in steps_text or "docker-compose.yml" in steps_text
 
 

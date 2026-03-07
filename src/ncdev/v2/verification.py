@@ -13,7 +13,14 @@ from src.tester.results import TestSuiteResults
 from src.tester.runner import TestRunner
 
 from ncdev.utils import write_json
-from ncdev.v2.models import BootstrapCommandRecord, BootstrapRunDoc, EvidenceIndexDoc, VerificationRunDoc
+from ncdev.v2.models import (
+    BootstrapCommandRecord,
+    BootstrapRunDoc,
+    EvidenceIndexDoc,
+    VerificationIssue,
+    VerificationIssueBundleDoc,
+    VerificationRunDoc,
+)
 
 
 def _load_json(path: Path) -> dict:
@@ -56,6 +63,106 @@ def _build_evidence_index(target_path: Path, project_name: str) -> EvidenceIndex
         reports=sorted(set(reports)),
         videos=videos,
         traces=traces,
+    )
+
+
+def _build_verification_issues(
+    project_name: str,
+    target_path: Path,
+    verification_run: VerificationRunDoc,
+    evidence_index: EvidenceIndexDoc,
+    bootstrap_run: BootstrapRunDoc,
+    verification_contract: dict,
+) -> VerificationIssueBundleDoc:
+    issues: list[VerificationIssue] = []
+
+    bootstrap_commands = [record.command for record in getattr(bootstrap_run, "commands", [])]
+    teardown_attempted = bool(getattr(bootstrap_run, "teardown_attempted", False))
+    teardown_succeeded = bool(getattr(bootstrap_run, "teardown_succeeded", False))
+    teardown_commands = [record.command for record in getattr(bootstrap_run, "teardown_commands", [])]
+
+    if not verification_run.bootstrap_succeeded:
+        issues.append(
+            VerificationIssue(
+                issue_id="bootstrap-unreachable",
+                title="Target project did not become reachable",
+                severity="high",
+                category="bootstrap",
+                expected=f"{verification_run.base_url} should be reachable before verification runs.",
+                actual=verification_run.summary.get(
+                    "bootstrap_error",
+                    f"{verification_run.base_url} remained unreachable after bootstrap attempts.",
+                ),
+                related_artifacts=bootstrap_commands,
+            )
+        )
+
+    runner_error = str(verification_run.summary.get("runner_error", "")).strip()
+    if runner_error:
+        issues.append(
+            VerificationIssue(
+                issue_id="verification-runner-error",
+                title="Verification runner raised an exception",
+                severity="high",
+                category="verification",
+                expected="Verification should complete and produce a stable result summary.",
+                actual=runner_error,
+                related_artifacts=[verification_run.report_path] if verification_run.report_path else [],
+            )
+        )
+
+    e2e_summary = verification_run.summary.get("e2e", {})
+    if isinstance(e2e_summary, dict) and int(e2e_summary.get("failed", 0)) > 0:
+        issues.append(
+            VerificationIssue(
+                issue_id="e2e-failures",
+                title="End-to-end verification failures detected",
+                severity="high",
+                category="e2e",
+                expected="All Playwright or route-level E2E checks should pass.",
+                actual=f"{e2e_summary.get('failed', 0)} E2E checks failed.",
+                related_artifacts=evidence_index.videos + evidence_index.traces,
+            )
+        )
+
+    missing_evidence = [
+        str(target_path / rel_path)
+        for rel_path in verification_contract.get("evidence_paths", [])
+        if not (target_path / rel_path).exists()
+    ]
+    if missing_evidence:
+        issues.append(
+            VerificationIssue(
+                issue_id="missing-evidence",
+                title="Verification evidence paths are incomplete",
+                severity="medium",
+                category="evidence",
+                expected="All required evidence directories should exist after verification.",
+                actual=", ".join(missing_evidence),
+                related_artifacts=missing_evidence,
+            )
+        )
+
+    if teardown_attempted and not teardown_succeeded:
+        issues.append(
+            VerificationIssue(
+                issue_id="teardown-failed",
+                title="Verification teardown did not fully succeed",
+                severity="medium",
+                category="teardown",
+                expected="Services started for verification should be shut down cleanly afterward.",
+                actual="One or more teardown commands returned a non-zero exit code.",
+                related_artifacts=teardown_commands,
+            )
+        )
+
+    return VerificationIssueBundleDoc(
+        generator="ncdev.v2.verification",
+        source_inputs=[str(target_path)],
+        project_name=project_name,
+        target_path=str(target_path),
+        issue_count=len(issues),
+        issues=issues,
     )
 
 
@@ -191,12 +298,18 @@ def _teardown_target_project(target_path: Path, bootstrap_run: BootstrapRunDoc, 
     return bootstrap_run
 
 
-def run_v2_verification(run_dir: Path, *, base_url: str, dry_run: bool) -> tuple[VerificationRunDoc, EvidenceIndexDoc, BootstrapRunDoc]:
+def run_v2_verification(
+    run_dir: Path,
+    *,
+    base_url: str,
+    dry_run: bool,
+) -> tuple[VerificationRunDoc, EvidenceIndexDoc, BootstrapRunDoc, VerificationIssueBundleDoc]:
     outputs_dir = run_dir / "outputs"
     log_dir = run_dir / "logs" / "verification"
     log_dir.mkdir(parents=True, exist_ok=True)
     scaffold_manifest = _load_json(outputs_dir / "scaffold-manifest.json")
     feature_map = _load_json(outputs_dir / "feature-map.json")
+    verification_contract = _load_json(outputs_dir / "verification-contract.json")
     project_name = str(scaffold_manifest["project_name"])
     target_path = Path(scaffold_manifest["target_path"])
     routes = _derive_routes(feature_map)
@@ -232,7 +345,16 @@ def run_v2_verification(run_dir: Path, *, base_url: str, dry_run: bool) -> tuple
             },
             report_path="",
         )
-        return verification_run, _build_evidence_index(target_path, project_name), bootstrap_run
+        evidence_index = _build_evidence_index(target_path, project_name)
+        issue_bundle = _build_verification_issues(
+            project_name,
+            target_path,
+            verification_run,
+            evidence_index,
+            bootstrap_run,
+            verification_contract,
+        )
+        return verification_run, evidence_index, bootstrap_run, issue_bundle
 
     bootstrap_run = _bootstrap_target_project(
         target_path,
@@ -258,7 +380,16 @@ def run_v2_verification(run_dir: Path, *, base_url: str, dry_run: bool) -> tuple
             },
             report_path="",
         )
-        return verification_run, _build_evidence_index(target_path, project_name), bootstrap_run
+        evidence_index = _build_evidence_index(target_path, project_name)
+        issue_bundle = _build_verification_issues(
+            project_name,
+            target_path,
+            verification_run,
+            evidence_index,
+            bootstrap_run,
+            verification_contract,
+        )
+        return verification_run, evidence_index, bootstrap_run, issue_bundle
 
     runner = TestRunner(target_path, base_url=base_url)
     report_path = target_path / ".nc-dev" / "test-reports" / "test-suite-results.json"
@@ -289,4 +420,13 @@ def run_v2_verification(run_dir: Path, *, base_url: str, dry_run: bool) -> tuple
         summary=summary,
         report_path=str(report_path),
     )
-    return verification_run, _build_evidence_index(target_path, project_name), bootstrap_run
+    evidence_index = _build_evidence_index(target_path, project_name)
+    issue_bundle = _build_verification_issues(
+        project_name,
+        target_path,
+        verification_run,
+        evidence_index,
+        bootstrap_run,
+        verification_contract,
+    )
+    return verification_run, evidence_index, bootstrap_run, issue_bundle

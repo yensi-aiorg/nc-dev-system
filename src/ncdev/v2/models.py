@@ -393,6 +393,24 @@ class EvidenceIndexDoc(ArtifactEnvelope):
     traces: list[str] = Field(default_factory=list)
 
 
+class VerificationIssue(BaseModel):
+    issue_id: str
+    title: str
+    severity: str
+    category: str
+    expected: str
+    actual: str
+    related_artifacts: list[str] = Field(default_factory=list)
+
+
+class VerificationIssueBundleDoc(ArtifactEnvelope):
+    schema_id: str = "verification-issues.v2"
+    project_name: str
+    target_path: str
+    issue_count: int = 0
+    issues: list[VerificationIssue] = Field(default_factory=list)
+
+
 class TaskExecutionRecord(BaseModel):
     provider: str
     model: str
@@ -416,6 +434,10 @@ class BatchDeliveryEntry(BaseModel):
     summary: str
     acceptance_criteria: list[str] = Field(default_factory=list)
 
+    @property
+    def id(self) -> str:
+        return self.batch_id
+
 
 class DeliverySummaryDoc(ArtifactEnvelope):
     schema_id: str = "delivery-summary.v2"
@@ -428,6 +450,10 @@ class DeliverySummaryDoc(ArtifactEnvelope):
     ownership_rules: list[str] = Field(default_factory=list)
     required_artifacts: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
+
+    @property
+    def instructions(self) -> list[str]:
+        return self.execution_steps
 
 
 class V2TaskState(BaseModel):

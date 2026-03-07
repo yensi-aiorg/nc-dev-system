@@ -17,7 +17,7 @@ from ncdev.v2.models import (
 def assemble_delivery_summary(build_plan: BuildPlanDoc, target_contract: TargetProjectContractDoc) -> DeliverySummaryDoc:
     batches = [
         BatchDeliveryEntry(
-            id=batch.id,
+            batch_id=batch.id,
             title=batch.title,
             summary=batch.summary,
             acceptance_criteria=batch.acceptance_criteria,
@@ -32,7 +32,7 @@ def assemble_delivery_summary(build_plan: BuildPlanDoc, target_contract: TargetP
         stack=target_contract.stack,
         batch_count=len(batches),
         batches=batches,
-        instructions=_build_execution_steps(target_contract, build_plan),
+        execution_steps=_build_execution_steps(target_contract, build_plan),
         ownership_rules=target_contract.ownership_rules,
         required_artifacts=target_contract.required_artifacts,
         risks=build_plan.risks,

@@ -31,12 +31,15 @@ def test_v2_verify_dry_run_persists_verification_artifacts(tmp_path: Path) -> No
     assert (run_dir / "outputs" / "verification-run.json").exists()
     assert (run_dir / "outputs" / "bootstrap-run.json").exists()
     assert (run_dir / "outputs" / "evidence-index.json").exists()
+    assert (run_dir / "outputs" / "verification-issues.json").exists()
 
     bootstrap_payload = json.loads((run_dir / "outputs" / "bootstrap-run.json").read_text(encoding="utf-8"))
     verification_payload = json.loads((run_dir / "outputs" / "verification-run.json").read_text(encoding="utf-8"))
+    issues_payload = json.loads((run_dir / "outputs" / "verification-issues.json").read_text(encoding="utf-8"))
     assert bootstrap_payload["bootstrap_succeeded"] is True
     assert verification_payload["dry_run"] is True
     assert verification_payload["bootstrap_succeeded"] is True
+    assert issues_payload["issue_count"] >= 1
     assert verification_payload["routes"]
 
 
@@ -101,7 +104,7 @@ def test_v2_verification_uses_test_runner_when_not_dry_run(tmp_path: Path, monke
     monkeypatch.setattr("ncdev.v2.verification._teardown_target_project", lambda target_path, bootstrap_run, log_dir: bootstrap_run)
     monkeypatch.setattr("ncdev.v2.verification.TestRunner", FakeRunner)
 
-    verification_run, evidence_index, bootstrap_run = run_v2_verification(
+    verification_run, evidence_index, bootstrap_run, issue_bundle = run_v2_verification(
         run_dir,
         base_url="http://localhost:9999",
         dry_run=False,
@@ -112,6 +115,7 @@ def test_v2_verification_uses_test_runner_when_not_dry_run(tmp_path: Path, monke
     assert verification_run.bootstrap_succeeded is True
     assert verification_run.bootstrap_commands == ["docker compose up -d"]
     assert bootstrap_run.teardown_succeeded is True
+    assert issue_bundle.issue_count >= 0
     assert evidence_index.screenshots
     assert evidence_index.reports
 
@@ -149,7 +153,7 @@ def test_v2_verification_reports_bootstrap_failure(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", fake_bootstrap)
 
-    verification_run, evidence_index, bootstrap_run = run_v2_verification(
+    verification_run, evidence_index, bootstrap_run, issue_bundle = run_v2_verification(
         run_dir,
         base_url="http://localhost:9999",
         dry_run=False,
@@ -159,6 +163,7 @@ def test_v2_verification_reports_bootstrap_failure(tmp_path: Path, monkeypatch) 
     assert verification_run.bootstrap_succeeded is False
     assert verification_run.bootstrap_commands == ["docker compose up -d"]
     assert bootstrap_run.bootstrap_succeeded is False
+    assert issue_bundle.issue_count >= 1
     assert evidence_index.project_name == verification_run.project_name
 
 
@@ -208,7 +213,7 @@ def test_v2_verification_reports_runner_errors_and_teardown(tmp_path: Path, monk
     monkeypatch.setattr("ncdev.v2.verification._teardown_target_project", fake_teardown)
     monkeypatch.setattr("ncdev.v2.verification.TestRunner", ExplodingRunner)
 
-    verification_run, evidence_index, bootstrap_run = run_v2_verification(
+    verification_run, evidence_index, bootstrap_run, issue_bundle = run_v2_verification(
         run_dir,
         base_url="http://localhost:9999",
         dry_run=False,
@@ -218,4 +223,5 @@ def test_v2_verification_reports_runner_errors_and_teardown(tmp_path: Path, monk
     assert verification_run.summary["runner_error"] == "playwright crashed"
     assert bootstrap_run.teardown_attempted is True
     assert bootstrap_run.teardown_succeeded is False
+    assert issue_bundle.issue_count >= 1
     assert evidence_index.project_name == verification_run.project_name

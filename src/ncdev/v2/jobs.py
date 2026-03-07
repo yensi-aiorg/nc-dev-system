@@ -278,6 +278,7 @@ def materialize_repair_job_queue(
         artifact_paths = [
             outputs_dir / "verification-run.json",
             outputs_dir / "evidence-index.json",
+            outputs_dir / "verification-issues.json",
             outputs_dir / "verification-contract.json",
             outputs_dir / "scaffold-manifest.json",
         ]

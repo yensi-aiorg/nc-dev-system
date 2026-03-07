@@ -245,7 +245,7 @@ def run_v2_verify(
     run_dir = Path(state.run_dir)
     state.command = command
 
-    verification_run, evidence_index, bootstrap_run = run_v2_verification(
+    verification_run, evidence_index, bootstrap_run, issue_bundle = run_v2_verification(
         run_dir,
         base_url=base_url,
         dry_run=dry_run,
@@ -253,16 +253,18 @@ def run_v2_verify(
     bootstrap_path = persist_v2_artifact(run_dir, "bootstrap-run.json", bootstrap_run.model_dump(mode="json"))
     verification_path = persist_v2_artifact(run_dir, "verification-run.json", verification_run.model_dump(mode="json"))
     evidence_path = persist_v2_artifact(run_dir, "evidence-index.json", evidence_index.model_dump(mode="json"))
-    state.artifacts.extend([str(bootstrap_path), str(verification_path), str(evidence_path)])
+    issues_path = persist_v2_artifact(run_dir, "verification-issues.json", issue_bundle.model_dump(mode="json"))
+    state.artifacts.extend([str(bootstrap_path), str(verification_path), str(evidence_path), str(issues_path)])
     _set_task(
         state,
         "verification",
         V2TaskStatus.PASSED if verification_run.overall_passed else V2TaskStatus.FAILED,
         f"verification completed with overall_passed={verification_run.overall_passed}",
-        artifacts=[str(bootstrap_path), str(verification_path), str(evidence_path)],
+        artifacts=[str(bootstrap_path), str(verification_path), str(evidence_path), str(issues_path)],
     )
     state.metadata["bootstrap_succeeded"] = bootstrap_run.bootstrap_succeeded
     state.metadata["teardown_succeeded"] = bootstrap_run.teardown_succeeded
+    state.metadata["verification_issue_count"] = issue_bundle.issue_count
     state.metadata["verification_passed"] = verification_run.overall_passed
     state.status = V2TaskStatus.PASSED if verification_run.overall_passed else V2TaskStatus.FAILED
     state.touch()
