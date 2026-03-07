@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from ncdev.v2.engine import run_v2_prepare
 
@@ -26,4 +27,7 @@ def test_v2_prepare_generates_target_project_and_verification_contract(tmp_path:
     assert (target_root / "backend" / "pyproject.toml").exists()
     assert (target_root / "docs" / "evidence" / "README.md").exists()
     assert (target_root / "scripts" / "run-evidence-checks.sh").exists()
+    verification_contract = json.loads((run_dir / "outputs" / "verification-contract.json").read_text(encoding="utf-8"))
+    assert verification_contract["startup_commands"]
+    assert verification_contract["teardown_commands"]
     assert state.metadata["job_count"] >= 3

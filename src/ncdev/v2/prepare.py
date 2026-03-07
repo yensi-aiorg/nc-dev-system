@@ -94,6 +94,17 @@ def _init_git_repo(project_root: Path) -> bool:
         return False
 
 
+def _verification_startup_commands(project_root: Path) -> tuple[list[str], list[str]]:
+    startup_commands: list[str] = []
+    teardown_commands: list[str] = []
+    if (project_root / "docker-compose.yml").exists():
+        startup_commands.append("docker compose up -d")
+        teardown_commands.append("docker compose down")
+    if (project_root / "scripts" / "setup.sh").exists():
+        startup_commands.append("bash scripts/setup.sh")
+    return startup_commands, teardown_commands
+
+
 def prepare_target_project(
     output_root: Path,
     feature_map: FeatureMapDoc,
@@ -124,6 +135,7 @@ def prepare_target_project(
             if path.is_file()
         ]
     )
+    startup_commands, teardown_commands = _verification_startup_commands(project_root)
     manifest = ScaffoldManifestDocV2(
         generator="ncdev.v2.prepare",
         source_inputs=[feature_map.project_name],
@@ -141,6 +153,8 @@ def prepare_target_project(
             "cd frontend && npm run test",
             "cd frontend && npx playwright test",
         ],
+        startup_commands=startup_commands,
+        teardown_commands=teardown_commands,
         evidence_paths=[
             "docs/evidence",
             "frontend/test-results",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import shlex
 import subprocess
 import time
 import urllib.error
@@ -206,6 +207,7 @@ def _bootstrap_target_project(
     project_name: str,
     base_url: str,
     log_dir: Path,
+    verification_contract: dict,
 ) -> BootstrapRunDoc:
     reachable_before = _url_reachable(base_url)
     bootstrap_run = BootstrapRunDoc(
@@ -223,14 +225,18 @@ def _bootstrap_target_project(
         bootstrap_run.summary["note"] = "Base URL already reachable before bootstrap."
         return bootstrap_run
 
-    compose_candidates = [
-        ["docker", "compose", "up", "-d"],
-        ["docker-compose", "up", "-d"],
+    configured_startup = [str(command).strip() for command in verification_contract.get("startup_commands", []) if str(command).strip()]
+    compose_candidates = configured_startup or [
+        "docker compose up -d",
+        "docker-compose up -d",
     ]
-    for index, cmd in enumerate(compose_candidates, start=1):
+    for index, command_text in enumerate(compose_candidates, start=1):
+        cmd = shlex.split(command_text)
+        if not cmd:
+            continue
         if shutil.which(cmd[0]) is None:
             continue
-        if not (target_path / "docker-compose.yml").exists():
+        if cmd[:3] in (["docker", "compose", "up"], ["docker-compose", "up", "-d"]) and not (target_path / "docker-compose.yml").exists():
             continue
         record = _run_logged_command(target_path, log_dir, f"bootstrap-{index:02d}", "bootstrap", cmd)
         bootstrap_run.commands.append(record)
@@ -298,6 +304,40 @@ def _teardown_target_project(target_path: Path, bootstrap_run: BootstrapRunDoc, 
     return bootstrap_run
 
 
+def _apply_contract_teardown(
+    target_path: Path,
+    bootstrap_run: BootstrapRunDoc,
+    log_dir: Path,
+    verification_contract: dict,
+) -> BootstrapRunDoc:
+    configured_teardown = [str(command).strip() for command in verification_contract.get("teardown_commands", []) if str(command).strip()]
+    if not configured_teardown:
+        return _teardown_target_project(target_path, bootstrap_run, log_dir)
+
+    if not bootstrap_run.started_services:
+        return bootstrap_run
+
+    bootstrap_run.teardown_attempted = True
+    teardown_records: list[BootstrapCommandRecord] = []
+    for index, command_text in enumerate(configured_teardown, start=1):
+        cmd = shlex.split(command_text)
+        if not cmd or shutil.which(cmd[0]) is None:
+            continue
+        teardown_records.append(
+            _run_logged_command(
+                target_path,
+                log_dir,
+                f"teardown-{index:02d}",
+                "teardown",
+                cmd,
+            )
+        )
+    if teardown_records:
+        bootstrap_run.teardown_commands = teardown_records
+        bootstrap_run.teardown_succeeded = all(record.succeeded for record in teardown_records)
+    return bootstrap_run
+
+
 def run_v2_verification(
     run_dir: Path,
     *,
@@ -361,6 +401,7 @@ def run_v2_verification(
         project_name=project_name,
         base_url=base_url,
         log_dir=log_dir,
+        verification_contract=verification_contract,
     )
     if not bootstrap_run.bootstrap_succeeded:
         verification_run = VerificationRunDoc(
@@ -404,7 +445,7 @@ def run_v2_verification(
             "runner_error": str(exc),
         }
     finally:
-        bootstrap_run = _teardown_target_project(target_path, bootstrap_run, log_dir)
+        bootstrap_run = _apply_contract_teardown(target_path, bootstrap_run, log_dir, verification_contract)
 
     verification_run = VerificationRunDoc(
         generator="ncdev.v2.verification",

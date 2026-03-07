@@ -244,6 +244,8 @@ class VerificationContractDoc(ArtifactEnvelope):
     schema_id: str = "verification-contract.v2"
     project_name: str
     commands: list[str] = Field(default_factory=list)
+    startup_commands: list[str] = Field(default_factory=list)
+    teardown_commands: list[str] = Field(default_factory=list)
     evidence_paths: list[str] = Field(default_factory=list)
     required_checks: list[str] = Field(default_factory=list)
     issue_bundle_fields: list[str] = Field(default_factory=list)

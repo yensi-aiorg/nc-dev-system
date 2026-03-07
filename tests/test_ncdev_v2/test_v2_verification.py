@@ -87,7 +87,7 @@ def test_v2_verification_uses_test_runner_when_not_dry_run(tmp_path: Path, monke
         teardown_succeeded = True
         commands = []
 
-    def fake_bootstrap(target_path, *, project_name, base_url, log_dir):
+    def fake_bootstrap(target_path, *, project_name, base_url, log_dir, verification_contract):
         bootstrap = FakeBootstrap()
         bootstrap.commands = [
             type(
@@ -138,7 +138,7 @@ def test_v2_verification_reports_bootstrap_failure(tmp_path: Path, monkeypatch) 
         teardown_succeeded = False
         commands = []
 
-    def fake_bootstrap(target_path, *, project_name, base_url, log_dir):
+    def fake_bootstrap(target_path, *, project_name, base_url, log_dir, verification_contract):
         bootstrap = FailedBootstrap()
         bootstrap.commands = [
             type(
@@ -204,13 +204,16 @@ def test_v2_verification_reports_runner_errors_and_teardown(tmp_path: Path, monk
         async def run_all(self, routes=None):
             raise RuntimeError("playwright crashed")
 
-    def fake_teardown(target_path, bootstrap_run, log_dir):
+    def fake_teardown(target_path, bootstrap_run, log_dir, verification_contract):
         bootstrap_run.teardown_attempted = True
         bootstrap_run.teardown_succeeded = False
         return bootstrap_run
 
-    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", lambda target_path, *, project_name, base_url, log_dir: bootstrap)
-    monkeypatch.setattr("ncdev.v2.verification._teardown_target_project", fake_teardown)
+    monkeypatch.setattr(
+        "ncdev.v2.verification._bootstrap_target_project",
+        lambda target_path, *, project_name, base_url, log_dir, verification_contract: bootstrap,
+    )
+    monkeypatch.setattr("ncdev.v2.verification._apply_contract_teardown", fake_teardown)
     monkeypatch.setattr("ncdev.v2.verification.TestRunner", ExplodingRunner)
 
     verification_run, evidence_index, bootstrap_run, issue_bundle = run_v2_verification(
