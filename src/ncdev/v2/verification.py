@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import shlex
+import signal
 import subprocess
 import time
 import urllib.error
@@ -232,6 +234,15 @@ def _command_log_path(log_dir: Path, prefix: str, stream: str) -> Path:
     return log_dir / f"{prefix}-{stream}.log"
 
 
+def _wait_for_reachability(base_url: str, timeout_seconds: int = 45) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if _url_reachable(base_url):
+            return True
+        time.sleep(1)
+    return False
+
+
 def _run_logged_command(target_path: Path, log_dir: Path, prefix: str, stage: str, cmd: list[str]) -> BootstrapCommandRecord:
     proc = subprocess.run(
         cmd,
@@ -252,6 +263,93 @@ def _run_logged_command(target_path: Path, log_dir: Path, prefix: str, stage: st
         stdout_path=str(stdout_path),
         stderr_path=str(stderr_path),
     )
+
+
+def _run_background_command(
+    target_path: Path,
+    log_dir: Path,
+    prefix: str,
+    stage: str,
+    command_text: str,
+) -> BootstrapCommandRecord:
+    stdout_path = _command_log_path(log_dir, prefix, "stdout")
+    stderr_path = _command_log_path(log_dir, prefix, "stderr")
+    stdout_handle = stdout_path.open("w", encoding="utf-8")
+    stderr_handle = stderr_path.open("w", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            shlex.split(command_text),
+            cwd=str(target_path),
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        stdout_handle.close()
+        stderr_handle.close()
+    return BootstrapCommandRecord(
+        stage=stage,
+        command=command_text,
+        return_code=None,
+        succeeded=True,
+        background=True,
+        pid=proc.pid,
+        stdout_path=str(stdout_path),
+        stderr_path=str(stderr_path),
+    )
+
+
+def _terminate_background_process(record: BootstrapCommandRecord, log_dir: Path, index: int) -> BootstrapCommandRecord:
+    if not record.pid:
+        return BootstrapCommandRecord(
+            stage="teardown",
+            command=f"terminate {record.command}",
+            return_code=None,
+            succeeded=False,
+            background=True,
+            pid=record.pid,
+        )
+
+    stdout_path = _command_log_path(log_dir, f"teardown-{index:02d}", "stdout")
+    stderr_path = _command_log_path(log_dir, f"teardown-{index:02d}", "stderr")
+    try:
+        os.killpg(record.pid, signal.SIGTERM)
+        succeeded = True
+        return_code = 0
+        stderr_text = ""
+    except ProcessLookupError:
+        succeeded = True
+        return_code = 0
+        stderr_text = ""
+    except OSError as exc:
+        succeeded = False
+        return_code = 1
+        stderr_text = str(exc)
+
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text(stderr_text, encoding="utf-8")
+    return BootstrapCommandRecord(
+        stage="teardown",
+        command=f"terminate {record.command}",
+        return_code=return_code,
+        succeeded=succeeded,
+        background=True,
+        pid=record.pid,
+        stdout_path=str(stdout_path),
+        stderr_path=str(stderr_path),
+    )
+
+
+def _background_startup_command(command_text: str) -> bool:
+    normalized = command_text.strip().lower()
+    if not normalized:
+        return False
+    if normalized in {"docker compose up -d", "docker-compose up -d"}:
+        return False
+    if normalized.startswith("bash scripts/setup.sh"):
+        return False
+    return True
 
 
 def _bootstrap_target_project(
@@ -291,17 +389,20 @@ def _bootstrap_target_project(
             continue
         if cmd[:3] in (["docker", "compose", "up"], ["docker-compose", "up", "-d"]) and not (target_path / "docker-compose.yml").exists():
             continue
-        record = _run_logged_command(target_path, log_dir, f"bootstrap-{index:02d}", "bootstrap", cmd)
+        if _background_startup_command(command_text):
+            record = _run_background_command(target_path, log_dir, f"bootstrap-{index:02d}", "bootstrap", command_text)
+        else:
+            record = _run_logged_command(target_path, log_dir, f"bootstrap-{index:02d}", "bootstrap", cmd)
         bootstrap_run.commands.append(record)
         if record.succeeded:
-            deadline = time.time() + 45
-            while time.time() < deadline:
-                if _url_reachable(base_url):
-                    bootstrap_run.bootstrap_succeeded = True
-                    bootstrap_run.started_services = True
-                    bootstrap_run.summary["note"] = "Target project became reachable after bootstrap."
-                    return bootstrap_run
-                time.sleep(1)
+            if _wait_for_reachability(base_url):
+                bootstrap_run.bootstrap_succeeded = True
+                bootstrap_run.started_services = True
+                bootstrap_run.summary["note"] = "Target project became reachable after bootstrap."
+                return bootstrap_run
+            if record.background:
+                teardown_record = _terminate_background_process(record, log_dir, len(bootstrap_run.commands))
+                bootstrap_run.teardown_commands.append(teardown_record)
 
     setup_script = target_path / "scripts" / "setup.sh"
     if setup_script.exists():
@@ -314,7 +415,7 @@ def _bootstrap_target_project(
             cmd,
         )
         bootstrap_run.commands.append(record)
-        if _url_reachable(base_url):
+        if _wait_for_reachability(base_url, timeout_seconds=10):
             bootstrap_run.bootstrap_succeeded = True
             bootstrap_run.started_services = True
             bootstrap_run.summary["note"] = "Target project became reachable after setup script."
@@ -337,11 +438,8 @@ def _teardown_target_project(target_path: Path, bootstrap_run: BootstrapRunDoc, 
         elif record.command == "docker-compose up -d":
             teardown_specs.append(["docker-compose", "down"])
 
-    if not teardown_specs:
-        return bootstrap_run
-
     bootstrap_run.teardown_attempted = True
-    teardown_records: list[BootstrapCommandRecord] = []
+    teardown_records: list[BootstrapCommandRecord] = list(getattr(bootstrap_run, "teardown_commands", []))
     for index, cmd in enumerate(teardown_specs, start=1):
         teardown_records.append(
             _run_logged_command(
@@ -352,6 +450,16 @@ def _teardown_target_project(target_path: Path, bootstrap_run: BootstrapRunDoc, 
                 cmd,
             )
         )
+    background_records = [
+        record
+        for record in getattr(bootstrap_run, "commands", [])
+        if getattr(record, "background", False) and getattr(record, "pid", None)
+    ]
+    start_index = len(teardown_records) + 1
+    for offset, record in enumerate(background_records, start=start_index):
+        teardown_records.append(_terminate_background_process(record, log_dir, offset))
+    if not teardown_records:
+        return bootstrap_run
     bootstrap_run.teardown_commands = teardown_records
     bootstrap_run.teardown_succeeded = all(record.succeeded for record in teardown_records)
     return bootstrap_run
@@ -371,7 +479,7 @@ def _apply_contract_teardown(
         return bootstrap_run
 
     bootstrap_run.teardown_attempted = True
-    teardown_records: list[BootstrapCommandRecord] = []
+    teardown_records: list[BootstrapCommandRecord] = list(getattr(bootstrap_run, "teardown_commands", []))
     for index, command_text in enumerate(configured_teardown, start=1):
         cmd = shlex.split(command_text)
         if not cmd or shutil.which(cmd[0]) is None:
@@ -385,6 +493,14 @@ def _apply_contract_teardown(
                 cmd,
             )
         )
+    background_records = [
+        record
+        for record in getattr(bootstrap_run, "commands", [])
+        if getattr(record, "background", False) and getattr(record, "pid", None)
+    ]
+    start_index = len(teardown_records) + 1
+    for offset, record in enumerate(background_records, start=start_index):
+        teardown_records.append(_terminate_background_process(record, log_dir, offset))
     if teardown_records:
         bootstrap_run.teardown_commands = teardown_records
         bootstrap_run.teardown_succeeded = all(record.succeeded for record in teardown_records)

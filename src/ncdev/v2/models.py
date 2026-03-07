@@ -365,8 +365,10 @@ class VerificationRunDoc(ArtifactEnvelope):
 class BootstrapCommandRecord(BaseModel):
     stage: str
     command: str
-    return_code: int
+    return_code: int | None = None
     succeeded: bool
+    background: bool = False
+    pid: int | None = None
     stdout_path: str = ""
     stderr_path: str = ""
 

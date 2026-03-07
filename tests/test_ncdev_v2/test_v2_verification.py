@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from ncdev.v2.engine import run_v2_prepare, run_v2_verify
-from ncdev.v2.verification import run_v2_verification
+from ncdev.v2.verification import _apply_contract_teardown, _bootstrap_target_project, run_v2_verification
 
 
 def test_v2_verify_dry_run_persists_verification_artifacts(tmp_path: Path) -> None:
@@ -290,3 +290,79 @@ def test_v2_verification_flags_missing_screenshot_coverage_and_reports(tmp_path:
     assert "missing-test-reports" in issue_ids
     assert len(evidence_index.screenshots) == 1
     assert not evidence_index.reports
+
+
+def test_v2_bootstrap_supports_background_startup_commands(tmp_path: Path, monkeypatch) -> None:
+    target_path = tmp_path / "target"
+    target_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    class FakeProcess:
+        pid = 43210
+
+    monkeypatch.setattr("ncdev.v2.verification._url_reachable", lambda base_url: False)
+    monkeypatch.setattr("ncdev.v2.verification._wait_for_reachability", lambda base_url, timeout_seconds=45: True)
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+
+    bootstrap_run = _bootstrap_target_project(
+        target_path,
+        project_name="target",
+        base_url="http://localhost:3000",
+        log_dir=log_dir,
+        verification_contract={"startup_commands": ["npm run dev"], "teardown_commands": []},
+    )
+
+    assert bootstrap_run.bootstrap_succeeded is True
+    assert bootstrap_run.started_services is True
+    assert bootstrap_run.commands
+    assert bootstrap_run.commands[0].background is True
+    assert bootstrap_run.commands[0].pid == 43210
+
+
+def test_v2_teardown_terminates_background_startup_processes(tmp_path: Path, monkeypatch) -> None:
+    target_path = tmp_path / "target"
+    target_path.mkdir()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    from ncdev.v2.models import BootstrapCommandRecord, BootstrapRunDoc
+
+    bootstrap_run = BootstrapRunDoc(
+        generator="test",
+        source_inputs=[str(target_path)],
+        project_name="target",
+        target_path=str(target_path),
+        base_url="http://localhost:3000",
+        reachable_before_bootstrap=False,
+        bootstrap_succeeded=True,
+        started_services=True,
+        commands=[
+            BootstrapCommandRecord(
+                stage="bootstrap",
+                command="npm run dev",
+                succeeded=True,
+                background=True,
+                pid=43210,
+            )
+        ],
+        summary={},
+    )
+
+    killed: list[tuple[int, int]] = []
+
+    monkeypatch.setattr("os.killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    updated = _apply_contract_teardown(
+        target_path,
+        bootstrap_run,
+        log_dir,
+        verification_contract={"teardown_commands": []},
+    )
+
+    assert updated.teardown_attempted is True
+    assert updated.teardown_succeeded is True
+    assert killed
+    assert updated.teardown_commands
+    assert updated.teardown_commands[0].background is True
