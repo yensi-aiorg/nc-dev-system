@@ -6,7 +6,7 @@ from pathlib import Path
 from ncdev.adapters.base import ProviderVersionInfo
 from ncdev.v2.engine import run_v2_execute, run_v2_prepare
 from ncdev.v2.job_runner import run_job_queue
-from ncdev.v2.models import CapabilityDescriptor, JobRunRecord, TaskExecutionRecord, TaskType
+from ncdev.v2.models import CapabilityDescriptor, JobRunLogDoc, JobRunRecord, TaskExecutionRecord, TaskType
 
 
 def test_v2_execute_dry_run_writes_job_run_log(tmp_path: Path) -> None:
@@ -31,6 +31,60 @@ def test_v2_execute_dry_run_writes_job_run_log(tmp_path: Path) -> None:
     payload = json.loads((run_dir / "outputs" / "job-run-log.json").read_text(encoding="utf-8"))
     assert payload["records"]
     assert all(record["status"] == "dry-run" for record in payload["records"])
+
+
+def test_v2_execute_tracks_failure_kinds_in_metadata(tmp_path: Path, monkeypatch) -> None:
+    req = tmp_path / "requirements.md"
+    req.write_text(
+        """
+# Product
+- User can sign in
+""".strip(),
+        encoding="utf-8",
+    )
+    prepared = run_v2_prepare(tmp_path, req, dry_run=True)
+
+    def fake_run_job_queue(run_dir, registry, dry_run, queue_name="job-queue.json"):
+        return JobRunLogDoc(
+            generator="test",
+            source_inputs=[str(Path(run_dir) / "outputs" / queue_name)],
+            project_name="requirements",
+            records=[
+                JobRunRecord(
+                    job_id="batch-001",
+                    task_type=TaskType.BUILD_BATCH,
+                    provider="openai_codex",
+                    model="gpt-5.2-codex",
+                    status="failed",
+                    summary="provider timeout",
+                    request_artifact="x.json",
+                    output_artifacts=[],
+                    metadata={"failure_kind": "timeout"},
+                ),
+                JobRunRecord(
+                    job_id="test-authoring",
+                    task_type=TaskType.TEST_AUTHORING,
+                    provider="openai_codex",
+                    model="gpt-5.2-codex",
+                    status="failed",
+                    summary="cli unavailable",
+                    request_artifact="y.json",
+                    output_artifacts=[],
+                    metadata={"failure_kind": "cli_unavailable"},
+                ),
+            ],
+        )
+
+    monkeypatch.setattr("ncdev.v2.engine.run_job_queue", fake_run_job_queue)
+
+    executed = run_v2_execute(tmp_path, prepared.run_id, dry_run=False)
+
+    assert executed.status.value == "failed"
+    assert executed.metadata["job_failed_count"] == 2
+    assert executed.metadata["job_failure_kinds"] == {
+        "timeout": 1,
+        "cli_unavailable": 1,
+    }
 
 
 def test_run_job_queue_executes_codex_jobs_with_mocked_runner(tmp_path: Path, monkeypatch) -> None:

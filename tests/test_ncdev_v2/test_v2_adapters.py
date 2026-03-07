@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -76,3 +77,49 @@ def test_codex_adapter_run_task_writes_result_artifact(tmp_path: Path) -> None:
     called_cmd = mock_run.call_args.args[0]
     assert called_cmd[:4] == ["codex", "exec", "--full-auto", "--json"]
     assert "--cd" in called_cmd
+
+
+def test_claude_adapter_timeout_is_classified(tmp_path: Path) -> None:
+    adapter = build_provider_registry()["anthropic_claude_code"]
+    task_request = tmp_path / "outputs" / "task-requests" / "market_research.json"
+    task_request.parent.mkdir(parents=True, exist_ok=True)
+    task_request.write_text('{"prompt":"Summarize research."}', encoding="utf-8")
+
+    timeout = subprocess.TimeoutExpired(cmd=["claude"], timeout=30)
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch("subprocess.run", side_effect=timeout):
+            result = adapter.run_task(
+                task_type=TaskType.MARKET_RESEARCH,
+                artifact_paths=[tmp_path / "outputs" / "research-pack.json"],
+                model="opus",
+                options={"task_request_path": str(task_request), "timeout_seconds": 30},
+            )
+
+    assert result.status == "failed"
+    assert result.metadata["failure_kind"] == "timeout"
+    assert "timed out" in result.summary
+
+
+def test_codex_adapter_timeout_is_classified(tmp_path: Path) -> None:
+    adapter = build_provider_registry()["openai_codex"]
+    task_request = tmp_path / "outputs" / "task-requests" / "test_authoring.json"
+    task_request.parent.mkdir(parents=True, exist_ok=True)
+    task_request.write_text('{"prompt":"Write tests."}', encoding="utf-8")
+
+    timeout = subprocess.TimeoutExpired(cmd=["codex"], timeout=45)
+    with patch("shutil.which", return_value="/usr/bin/codex"):
+        with patch("subprocess.run", side_effect=timeout):
+            result = adapter.run_task(
+                task_type=TaskType.TEST_AUTHORING,
+                artifact_paths=[tmp_path / "outputs" / "build-plan.json"],
+                model="gpt-5.2-codex",
+                options={
+                    "task_request_path": str(task_request),
+                    "target_path": str(tmp_path),
+                    "timeout_seconds": 45,
+                },
+            )
+
+    assert result.status == "failed"
+    assert result.metadata["failure_kind"] == "timeout"
+    assert "timed out" in result.summary

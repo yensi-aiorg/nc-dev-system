@@ -16,7 +16,7 @@ from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.execution import execute_routed_tasks
 from ncdev.v2.job_runner import run_job_queue
 from ncdev.v2.jobs import materialize_job_queue, materialize_repair_job_queue
-from ncdev.v2.delivery import assemble_delivery_summary, load_delivery_inputs, load_delivery_inputs
+from ncdev.v2.delivery import assemble_delivery_summary, load_delivery_inputs
 from ncdev.v2.models import FullRunReportDoc, V2Phase, V2RunState, V2TaskState, V2TaskStatus
 from ncdev.v2.prepare import prepare_target_project
 from ncdev.v2.routing import resolve_routing_plan
@@ -219,6 +219,11 @@ def run_v2_execute(workspace: Path, run_id: str, dry_run: bool, command: str = "
     passed = sum(1 for record in job_run_log.records if record.status in {"passed", "stubbed", "dry-run"})
     failed = sum(1 for record in job_run_log.records if record.status == "failed")
     blocked = sum(1 for record in job_run_log.records if record.status == "blocked")
+    failure_kinds: dict[str, int] = {}
+    for record in job_run_log.records:
+        failure_kind = str(record.metadata.get("failure_kind", "")).strip()
+        if failure_kind:
+            failure_kinds[failure_kind] = failure_kinds.get(failure_kind, 0) + 1
     _set_task(
         state,
         "job_execution",
@@ -228,6 +233,7 @@ def run_v2_execute(workspace: Path, run_id: str, dry_run: bool, command: str = "
     )
     state.metadata["job_run_count"] = len(job_run_log.records)
     state.metadata["job_failed_count"] = failed
+    state.metadata["job_failure_kinds"] = failure_kinds
     state.status = V2TaskStatus.PASSED if failed == 0 else V2TaskStatus.FAILED
     state.touch()
     persist_v2_run_state(state)
@@ -294,8 +300,14 @@ def run_v2_repair(workspace: Path, run_id: str, dry_run: bool, command: str = "r
     repair_run_log_path = persist_v2_artifact(run_dir, "repair-run-log.json", repair_run_log.model_dump(mode="json"))
     state.artifacts.append(str(repair_run_log_path))
     failed = sum(1 for record in repair_run_log.records if record.status == "failed")
+    failure_kinds: dict[str, int] = {}
+    for record in repair_run_log.records:
+        failure_kind = str(record.metadata.get("failure_kind", "")).strip()
+        if failure_kind:
+            failure_kinds[failure_kind] = failure_kinds.get(failure_kind, 0) + 1
     state.metadata["repair_job_count"] = len(repair_run_log.records)
     state.metadata["repair_failed_count"] = failed
+    state.metadata["repair_failure_kinds"] = failure_kinds
     _set_task(
         state,
         "repair_execution",
@@ -443,6 +455,11 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
     failed_tasks = [task.name for task in state.tasks if task.status in {V2TaskStatus.FAILED, V2TaskStatus.BLOCKED}]
     blockers: list[str] = []
     warnings: list[str] = []
+    provider_failure_kinds: dict[str, int] = {}
+    for bucket_name in ("job_failure_kinds", "repair_failure_kinds"):
+        bucket = dict(state.metadata.get(bucket_name, {}))
+        for kind, count in bucket.items():
+            provider_failure_kinds[kind] = provider_failure_kinds.get(kind, 0) + int(count)
     if not verification_passed:
         blockers.append("Verification did not pass.")
     if not bootstrap_succeeded:
@@ -459,6 +476,12 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
         blockers.append(f"Run contains failed tasks: {', '.join(failed_tasks)}.")
     if verification_summary.get("runner_error"):
         blockers.append("Verification runner reported an exception.")
+    if provider_failure_kinds:
+        blockers.append(
+            "Provider execution failures were detected: "
+            + ", ".join(f"{kind}={count}" for kind, count in sorted(provider_failure_kinds.items()))
+            + "."
+        )
     if not teardown_succeeded and bootstrap_succeeded:
         warnings.append("Verification teardown did not fully succeed.")
 
@@ -498,6 +521,8 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
             next_actions.append("Confirm the target project's local startup commands and base URL are correct.")
         if verification_summary.get("runner_error"):
             next_actions.append("Stabilize the verification harness before another repair cycle.")
+        if provider_failure_kinds:
+            next_actions.append("Investigate provider CLI failures, timeouts, or missing task outputs before retrying.")
         if state.metadata.get("repair_cycles_run", 0) >= state.metadata.get("repair_cycles_requested", 0):
             next_actions.append("Increase repair cycles or intervene manually on the failed target project.")
         if warnings:
@@ -531,6 +556,7 @@ def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
             "repair_failed_count": state.metadata.get("repair_failed_count", 0),
             "verification_issue_count": verification_issue_count,
             "issue_categories": issue_categories,
+            "provider_failure_kinds": provider_failure_kinds,
             "warnings": warnings,
         },
     )

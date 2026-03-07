@@ -271,3 +271,92 @@ def test_v2_full_report_blocks_when_verification_fails(tmp_path: Path) -> None:
     assert report.readiness_decision == "blocked"
     assert report.release_recommendation == "hold"
     assert report.blockers
+
+
+def test_v2_full_report_surfaces_provider_failure_kinds(tmp_path: Path) -> None:
+    req = tmp_path / "requirements.md"
+    req.write_text(
+        """
+# Product
+- User can sign in
+""".strip(),
+        encoding="utf-8",
+    )
+    prepared = run_v2_prepare(tmp_path, req, dry_run=True)
+    run_dir = Path(prepared.run_dir)
+
+    from ncdev.artifacts.state import persist_v2_run_state
+    from ncdev.v2.engine import _build_full_run_report, load_v2_run_state, run_v2_deliver
+
+    (run_dir / "outputs" / "verification-run.json").write_text(
+        json.dumps(
+            {
+                "generator": "test",
+                "schema_id": "verification-run.v2",
+                "version": "v2",
+                "generated_at": "2026-03-07T00:00:00+00:00",
+                "source_inputs": [],
+                "project_name": "requirements",
+                "target_path": prepared.metadata["target_project_path"],
+                "base_url": "http://localhost:23000",
+                "routes": ["/"],
+                "dry_run": False,
+                "bootstrap_succeeded": True,
+                "overall_passed": True,
+                "summary": {"overall_passed": True},
+                "report_path": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "outputs" / "verification-issues.json").write_text(
+        json.dumps(
+            {
+                "generator": "test",
+                "schema_id": "verification-issues.v2",
+                "version": "v2",
+                "generated_at": "2026-03-07T00:00:00+00:00",
+                "source_inputs": [],
+                "project_name": "requirements",
+                "target_path": prepared.metadata["target_project_path"],
+                "issue_count": 0,
+                "issues": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "outputs" / "evidence-index.json").write_text(
+        json.dumps(
+            {
+                "generator": "test",
+                "schema_id": "evidence-index.v2",
+                "version": "v2",
+                "generated_at": "2026-03-07T00:00:00+00:00",
+                "source_inputs": [],
+                "project_name": "requirements",
+                "target_path": prepared.metadata["target_project_path"],
+                "screenshots": ["a.png"],
+                "reports": ["report.json"],
+                "videos": [],
+                "traces": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = load_v2_run_state(tmp_path, prepared.run_id)
+    state.metadata["dry_run"] = False
+    state.metadata["verification_passed"] = True
+    state.metadata["bootstrap_succeeded"] = True
+    state.metadata["teardown_succeeded"] = True
+    state.metadata["verification_issue_count"] = 0
+    state.metadata["job_failure_kinds"] = {"timeout": 1}
+    state.metadata["repair_failure_kinds"] = {"cli_unavailable": 2}
+    persist_v2_run_state(state)
+    run_v2_deliver(tmp_path, prepared.run_id)
+    state = load_v2_run_state(tmp_path, prepared.run_id)
+    report = _build_full_run_report(state)
+
+    assert report.readiness_decision == "blocked"
+    assert any("Provider execution failures were detected" in blocker for blocker in report.blockers)
+    assert report.metadata["provider_failure_kinds"] == {"timeout": 1, "cli_unavailable": 2}

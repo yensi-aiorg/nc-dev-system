@@ -150,12 +150,12 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
                 provider=self.name(),
                 model=model,
                 task_type=task_type,
-                status="skipped",
+                status="unavailable",
                 summary=f"Claude CLI unavailable for {task_type.value}.",
                 input_artifact=resolved_inputs[0] if resolved_inputs else "",
                 input_artifacts=resolved_inputs,
                 artifact_paths=[task_request_path] if task_request_path else [],
-                metadata=options,
+                metadata={**options, "failure_kind": "cli_unavailable"},
             )
 
         task_request = options.get("task_request")
@@ -180,15 +180,42 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
         if target_path:
             cmd.extend(["--cd", target_path])
 
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        timeout_seconds = float(options.get("timeout_seconds", 600.0))
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return TaskExecutionResult(
+                provider=self.name(),
+                model=model,
+                task_type=task_type,
+                status="failed",
+                summary=f"Claude task {task_type.value} timed out after {timeout_seconds:.0f}s.",
+                input_artifact=resolved_inputs[0] if resolved_inputs else "",
+                input_artifacts=resolved_inputs,
+                artifact_paths=[task_request_path] if task_request_path else [],
+                metadata={
+                    **options,
+                    "failure_kind": "timeout",
+                    "timeout_seconds": timeout_seconds,
+                    "stdout": (exc.stdout or ""),
+                    "stderr": (exc.stderr or ""),
+                },
+            )
         stdout = (proc.stdout or "").strip()
         stderr = (proc.stderr or "").strip()
         result_path = self._result_path(task_request_path)
+        raw_output: dict[str, Any] = {}
+        if stdout.startswith("{"):
+            try:
+                raw_output = json.loads(stdout)
+            except json.JSONDecodeError:
+                raw_output = {}
         if result_path is not None:
             payload = {
                 "task_type": task_type.value,
@@ -199,15 +226,27 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
                 "stderr": stderr,
             }
             write_json(result_path, payload)
+        failure_kind = ""
+        if proc.returncode != 0:
+            failure_kind = "cli_error"
+        elif result_path is not None and not raw_output and not stdout:
+            failure_kind = "empty_result"
         summary = stdout[:500] if stdout else (stderr[:500] if stderr else f"Claude task {task_type.value} completed.")
         return TaskExecutionResult(
             provider=self.name(),
             model=model,
             task_type=task_type,
-            status="passed" if proc.returncode == 0 else "failed",
+            status="passed" if not failure_kind else "failed",
             summary=summary,
             input_artifact=resolved_inputs[0] if resolved_inputs else "",
             input_artifacts=resolved_inputs,
             artifact_paths=[path for path in [task_request_path, str(result_path) if result_path else ""] if path],
-            metadata={**options, "returncode": proc.returncode},
+            metadata={
+                **options,
+                "returncode": proc.returncode,
+                "raw_output_keys": sorted(raw_output.keys()),
+                "failure_kind": failure_kind,
+                "stdout": stdout[:2000],
+                "stderr": stderr[:2000],
+            },
         )
