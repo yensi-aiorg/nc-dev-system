@@ -60,6 +60,10 @@ def test_run_job_queue_executes_codex_jobs_with_mocked_runner(tmp_path: Path, mo
 
     class FakeCodexRunner:
         async def run(self, prompt_path: str, worktree_path: str, output_path: str):
+            job_name = Path(prompt_path).stem
+            generated = Path(worktree_path) / "frontend" / "src" / f"{job_name}.tsx"
+            generated.parent.mkdir(parents=True, exist_ok=True)
+            generated.write_text(f"export const {job_name.replace('-', '_')} = true;\n", encoding="utf-8")
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             Path(output_path).write_text('{"status":"ok"}', encoding="utf-8")
             return FakeCodexResult()
@@ -82,6 +86,8 @@ def test_run_job_queue_executes_codex_jobs_with_mocked_runner(tmp_path: Path, mo
     assert build_records
     assert all(record.status == "passed" for record in build_records)
     assert any(Path(path).name.endswith("-review.json") for record in build_records for path in record.output_artifacts)
+    assert all(record.metadata["merged"] is True for record in build_records)
+    assert all(record.metadata["committed"] is True for record in build_records)
     qa_record = next(record for record in log.records if record.job_id == "qa-sweep")
     delivery_record = next(record for record in log.records if record.job_id == "delivery-pack")
     assert qa_record.status == "passed"

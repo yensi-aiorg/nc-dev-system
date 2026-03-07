@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.builder.codex_runner import CodexRunner, CodexRunnerError
 from src.builder.reviewer import BuildReviewer
+from src.builder.worktree import WorktreeError, WorktreeManager, _run_git
 
 from ncdev.adapters.base import ProviderAdapter
 from ncdev.utils import write_json, write_text
@@ -38,15 +39,69 @@ def _load_json(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+async def _current_branch(repo_path: Path) -> str:
+    branch, _ = await _run_git(
+        "rev-parse",
+        "--abbrev-ref",
+        "HEAD",
+        cwd=repo_path,
+    )
+    return branch.strip() or "main"
+
+
+async def _commit_worktree_changes(worktree_path: Path, job: ExecutionJob) -> tuple[bool, str]:
+    status, _ = await _run_git(
+        "status",
+        "--porcelain",
+        cwd=worktree_path,
+    )
+    if not status.strip():
+        return False, "No worktree changes to commit."
+
+    await _run_git("add", "-A", cwd=worktree_path)
+    try:
+        await _run_git(
+            "-c",
+            "user.name=NC Dev System",
+            "-c",
+            "user.email=ncdev@example.invalid",
+            "commit",
+            "-m",
+            f"feat({job.job_id}): {job.title}",
+            cwd=worktree_path,
+        )
+    except WorktreeError as exc:
+        return False, str(exc)
+    return True, "Committed worktree changes."
+
+
 async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
     runner = CodexRunner()
     reviewer = BuildReviewer()
     output_path = _job_output_path(run_dir, job.job_id)
+    target_repo = Path(job.target_path)
+    manager = WorktreeManager(target_repo)
+    base_branch = await _current_branch(target_repo)
+
+    try:
+        worktree = await manager.create(job.job_id, base_branch=base_branch)
+    except WorktreeError as exc:
+        return JobRunRecord(
+            job_id=job.job_id,
+            task_type=job.task_type,
+            provider=job.provider,
+            model=job.model,
+            status="failed",
+            summary=f"Worktree setup failed: {exc}",
+            request_artifact=job.request_artifact,
+            output_artifacts=[],
+            metadata={"runner": "codex", "target_path": str(target_repo)},
+        )
 
     try:
         result = await runner.run(
             prompt_path=job.request_artifact,
-            worktree_path=job.target_path,
+            worktree_path=str(worktree.path),
             output_path=str(output_path),
         )
     except CodexRunnerError as exc:
@@ -58,15 +113,21 @@ async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
             status="failed",
             summary=str(exc),
             request_artifact=job.request_artifact,
-            output_artifacts=[],
-            metadata={"runner": "codex"},
+            output_artifacts=[str(worktree.path)],
+            metadata={
+                "runner": "codex",
+                "target_path": str(target_repo),
+                "worktree_path": str(worktree.path),
+                "worktree_branch": worktree.branch,
+                "preserved_worktree": True,
+            },
         )
 
     feature = {
         "name": job.title,
         "expected_files": [],
     }
-    review = await reviewer.review(job.target_path, feature)
+    review = await reviewer.review(str(worktree.path), feature)
     review_path = _job_review_path(run_dir, job.job_id)
     review_path.write_text(
         json.dumps(
@@ -82,11 +143,30 @@ async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
         encoding="utf-8",
     )
 
-    status = "passed" if result.success and review.passed else "failed"
+    merged = False
+    preserved_worktree = True
+    merge_error = ""
+    committed = False
+    commit_message = ""
+    if result.success and review.passed:
+        committed, commit_message = await _commit_worktree_changes(worktree.path, job)
+        if committed:
+            merged = await manager.merge(job.job_id, target_branch=base_branch)
+            if merged:
+                await manager.cleanup(job.job_id)
+                preserved_worktree = False
+            else:
+                merge_error = f"Merge failed back into {base_branch}."
+        else:
+            merge_error = commit_message
+
+    status = "passed" if result.success and review.passed and committed and merged else "failed"
     summary = (
         f"Codex job completed with review {'passed' if review.passed else 'failed'}; "
         f"{len(review.issues)} issue(s), {len(result.errors)} runner error(s)."
     )
+    if merge_error:
+        summary = f"{summary} {merge_error}"
     return JobRunRecord(
         job_id=job.job_id,
         task_type=job.task_type,
@@ -95,13 +175,21 @@ async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
         status=status,
         summary=summary,
         request_artifact=job.request_artifact,
-        output_artifacts=[str(output_path), str(review_path)],
+        output_artifacts=[str(output_path), str(review_path), str(worktree.path)],
         metadata={
             "files_created": result.files_created,
             "files_modified": result.files_modified,
             "runner_errors": result.errors,
             "review_passed": review.passed,
             "review_issues": review.issues,
+            "target_path": str(target_repo),
+            "worktree_path": str(worktree.path),
+            "worktree_branch": worktree.branch,
+            "merged": merged,
+            "committed": committed,
+            "commit_summary": commit_message,
+            "preserved_worktree": preserved_worktree,
+            "base_branch": base_branch,
         },
     )
 
