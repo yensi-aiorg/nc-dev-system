@@ -157,5 +157,8 @@ def test_v2_full_dry_run_completes_without_repairs(tmp_path: Path) -> None:
         dry_run=True,
         repair_cycles=1,
     )
+    run_dir = Path(state.run_dir)
     assert state.status.value == "passed"
     assert state.metadata["repair_cycles_run"] == 0
+    assert (run_dir / "outputs" / "full-run-report.json").exists()
+    assert (run_dir / "outputs" / "full-run-summary.md").exists()

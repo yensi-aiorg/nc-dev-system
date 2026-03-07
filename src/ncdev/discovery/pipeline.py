@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ncdev.v2.design_brief import generate_design_brief
 from ncdev.discovery.ingest import IngestedSource, ingest_source
 from ncdev.utils import sha256_text
 from ncdev.v2.models import (
     BuildBatchV2,
     BuildPlanDoc,
+    DesignBriefDoc,
     DesignDirection,
     DesignPackDoc,
     FeatureCandidate,
@@ -37,7 +39,7 @@ def _feature_lines(text: str) -> list[str]:
 def run_discovery_pipeline(
     source_path: Path | str,
     dry_run: bool,
-) -> tuple[SourcePackDoc, ResearchPackDoc, FeatureMapDoc, DesignPackDoc, BuildPlanDoc, TargetProjectContractDoc, ScaffoldPlanDoc]:
+) -> tuple[SourcePackDoc, ResearchPackDoc, FeatureMapDoc, DesignPackDoc, DesignBriefDoc, BuildPlanDoc, TargetProjectContractDoc, ScaffoldPlanDoc]:
     ingested: IngestedSource = ingest_source(str(source_path))
     text = ingested.content
     project_name = ingested.project_name
@@ -128,6 +130,8 @@ def run_discovery_pipeline(
         ],
     )
 
+    design_brief = generate_design_brief(design_pack, feature_map, research_pack)
+
     build_plan = BuildPlanDoc(
         generator="ncdev.v2.discovery.pipeline",
         source_inputs=[ingested.primary_source],
@@ -203,4 +207,4 @@ def run_discovery_pipeline(
             "evidence capture directory",
         ],
     )
-    return source_pack, research_pack, feature_map, design_pack, build_plan, target_contract, scaffold_plan
+    return source_pack, research_pack, feature_map, design_pack, design_brief, build_plan, target_contract, scaffold_plan

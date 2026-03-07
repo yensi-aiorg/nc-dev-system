@@ -29,7 +29,7 @@ TASK_REQUEST_OUTPUTS: dict[TaskType, list[str]] = {
     TaskType.MARKET_RESEARCH: ["research-pack.json"],
     TaskType.FEATURE_EXTRACTION: ["feature-map.json"],
     TaskType.UX_ANALYSIS: ["ux-analysis.md"],
-    TaskType.DESIGN_BRIEF: ["design-pack.json"],
+    TaskType.DESIGN_BRIEF: ["design-brief.json"],
     TaskType.QA_SWEEP: ["qa-findings.json"],
     TaskType.DELIVERY_PACK: ["delivery-report.md"],
 }

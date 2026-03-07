@@ -359,6 +359,30 @@ class VerificationRunDoc(ArtifactEnvelope):
     report_path: str = ""
 
 
+class BootstrapCommandRecord(BaseModel):
+    stage: str
+    command: str
+    return_code: int
+    succeeded: bool
+    stdout_path: str = ""
+    stderr_path: str = ""
+
+
+class BootstrapRunDoc(ArtifactEnvelope):
+    schema_id: str = "bootstrap-run.v2"
+    project_name: str
+    target_path: str
+    base_url: str
+    reachable_before_bootstrap: bool = False
+    bootstrap_succeeded: bool = False
+    started_services: bool = False
+    commands: list[BootstrapCommandRecord] = Field(default_factory=list)
+    teardown_attempted: bool = False
+    teardown_succeeded: bool = False
+    teardown_commands: list[BootstrapCommandRecord] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
 class EvidenceIndexDoc(ArtifactEnvelope):
     schema_id: str = "evidence-index.v2"
     project_name: str
@@ -386,6 +410,26 @@ class ExecutionLogDoc(ArtifactEnvelope):
     results: list[TaskExecutionRecord] = Field(default_factory=list)
 
 
+class BatchDeliveryEntry(BaseModel):
+    batch_id: str
+    title: str
+    summary: str
+    acceptance_criteria: list[str] = Field(default_factory=list)
+
+
+class DeliverySummaryDoc(ArtifactEnvelope):
+    schema_id: str = "delivery-summary.v2"
+    project_name: str
+    target_type: str
+    stack: dict[str, str] = Field(default_factory=dict)
+    batch_count: int
+    batches: list[BatchDeliveryEntry] = Field(default_factory=list)
+    execution_steps: list[str] = Field(default_factory=list)
+    ownership_rules: list[str] = Field(default_factory=list)
+    required_artifacts: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+
+
 class V2TaskState(BaseModel):
     name: str
     status: V2TaskStatus = V2TaskStatus.PENDING
@@ -409,3 +453,21 @@ class V2RunState(BaseModel):
 
     def touch(self) -> None:
         self.updated_at = _utc_now()
+
+
+class FullRunReportDoc(ArtifactEnvelope):
+    schema_id: str = "full-run-report.v2"
+    run_id: str
+    command: str
+    project_name: str = ""
+    target_path: str = ""
+    final_status: str
+    verification_passed: bool = False
+    bootstrap_succeeded: bool = False
+    teardown_succeeded: bool = False
+    repair_cycles_requested: int = 0
+    repair_cycles_run: int = 0
+    tasks: dict[str, str] = Field(default_factory=dict)
+    failed_tasks: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)

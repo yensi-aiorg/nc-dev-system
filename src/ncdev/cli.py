@@ -13,10 +13,11 @@ from ncdev.engine import (
     summarize_status,
 )
 from ncdev.v2.engine import (
-    run_v2_full,
     load_v2_run_state,
+    run_v2_deliver,
     run_v2_discovery,
     run_v2_execute,
+    run_v2_full,
     run_v2_prepare,
     run_v2_repair,
     run_v2_verify,
@@ -87,6 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
     repair_v2.add_argument("--run-id", required=True)
     repair_v2.add_argument("--workspace", default=None)
     repair_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs")
+
+    deliver_v2 = sub.add_parser("deliver-v2", help="Assemble the V2 delivery summary artifact")
+    deliver_v2.add_argument("--run-id", required=True)
+    deliver_v2.add_argument("--workspace", default=None)
 
     full_v2 = sub.add_parser("full-v2", help="Run the full V2 flow: prepare, execute, verify, and repair if needed")
     full_v2.add_argument("--source", required=True, help="Path to source requirements or discovery input")
@@ -206,6 +211,17 @@ def main() -> int:
             run_id=args.run_id,
             dry_run=bool(args.dry_run),
             command="repair-v2",
+        )
+        console.print(summarize_v2_status(state))
+        console.print(f"run_dir={state.run_dir}")
+        return 0
+
+    if args.command == "deliver-v2":
+        workspace = _workspace(args.workspace)
+        state = run_v2_deliver(
+            workspace=workspace,
+            run_id=args.run_id,
+            command="deliver-v2",
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")

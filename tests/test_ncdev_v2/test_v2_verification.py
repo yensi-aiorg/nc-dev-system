@@ -27,10 +27,14 @@ def test_v2_verify_dry_run_persists_verification_artifacts(tmp_path: Path) -> No
     run_dir = Path(verified.run_dir)
 
     assert verified.metadata["verification_passed"] is True
+    assert verified.metadata["bootstrap_succeeded"] is True
     assert (run_dir / "outputs" / "verification-run.json").exists()
+    assert (run_dir / "outputs" / "bootstrap-run.json").exists()
     assert (run_dir / "outputs" / "evidence-index.json").exists()
 
+    bootstrap_payload = json.loads((run_dir / "outputs" / "bootstrap-run.json").read_text(encoding="utf-8"))
     verification_payload = json.loads((run_dir / "outputs" / "verification-run.json").read_text(encoding="utf-8"))
+    assert bootstrap_payload["bootstrap_succeeded"] is True
     assert verification_payload["dry_run"] is True
     assert verification_payload["bootstrap_succeeded"] is True
     assert verification_payload["routes"]
@@ -74,10 +78,30 @@ def test_v2_verification_uses_test_runner_when_not_dry_run(tmp_path: Path, monke
             (screenshots_dir / "home-desktop.png").write_bytes(b"\x89PNG\x00")
             return FakeSuite()
 
-    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", lambda target_path, base_url: (True, ["docker compose up -d"]))
+    class FakeBootstrap:
+        bootstrap_succeeded = True
+        started_services = True
+        teardown_succeeded = True
+        commands = []
+
+    def fake_bootstrap(target_path, *, project_name, base_url, log_dir):
+        bootstrap = FakeBootstrap()
+        bootstrap.commands = [
+            type(
+                "CommandRecord",
+                (),
+                {
+                    "command": "docker compose up -d",
+                },
+            )()
+        ]
+        return bootstrap
+
+    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", fake_bootstrap)
+    monkeypatch.setattr("ncdev.v2.verification._teardown_target_project", lambda target_path, bootstrap_run, log_dir: bootstrap_run)
     monkeypatch.setattr("ncdev.v2.verification.TestRunner", FakeRunner)
 
-    verification_run, evidence_index = run_v2_verification(
+    verification_run, evidence_index, bootstrap_run = run_v2_verification(
         run_dir,
         base_url="http://localhost:9999",
         dry_run=False,
@@ -87,6 +111,7 @@ def test_v2_verification_uses_test_runner_when_not_dry_run(tmp_path: Path, monke
     assert verification_run.base_url == "http://localhost:9999"
     assert verification_run.bootstrap_succeeded is True
     assert verification_run.bootstrap_commands == ["docker compose up -d"]
+    assert bootstrap_run.teardown_succeeded is True
     assert evidence_index.screenshots
     assert evidence_index.reports
 
@@ -103,9 +128,28 @@ def test_v2_verification_reports_bootstrap_failure(tmp_path: Path, monkeypatch) 
     prepared = run_v2_prepare(tmp_path, req, dry_run=True)
     run_dir = Path(prepared.run_dir)
 
-    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", lambda target_path, base_url: (False, ["docker compose up -d"]))
+    class FailedBootstrap:
+        bootstrap_succeeded = False
+        started_services = False
+        teardown_succeeded = False
+        commands = []
 
-    verification_run, evidence_index = run_v2_verification(
+    def fake_bootstrap(target_path, *, project_name, base_url, log_dir):
+        bootstrap = FailedBootstrap()
+        bootstrap.commands = [
+            type(
+                "CommandRecord",
+                (),
+                {
+                    "command": "docker compose up -d",
+                },
+            )()
+        ]
+        return bootstrap
+
+    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", fake_bootstrap)
+
+    verification_run, evidence_index, bootstrap_run = run_v2_verification(
         run_dir,
         base_url="http://localhost:9999",
         dry_run=False,
@@ -114,4 +158,64 @@ def test_v2_verification_reports_bootstrap_failure(tmp_path: Path, monkeypatch) 
     assert verification_run.overall_passed is False
     assert verification_run.bootstrap_succeeded is False
     assert verification_run.bootstrap_commands == ["docker compose up -d"]
+    assert bootstrap_run.bootstrap_succeeded is False
+    assert evidence_index.project_name == verification_run.project_name
+
+
+def test_v2_verification_reports_runner_errors_and_teardown(tmp_path: Path, monkeypatch) -> None:
+    req = tmp_path / "requirements.md"
+    req.write_text(
+        """
+# Product
+- User can sign in
+""".strip(),
+        encoding="utf-8",
+    )
+    prepared = run_v2_prepare(tmp_path, req, dry_run=True)
+    run_dir = Path(prepared.run_dir)
+
+    class FakeBootstrap:
+        bootstrap_succeeded = True
+        started_services = True
+        teardown_succeeded = False
+        commands = []
+
+    bootstrap = FakeBootstrap()
+    bootstrap.commands = [
+        type(
+            "CommandRecord",
+            (),
+            {
+                "command": "docker compose up -d",
+            },
+        )()
+    ]
+
+    class ExplodingRunner:
+        def __init__(self, project_path: Path, *, base_url: str = "http://localhost:23000", **kwargs):
+            self.project_path = Path(project_path)
+            self.base_url = base_url
+
+        async def run_all(self, routes=None):
+            raise RuntimeError("playwright crashed")
+
+    def fake_teardown(target_path, bootstrap_run, log_dir):
+        bootstrap_run.teardown_attempted = True
+        bootstrap_run.teardown_succeeded = False
+        return bootstrap_run
+
+    monkeypatch.setattr("ncdev.v2.verification._bootstrap_target_project", lambda target_path, *, project_name, base_url, log_dir: bootstrap)
+    monkeypatch.setattr("ncdev.v2.verification._teardown_target_project", fake_teardown)
+    monkeypatch.setattr("ncdev.v2.verification.TestRunner", ExplodingRunner)
+
+    verification_run, evidence_index, bootstrap_run = run_v2_verification(
+        run_dir,
+        base_url="http://localhost:9999",
+        dry_run=False,
+    )
+
+    assert verification_run.overall_passed is False
+    assert verification_run.summary["runner_error"] == "playwright crashed"
+    assert bootstrap_run.teardown_attempted is True
+    assert bootstrap_run.teardown_succeeded is False
     assert evidence_index.project_name == verification_run.project_name

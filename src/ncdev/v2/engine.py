@@ -11,12 +11,13 @@ from ncdev.artifacts.state import (
     persist_v2_run_state,
 )
 from ncdev.discovery.pipeline import run_discovery_pipeline
-from ncdev.utils import make_run_id
+from ncdev.utils import make_run_id, write_text
 from ncdev.v2.config import ensure_default_v2_config
 from ncdev.v2.execution import execute_routed_tasks
 from ncdev.v2.job_runner import run_job_queue
 from ncdev.v2.jobs import materialize_job_queue, materialize_repair_job_queue
-from ncdev.v2.models import V2Phase, V2RunState, V2TaskState, V2TaskStatus
+from ncdev.v2.delivery import assemble_delivery_summary, load_delivery_inputs, load_delivery_inputs
+from ncdev.v2.models import FullRunReportDoc, V2Phase, V2RunState, V2TaskState, V2TaskStatus
 from ncdev.v2.prepare import prepare_target_project
 from ncdev.v2.routing import resolve_routing_plan
 from ncdev.v2.verification import run_v2_verification
@@ -40,6 +41,8 @@ def _base_state(run_id: str, workspace: Path, run_dir: Path, command: str) -> V2
             V2TaskState(name="verification"),
             V2TaskState(name="repair_queue"),
             V2TaskState(name="repair_execution"),
+            V2TaskState(name="delivery_summary"),
+            V2TaskState(name="final_report"),
         ],
     )
 
@@ -104,7 +107,7 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         artifacts=[str(routing_path)],
     )
 
-    source_pack, research_pack, feature_map, design_pack, build_plan, target_contract, scaffold_plan = run_discovery_pipeline(
+    source_pack, research_pack, feature_map, design_pack, design_brief, build_plan, target_contract, scaffold_plan = run_discovery_pipeline(
         source_path,
         dry_run=dry_run,
     )
@@ -114,6 +117,7 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
         persist_v2_artifact(run_dir, "research-pack.json", research_pack.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "feature-map.json", feature_map.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "design-pack.json", design_pack.model_dump(mode="json")),
+        persist_v2_artifact(run_dir, "design-brief.json", design_brief.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "build-plan.json", build_plan.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "target-project-contract.json", target_contract.model_dump(mode="json")),
         persist_v2_artifact(run_dir, "scaffold-plan.json", scaffold_plan.model_dump(mode="json")),
@@ -146,6 +150,7 @@ def run_v2_discovery(workspace: Path, source_path: Path, dry_run: bool, command:
     state.phase = V2Phase.COMPLETE
     state.status = V2TaskStatus.PASSED
     state.metadata["dry_run"] = dry_run
+    state.metadata["project_name"] = feature_map.project_name
     state.metadata["routing_decisions"] = len(routing_doc.decisions)
     state.touch()
     persist_v2_run_state(state)
@@ -240,21 +245,24 @@ def run_v2_verify(
     run_dir = Path(state.run_dir)
     state.command = command
 
-    verification_run, evidence_index = run_v2_verification(
+    verification_run, evidence_index, bootstrap_run = run_v2_verification(
         run_dir,
         base_url=base_url,
         dry_run=dry_run,
     )
+    bootstrap_path = persist_v2_artifact(run_dir, "bootstrap-run.json", bootstrap_run.model_dump(mode="json"))
     verification_path = persist_v2_artifact(run_dir, "verification-run.json", verification_run.model_dump(mode="json"))
     evidence_path = persist_v2_artifact(run_dir, "evidence-index.json", evidence_index.model_dump(mode="json"))
-    state.artifacts.extend([str(verification_path), str(evidence_path)])
+    state.artifacts.extend([str(bootstrap_path), str(verification_path), str(evidence_path)])
     _set_task(
         state,
         "verification",
         V2TaskStatus.PASSED if verification_run.overall_passed else V2TaskStatus.FAILED,
         f"verification completed with overall_passed={verification_run.overall_passed}",
-        artifacts=[str(verification_path), str(evidence_path)],
+        artifacts=[str(bootstrap_path), str(verification_path), str(evidence_path)],
     )
+    state.metadata["bootstrap_succeeded"] = bootstrap_run.bootstrap_succeeded
+    state.metadata["teardown_succeeded"] = bootstrap_run.teardown_succeeded
     state.metadata["verification_passed"] = verification_run.overall_passed
     state.status = V2TaskStatus.PASSED if verification_run.overall_passed else V2TaskStatus.FAILED
     state.touch()
@@ -298,6 +306,28 @@ def run_v2_repair(workspace: Path, run_id: str, dry_run: bool, command: str = "r
     return state
 
 
+def run_v2_deliver(workspace: Path, run_id: str, command: str = "deliver-v2") -> V2RunState:
+    state = load_v2_run_state(workspace, run_id)
+    run_dir = Path(state.run_dir)
+    state.command = command
+
+    build_plan, target_contract = load_delivery_inputs(run_dir)
+    delivery_summary = assemble_delivery_summary(build_plan, target_contract)
+    delivery_path = persist_v2_artifact(run_dir, "delivery-summary.json", delivery_summary.model_dump(mode="json"))
+    state.artifacts.append(str(delivery_path))
+    _set_task(
+        state,
+        "delivery_summary",
+        V2TaskStatus.PASSED,
+        f"delivery summary assembled: {delivery_summary.batch_count} batches, {len(delivery_summary.execution_steps)} steps",
+        artifacts=[str(delivery_path)],
+    )
+    state.metadata["project_name"] = delivery_summary.project_name
+    state.touch()
+    persist_v2_run_state(state)
+    return state
+
+
 def run_v2_full(
     workspace: Path,
     source_path: Path,
@@ -317,8 +347,22 @@ def run_v2_full(
         state = run_v2_repair(workspace=workspace, run_id=state.run_id, dry_run=dry_run, command=command)
         state = run_v2_verify(workspace=workspace, run_id=state.run_id, base_url=base_url, dry_run=dry_run, command=command)
 
+    state = run_v2_deliver(workspace=workspace, run_id=state.run_id, command=command)
     state.metadata["repair_cycles_requested"] = repair_cycles
     state.metadata["repair_cycles_run"] = cycles_run
+
+    report = _build_full_run_report(state)
+    report_path = persist_v2_artifact(Path(state.run_dir), "full-run-report.json", report.model_dump(mode="json"))
+    summary_path = Path(state.run_dir) / "outputs" / "full-run-summary.md"
+    write_text(summary_path, _render_full_run_summary(report))
+    state.artifacts.extend([str(report_path), str(summary_path)])
+    _set_task(
+        state,
+        "final_report",
+        V2TaskStatus.PASSED,
+        "full run summary generated",
+        artifacts=[str(report_path), str(summary_path)],
+    )
     state.touch()
     persist_v2_run_state(state)
     return state
@@ -335,4 +379,90 @@ def summarize_v2_status(state: V2RunState) -> str:
     return (
         f"run_id={state.run_id} phase={state.phase.value} status={state.status.value} "
         f"tasks={task_summary}"
+    )
+
+
+def _build_full_run_report(state: V2RunState) -> FullRunReportDoc:
+    run_dir = Path(state.run_dir)
+    outputs_dir = run_dir / "outputs"
+    scaffold_manifest_path = outputs_dir / "scaffold-manifest.json"
+    verification_run_path = outputs_dir / "verification-run.json"
+
+    project_name = ""
+    target_path = ""
+    if scaffold_manifest_path.exists():
+        scaffold_manifest = json.loads(scaffold_manifest_path.read_text(encoding="utf-8"))
+        project_name = str(scaffold_manifest.get("project_name", ""))
+        target_path = str(scaffold_manifest.get("target_path", ""))
+
+    verification_passed = bool(state.metadata.get("verification_passed", False))
+    bootstrap_succeeded = bool(state.metadata.get("bootstrap_succeeded", False))
+    teardown_succeeded = bool(state.metadata.get("teardown_succeeded", False))
+    verification_summary: dict[str, object] = {}
+    if verification_run_path.exists():
+        verification_payload = json.loads(verification_run_path.read_text(encoding="utf-8"))
+        verification_passed = bool(verification_payload.get("overall_passed", verification_passed))
+        verification_summary = dict(verification_payload.get("summary", {}))
+
+    tasks = {task.name: task.status.value for task in state.tasks}
+    failed_tasks = [task.name for task in state.tasks if task.status in {V2TaskStatus.FAILED, V2TaskStatus.BLOCKED}]
+    next_actions: list[str] = []
+    if verification_passed and state.status == V2TaskStatus.PASSED:
+        next_actions.append("Review the delivery pack and verification evidence before release.")
+        next_actions.append("Run a human acceptance pass on the generated target project.")
+    else:
+        next_actions.append("Inspect verification-run.json and repair-run-log.json for unresolved failures.")
+        if not bootstrap_succeeded:
+            next_actions.append("Confirm the target project's local startup commands and base URL are correct.")
+        if verification_summary.get("runner_error"):
+            next_actions.append("Stabilize the verification harness before another repair cycle.")
+        if state.metadata.get("repair_cycles_run", 0) >= state.metadata.get("repair_cycles_requested", 0):
+            next_actions.append("Increase repair cycles or intervene manually on the failed target project.")
+
+    return FullRunReportDoc(
+        generator="ncdev.v2.engine",
+        source_inputs=[str(run_dir)],
+        run_id=state.run_id,
+        command=state.command,
+        project_name=project_name,
+        target_path=target_path,
+        final_status=state.status.value,
+        verification_passed=verification_passed,
+        bootstrap_succeeded=bootstrap_succeeded,
+        teardown_succeeded=teardown_succeeded,
+        repair_cycles_requested=int(state.metadata.get("repair_cycles_requested", 0)),
+        repair_cycles_run=int(state.metadata.get("repair_cycles_run", 0)),
+        tasks=tasks,
+        failed_tasks=failed_tasks,
+        next_actions=next_actions,
+        metadata={
+            "verification_summary": verification_summary,
+            "job_failed_count": state.metadata.get("job_failed_count", 0),
+            "repair_failed_count": state.metadata.get("repair_failed_count", 0),
+        },
+    )
+
+
+def _render_full_run_summary(report: FullRunReportDoc) -> str:
+    failed = ", ".join(report.failed_tasks) if report.failed_tasks else "none"
+    actions = "\n".join(f"- {action}" for action in report.next_actions) or "- none"
+    return "\n".join(
+        [
+            "# Full Run Summary",
+            "",
+            f"- Run ID: `{report.run_id}`",
+            f"- Command: `{report.command}`",
+            f"- Project: `{report.project_name}`",
+            f"- Target Path: `{report.target_path}`",
+            f"- Final Status: `{report.final_status}`",
+            f"- Verification Passed: `{report.verification_passed}`",
+            f"- Bootstrap Succeeded: `{report.bootstrap_succeeded}`",
+            f"- Teardown Succeeded: `{report.teardown_succeeded}`",
+            f"- Repair Cycles: `{report.repair_cycles_run}` / `{report.repair_cycles_requested}`",
+            f"- Failed Tasks: {failed}",
+            "",
+            "## Next Actions",
+            actions,
+            "",
+        ]
     )
