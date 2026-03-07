@@ -212,6 +212,19 @@ class RoutingPlanDoc(ArtifactEnvelope):
     decisions: list[RoutingDecision] = Field(default_factory=list)
 
 
+class TaskRequestDoc(ArtifactEnvelope):
+    schema_id: str = "task-request.v2"
+    task_type: TaskType
+    provider: str
+    model: str
+    title: str
+    prompt: str
+    input_artifacts: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    fallback_providers: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class TaskExecutionRecord(BaseModel):
     provider: str
     model: str
@@ -219,6 +232,7 @@ class TaskExecutionRecord(BaseModel):
     status: str
     summary: str
     input_artifact: str = ""
+    input_artifacts: list[str] = Field(default_factory=list)
     artifact_paths: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

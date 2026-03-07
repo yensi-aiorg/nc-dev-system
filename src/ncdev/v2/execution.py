@@ -3,16 +3,43 @@ from __future__ import annotations
 from pathlib import Path
 
 from ncdev.adapters.base import ProviderAdapter
-from ncdev.v2.models import ExecutionLogDoc, RoutingPlanDoc, TaskExecutionRecord, TaskType
+from ncdev.utils import write_json
+from ncdev.v2.models import (
+    ExecutionLogDoc,
+    RoutingPlanDoc,
+    TaskExecutionRecord,
+    TaskRequestDoc,
+    TaskType,
+)
 
 
-DISCOVERY_TASK_ARTIFACTS: dict[TaskType, str] = {
-    TaskType.SOURCE_INGEST: "source-pack.json",
-    TaskType.REPO_ANALYSIS: "source-pack.json",
-    TaskType.MARKET_RESEARCH: "research-pack.json",
-    TaskType.FEATURE_EXTRACTION: "feature-map.json",
-    TaskType.DESIGN_BRIEF: "design-pack.json",
+TASK_INPUT_ARTIFACTS: dict[TaskType, list[str]] = {
+    TaskType.SOURCE_INGEST: ["source-pack.json"],
+    TaskType.REPO_ANALYSIS: ["source-pack.json"],
+    TaskType.MARKET_RESEARCH: ["research-pack.json"],
+    TaskType.FEATURE_EXTRACTION: ["feature-map.json"],
+    TaskType.DESIGN_BRIEF: ["design-pack.json"],
+    TaskType.BUILD_BATCH: ["build-plan.json", "target-project-contract.json", "scaffold-plan.json"],
+    TaskType.TEST_AUTHORING: ["build-plan.json", "scaffold-plan.json"],
+    TaskType.QA_SWEEP: ["target-project-contract.json", "scaffold-plan.json"],
+    TaskType.DELIVERY_PACK: ["build-plan.json", "target-project-contract.json"],
 }
+
+
+def _resolve_input_paths(outputs_dir: Path, task_type: TaskType) -> tuple[list[Path], list[str]]:
+    artifact_names = TASK_INPUT_ARTIFACTS.get(task_type, [])
+    paths = [outputs_dir / artifact_name for artifact_name in artifact_names]
+    missing = [str(path) for path in paths if not path.exists()]
+    return paths, missing
+
+
+def _task_request_path(outputs_dir: Path, task_type: TaskType) -> Path:
+    return outputs_dir / "task-requests" / f"{task_type.value}.json"
+
+
+def _persist_task_request(path: Path, request: TaskRequestDoc) -> str:
+    write_json(path, request.model_dump(mode="json"))
+    return str(path)
 
 
 def execute_routed_tasks(
@@ -22,34 +49,72 @@ def execute_routed_tasks(
 ) -> ExecutionLogDoc:
     results: list[TaskExecutionRecord] = []
     for decision in routing_plan.decisions:
-        artifact_name = DISCOVERY_TASK_ARTIFACTS.get(decision.task_type)
-        if not artifact_name:
+        artifact_paths, missing_artifacts = _resolve_input_paths(outputs_dir, decision.task_type)
+        if not artifact_paths:
             continue
-        artifact_path = outputs_dir / artifact_name
-        if decision.provider == "unassigned" or decision.provider not in registry or not artifact_path.exists():
+
+        resolved_inputs = [str(path) for path in artifact_paths]
+        if decision.provider == "unassigned" or decision.provider not in registry:
             results.append(
                 TaskExecutionRecord(
                     provider=decision.provider,
                     model=decision.model,
                     task_type=decision.task_type,
                     status="skipped",
-                    summary=f"Skipped {decision.task_type.value}; provider or artifact was unavailable.",
-                    input_artifact=str(artifact_path),
+                    summary=f"Skipped {decision.task_type.value}; provider was unavailable.",
+                    input_artifact=resolved_inputs[0] if resolved_inputs else "",
+                    input_artifacts=resolved_inputs,
+                    metadata={"missing_artifacts": missing_artifacts},
+                )
+            )
+            continue
+
+        if missing_artifacts:
+            results.append(
+                TaskExecutionRecord(
+                    provider=decision.provider,
+                    model=decision.model,
+                    task_type=decision.task_type,
+                    status="skipped",
+                    summary=f"Skipped {decision.task_type.value}; required artifacts were missing.",
+                    input_artifact=resolved_inputs[0] if resolved_inputs else "",
+                    input_artifacts=resolved_inputs,
+                    metadata={"missing_artifacts": missing_artifacts},
                 )
             )
             continue
 
         adapter = registry[decision.provider]
-        result = adapter.run_task(
+        task_request = adapter.build_task_request(
             task_type=decision.task_type,
-            artifact_path=artifact_path,
+            artifact_paths=artifact_paths,
             model=decision.model,
             options={"fallback_providers": decision.fallback_providers},
         )
-        results.append(TaskExecutionRecord.model_validate(result.model_dump(mode="json")))
+        task_request_path = _persist_task_request(
+            _task_request_path(outputs_dir, decision.task_type),
+            task_request,
+        )
+        result = adapter.run_task(
+            task_type=decision.task_type,
+            artifact_paths=artifact_paths,
+            model=decision.model,
+            options={
+                "fallback_providers": decision.fallback_providers,
+                "task_request_path": task_request_path,
+                "task_request": task_request.model_dump(mode="json"),
+            },
+        )
+        record = TaskExecutionRecord.model_validate(result.model_dump(mode="json"))
+        record.input_artifacts = resolved_inputs
+        if not record.input_artifact and resolved_inputs:
+            record.input_artifact = resolved_inputs[0]
+        if task_request_path not in record.artifact_paths:
+            record.artifact_paths.append(task_request_path)
+        results.append(record)
 
     return ExecutionLogDoc(
         generator="ncdev.v2.execution",
-        source_inputs=[str(outputs_dir)],
+        source_inputs=[str(outputs_dir), str(outputs_dir / "task-requests")],
         results=results,
     )

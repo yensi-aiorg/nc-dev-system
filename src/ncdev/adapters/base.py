@@ -6,7 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ncdev.v2.models import CapabilityDescriptor, TaskExecutionRecord, TaskType
+from ncdev.v2.models import (
+    CapabilityDescriptor,
+    TaskExecutionRecord,
+    TaskRequestDoc,
+    TaskType,
+)
 
 
 class ProviderVersionInfo(BaseModel):
@@ -44,10 +49,20 @@ class ProviderAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def build_task_request(
+        self,
+        task_type: TaskType,
+        artifact_paths: list[Path],
+        model: str,
+        options: dict[str, Any] | None = None,
+    ) -> TaskRequestDoc:
+        raise NotImplementedError
+
+    @abstractmethod
     def run_task(
         self,
         task_type: TaskType,
-        artifact_path: Path,
+        artifact_paths: list[Path],
         model: str,
         options: dict[str, Any] | None = None,
     ) -> TaskExecutionResult:
