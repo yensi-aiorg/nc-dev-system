@@ -307,9 +307,13 @@ class TestTestRunnerRunUnitTests:
             "tests": [],
         }
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"All passed", b""))
-        mock_proc.returncode = 0
+        class FakeProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return b"All passed", b""
+
+        mock_proc = FakeProcess()
 
         async def _mock_exec(*args, **kwargs):
             # Simulate writing the report file
@@ -318,11 +322,10 @@ class TestTestRunnerRunUnitTests:
             return mock_proc
 
         with patch("asyncio.create_subprocess_exec", side_effect=_mock_exec):
-            with patch("asyncio.wait_for", return_value=(b"All passed", b"")):
-                runner = TestRunner(tmp_path)
-                # Manually set reports dir to our tmp
-                runner._reports_dir = reports_dir
-                result = await runner.run_unit_tests()
+            runner = TestRunner(tmp_path)
+            # Manually set reports dir to our tmp
+            runner._reports_dir = reports_dir
+            result = await runner.run_unit_tests()
 
         assert result.suite_name == "unit"
 
@@ -332,9 +335,13 @@ class TestTestRunnerRunUnitTests:
         backend = tmp_path / "backend"
         backend.mkdir()
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(side_effect=Exception("Process crashed"))
-        mock_proc.returncode = -1
+        class FakeProcess:
+            returncode = -1
+
+            async def communicate(self):
+                raise Exception("Process crashed")
+
+        mock_proc = FakeProcess()
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
             runner = TestRunner(tmp_path)
@@ -407,9 +414,15 @@ class TestTestRunnerRunAll:
     async def test_run_all_no_routes_skips_visual(self, tmp_path: Path):
         runner = TestRunner(tmp_path)
 
-        with patch.object(runner, "run_unit_tests", new=AsyncMock(return_value=TestResults(suite_name="unit"))):
-            with patch.object(runner, "run_e2e_tests", new=AsyncMock(return_value=TestResults(suite_name="e2e"))):
-                suite = await runner.run_all(routes=None)
+        async def _run_unit_tests():
+            return TestResults(suite_name="unit")
+
+        async def _run_e2e_tests():
+            return TestResults(suite_name="e2e")
+
+        runner.run_unit_tests = _run_unit_tests  # type: ignore[method-assign]
+        runner.run_e2e_tests = _run_e2e_tests  # type: ignore[method-assign]
+        suite = await runner.run_all(routes=None)
 
         assert isinstance(suite, TestSuiteResults)
         assert suite.unit.suite_name == "unit"

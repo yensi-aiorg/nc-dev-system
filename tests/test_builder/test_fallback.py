@@ -35,6 +35,16 @@ from src.builder.reviewer import ReviewResult
 from src.builder.worktree import WorktreeInfo
 
 
+class _FakeAsyncProcess:
+    def __init__(self, stdout: bytes = b"", stderr: bytes = b"", returncode: int | None = 0):
+        self._stdout = stdout
+        self._stderr = stderr
+        self.returncode = returncode
+
+    async def communicate(self):
+        return self._stdout, self._stderr
+
+
 # ---------------------------------------------------------------------------
 # BuildMethod enum
 # ---------------------------------------------------------------------------
@@ -138,11 +148,11 @@ class TestSonnetRunner:
 
         stdout_json = json.dumps({"result": "ok"})
 
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(
-            return_value=(stdout_json.encode("utf-8"), b"")
+        mock_process = _FakeAsyncProcess(
+            stdout=stdout_json.encode("utf-8"),
+            stderr=b"",
+            returncode=0,
         )
-        mock_process.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             runner = SonnetRunner(timeout_seconds=30)
@@ -240,11 +250,11 @@ class TestSonnetRunner:
         worktree = tmp_path / "worktree"
         worktree.mkdir()
 
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(
-            return_value=(b"", b"ERROR: compilation failed")
+        mock_process = _FakeAsyncProcess(
+            stdout=b"",
+            stderr=b"ERROR: compilation failed",
+            returncode=1,
         )
-        mock_process.returncode = 1
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             runner = SonnetRunner()
@@ -259,14 +269,11 @@ class TestSonnetRunner:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_check_available_true(self):
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(return_value=(b"claude v1.0", b""))
-        mock_process.returncode = 0
+        mock_process = _FakeAsyncProcess(stdout=b"claude v1.0", stderr=b"", returncode=0)
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            with patch("asyncio.wait_for", return_value=(b"claude v1.0", b"")):
-                runner = SonnetRunner()
-                result = await runner.check_available()
+            runner = SonnetRunner()
+            result = await runner.check_available()
 
         assert result is True
 
@@ -299,7 +306,9 @@ def _make_mock_worktree_manager(tmp_path: Path) -> MagicMock:
         feature="test feature",
     )
     mgr = MagicMock()
-    mgr.create = AsyncMock(return_value=info)
+    async def _create(*args, **kwargs):
+        return info
+    mgr.create = _create
     return mgr
 
 
@@ -308,7 +317,9 @@ def _make_mock_prompt_generator(tmp_path: Path) -> MagicMock:
     prompt_path = tmp_path / "prompt.md"
     prompt_path.write_text("Build the feature")
     gen = MagicMock()
-    gen.generate_and_save = AsyncMock(return_value=("Build the feature", prompt_path))
+    async def _generate_and_save(*args, **kwargs):
+        return "Build the feature", prompt_path
+    gen.generate_and_save = _generate_and_save
     return gen
 
 

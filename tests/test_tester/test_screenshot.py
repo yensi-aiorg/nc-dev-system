@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -234,15 +234,21 @@ class TestScreenshotCaptureRoute:
     async def test_capture_subprocess_failure_raises(self, tmp_path: Path):
         capture = ScreenshotCapture("http://localhost:23000", tmp_path)
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"Error: chromium not found"))
-        mock_proc.returncode = 1
+        class FakeProcess:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"Error: chromium not found"
+
+        mock_proc = FakeProcess()
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
 
         with patch.object(capture, "_try_npx_screenshot", return_value=None):
-            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-                with patch("asyncio.wait_for", return_value=(b"", b"Error: chromium not found")):
-                    with pytest.raises(RuntimeError, match="Playwright screenshot failed"):
-                        await capture.capture_route("/tasks", DESKTOP)
+            with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+                with pytest.raises(RuntimeError, match="Playwright screenshot failed"):
+                    await capture.capture_route("/tasks", DESKTOP)
 
 
 # ---------------------------------------------------------------------------
@@ -286,8 +292,8 @@ class TestScreenshotCaptureAllRoutes:
             out.write_text("fake")
             return out
 
-        with patch.object(capture, "capture_route", side_effect=_mock_capture):
-            result = await capture.capture_all_routes(["/tasks"])
+        capture.capture_route = _mock_capture  # type: ignore[method-assign]
+        result = await capture.capture_all_routes(["/tasks"])
 
         assert len(captured) == 1  # 1 route * 1 viewport
         assert "tablet" in result["/tasks"]
@@ -312,13 +318,19 @@ class TestTryNpxScreenshot:
         output = tmp_path / "ss.png"
         output.write_text("png data")
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"OK", b""))
-        mock_proc.returncode = 0
+        class FakeProcess:
+            returncode = 0
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            with patch("asyncio.wait_for", return_value=(b"OK", b"")):
-                result = await capture._try_npx_screenshot("http://x", DESKTOP, output)
+            async def communicate(self):
+                return b"OK", b""
+
+        mock_proc = FakeProcess()
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
+            result = await capture._try_npx_screenshot("http://x", DESKTOP, output)
 
         assert result == output
 
@@ -339,16 +351,23 @@ class TestTryNpxScreenshot:
     async def test_npx_timeout_returns_none(self, tmp_path: Path):
         capture = ScreenshotCapture("http://localhost:23000", tmp_path)
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
-        mock_proc.returncode = -1
+        class FakeProcess:
+            returncode = -1
+
+            async def communicate(self):
+                raise asyncio.TimeoutError()
+
+        mock_proc = FakeProcess()
 
         async def raise_timeout(awaitable, timeout):
             if hasattr(awaitable, "close"):
                 awaitable.close()
             raise asyncio.TimeoutError()
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
             with patch("asyncio.wait_for", side_effect=raise_timeout):
                 result = await capture._try_npx_screenshot(
                     "http://x", DESKTOP, tmp_path / "ss.png"

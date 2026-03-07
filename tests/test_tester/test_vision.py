@@ -50,6 +50,16 @@ class _FakeAsyncClient:
         return self._response
 
 
+class _FakeAsyncProcess:
+    def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0):
+        self._stdout = stdout
+        self._stderr = stderr
+        self.returncode = returncode
+
+    async def communicate(self):
+        return self._stdout, self._stderr
+
+
 # ---------------------------------------------------------------------------
 # _encode_image_base64
 # ---------------------------------------------------------------------------
@@ -280,12 +290,13 @@ class TestAnalyzeScreenshotEscalation:
             "suggestions": [],
         })
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
-        mock_proc.returncode = 0
+        mock_proc = _FakeAsyncProcess(stdout=claude_data.encode(), stderr=b"", returncode=0)
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
 
         with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(response=mock_ollama_resp)):
-            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
                 result = await analyzer.analyze_screenshot(screenshot, route="/", viewport="desktop")
 
         assert result.analyzer == "claude"
@@ -318,12 +329,13 @@ class TestAnalyzeScreenshotEscalation:
             "issues": [{"severity": "critical", "description": "Page blank", "element": "", "suggestion": ""}],
             "suggestions": [],
         })
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
-        mock_proc.returncode = 0
+        mock_proc = _FakeAsyncProcess(stdout=claude_data.encode(), stderr=b"", returncode=0)
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
 
         with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(response=mock_ollama_resp)):
-            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
                 result = await analyzer.analyze_screenshot(screenshot, route="/")
 
         assert result.analyzer == "claude"
@@ -351,12 +363,13 @@ class TestAnalyzeScreenshotOllamaUnavailable:
             "issues": [],
             "suggestions": [],
         })
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
-        mock_proc.returncode = 0
+        mock_proc = _FakeAsyncProcess(stdout=claude_data.encode(), stderr=b"", returncode=0)
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
 
         with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(error=httpx.ConnectError("Connection refused"))):
-            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
                 result = await analyzer.analyze_screenshot(screenshot, route="/")
 
         assert result.analyzer == "claude"
@@ -371,12 +384,13 @@ class TestAnalyzeScreenshotOllamaUnavailable:
         import httpx
 
         claude_data = json.dumps({"passed": True, "confidence": 0.9, "issues": [], "suggestions": []})
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(claude_data.encode(), b""))
-        mock_proc.returncode = 0
+        mock_proc = _FakeAsyncProcess(stdout=claude_data.encode(), stderr=b"", returncode=0)
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            return mock_proc
 
         with patch("httpx.AsyncClient", return_value=_FakeAsyncClient(error=httpx.TimeoutException("Timed out"))):
-            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            with patch("asyncio.create_subprocess_exec", side_effect=fake_create_subprocess_exec):
                 result = await analyzer.analyze_screenshot(screenshot, route="/")
 
         assert result.analyzer == "claude"
