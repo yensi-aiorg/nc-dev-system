@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 from rich.console import Console
@@ -12,6 +13,7 @@ from ncdev.engine import (
     run_greenfield,
     summarize_status,
 )
+from ncdev.preflight import run_preflight
 from ncdev.v2.engine import (
     load_v2_run_state,
     run_v2_deliver,
@@ -39,9 +41,70 @@ def _resolve_target_repo(explicit_target_repo: str | None, workspace: Path) -> P
     return None
 
 
+def _quickstart_text() -> str:
+    return """NC Dev System Quickstart
+
+Website SaaS mode:
+- run from the target repo when possible
+- point --source at a README.md, requirements.md, or docs folder
+- if the current folder is a git repo, it is inferred as the target repo
+
+Recommended flow:
+
+1. Discovery dry run
+   ncdev discover-v2 --source ./docs/README.md --dry-run
+
+2. Prepare the target repo
+   ncdev prepare-v2 --source ./docs/README.md
+
+3. Run the full loop
+   ncdev full-v2 --source ./docs/README.md --base-url http://localhost:23000
+
+Useful variants:
+- explicit target repo:
+  ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000
+- status:
+  ncdev status-v2 --run-id <run-id>
+- verify again:
+  ncdev verify-v2 --run-id <run-id> --base-url http://localhost:23000
+"""
+
+
+def _doctor_report(workspace: Path) -> tuple[bool, str]:
+    required = ["git", "python3", "pytest", "claude", "codex", "node", "npm", "npx"]
+    optional = ["docker"]
+    core = run_preflight(required)
+    docker_path = shutil.which("docker")
+
+    lines = ["NC Dev System Doctor", "", f"Workspace: {workspace}"]
+    if (workspace / ".git").exists():
+        lines.append("Target repo inference: current folder is a git repository")
+    else:
+        lines.append("Target repo inference: current folder is not a git repository")
+    lines.append("")
+    lines.append("Core requirements:")
+    for cmd in required:
+        status = "ok" if cmd not in core.missing else "missing"
+        lines.append(f"- {cmd}: {status}")
+    lines.append("")
+    lines.append("Optional:")
+    lines.append(f"- docker: {'ok' if docker_path else 'missing'}")
+    lines.append("")
+    if core.ok:
+        lines.append("Result: ready for website SaaS mode")
+        lines.append("Next step: run `ncdev quickstart` or `ncdev discover-v2 --source <entry-doc> --dry-run`")
+    else:
+        lines.append(f"Result: missing core tools: {', '.join(core.missing)}")
+        lines.append("Fix the missing tools above before running a full V2 loop.")
+    return core.ok, "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ncdev", description="NC Dev System runtime")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("quickstart", help="Print the recommended website SaaS workflow")
+    sub.add_parser("doctor", help="Check prerequisites for the current website SaaS mode")
 
     build = sub.add_parser("build", help="Run greenfield build kickoff (analysis phase)")
     build.add_argument("--requirements", required=True, help="Path to requirements markdown")
@@ -117,6 +180,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.command == "quickstart":
+        console.print(_quickstart_text())
+        return 0
+
+    if args.command == "doctor":
+        workspace = Path.cwd()
+        ok, report = _doctor_report(workspace)
+        console.print(report)
+        return 0 if ok else 1
 
     if args.command == "build":
         workspace = _workspace(args.workspace)

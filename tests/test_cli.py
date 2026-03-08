@@ -1,12 +1,24 @@
 from pathlib import Path
 
-from ncdev.cli import _resolve_target_repo, build_parser
+from ncdev.cli import _doctor_report, _quickstart_text, _resolve_target_repo, build_parser
 
 
 def test_cli_build_analysis_only_flag() -> None:
     parser = build_parser()
     args = parser.parse_args(["build", "--requirements", "/tmp/x.md", "--analysis-only"])
     assert args.analysis_only is True
+
+
+def test_cli_quickstart_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["quickstart"])
+    assert args.command == "quickstart"
+
+
+def test_cli_doctor_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["doctor"])
+    assert args.command == "doctor"
 
 
 def test_cli_analyze_defaults() -> None:
@@ -76,3 +88,15 @@ def test_resolve_target_repo_prefers_explicit_value(tmp_path: Path) -> None:
     explicit = tmp_path / "explicit"
     explicit.mkdir()
     assert _resolve_target_repo(str(explicit), tmp_path) == explicit
+
+
+def test_quickstart_text_mentions_discover_and_full() -> None:
+    text = _quickstart_text()
+    assert "discover-v2" in text
+    assert "full-v2" in text
+
+
+def test_doctor_report_detects_git_repo(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    _, report = _doctor_report(tmp_path)
+    assert "git repository" in report
