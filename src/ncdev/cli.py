@@ -31,6 +31,14 @@ def _workspace(path: str | None) -> Path:
     return Path(path).resolve() if path else Path.cwd()
 
 
+def _resolve_target_repo(explicit_target_repo: str | None, workspace: Path) -> Path | None:
+    if explicit_target_repo:
+        return Path(explicit_target_repo).resolve()
+    if (workspace / ".git").exists():
+        return workspace
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ncdev", description="NC Dev System runtime")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -153,12 +161,13 @@ def main() -> int:
 
     if args.command == "discover-v2":
         workspace = _workspace(args.workspace)
+        target_repo = _resolve_target_repo(args.target_repo, workspace)
         state = run_v2_discovery(
             workspace=workspace,
             source_path=Path(args.source).resolve(),
             dry_run=bool(args.dry_run),
             command="discover-v2",
-            target_repo_path=Path(args.target_repo).resolve() if args.target_repo else None,
+            target_repo_path=target_repo,
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -173,12 +182,13 @@ def main() -> int:
 
     if args.command == "prepare-v2":
         workspace = _workspace(args.workspace)
+        target_repo = _resolve_target_repo(args.target_repo, workspace)
         state = run_v2_prepare(
             workspace=workspace,
             source_path=Path(args.source).resolve(),
             dry_run=bool(args.dry_run),
             command="prepare-v2",
-            target_repo_path=Path(args.target_repo).resolve() if args.target_repo else None,
+            target_repo_path=target_repo,
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -234,6 +244,7 @@ def main() -> int:
 
     if args.command == "full-v2":
         workspace = _workspace(args.workspace)
+        target_repo = _resolve_target_repo(args.target_repo, workspace)
         state = run_v2_full(
             workspace=workspace,
             source_path=Path(args.source).resolve(),
@@ -241,7 +252,7 @@ def main() -> int:
             dry_run=bool(args.dry_run),
             repair_cycles=int(args.repair_cycles),
             command="full-v2",
-            target_repo_path=Path(args.target_repo).resolve() if args.target_repo else None,
+            target_repo_path=target_repo,
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")

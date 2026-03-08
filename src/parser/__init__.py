@@ -5,7 +5,7 @@ architecture definitions, and test plans for autonomous code generation.
 
 Usage::
 
-    from src.parser import parse_requirements, Feature, Architecture, TestPlan
+    from parser import parse_requirements, Feature, Architecture, TestPlan
 
     result = await parse_requirements("path/to/requirements.md")
     print(result.features)
@@ -14,13 +14,13 @@ Usage::
     print(result.ambiguities)
 """
 
-from src.parser.models import (
+from .models import (
     Architecture,
     Feature,
     ParseResult,
     TestPlan,
 )
-from src.parser.extractor import parse_requirements
+from .extractor import parse_requirements
 
 __all__ = [
     "parse_requirements",

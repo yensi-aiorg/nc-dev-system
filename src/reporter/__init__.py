@@ -17,11 +17,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from src.reporter.api_docs import APIDocGenerator
-from src.reporter.build_report import BuildReportGenerator
-from src.reporter.mock_docs import MockDocGenerator
-from src.reporter.screenshots import ScreenshotInfo, ScreenshotManager
-from src.reporter.usage_guide import UsageGuideGenerator
+from .api_docs import APIDocGenerator
+from .build_report import BuildReportGenerator
+from .mock_docs import MockDocGenerator
+from .screenshots import ScreenshotInfo, ScreenshotManager
+from .usage_guide import UsageGuideGenerator
 
 __all__ = [
     # Core engine

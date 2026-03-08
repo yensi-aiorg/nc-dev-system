@@ -17,21 +17,21 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from src.hardener.accessibility import (
+from .accessibility import (
     AccessibilityChecker,
     AccessibilityResult,
 )
-from src.hardener.error_audit import (
+from .error_audit import (
     AuditIssue,
     AuditResult,
     ErrorAuditor,
 )
-from src.hardener.performance import (
+from .performance import (
     PerformanceAuditor,
     PerformanceIssue,
     PerformanceResult,
 )
-from src.hardener.responsive import (
+from .responsive import (
     ResponsiveChecker,
     ResponsiveResult,
 )

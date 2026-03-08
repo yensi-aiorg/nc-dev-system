@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Iterable
 from urllib.parse import urlparse
 
@@ -100,6 +101,40 @@ def _combine_text(paths: Iterable[Path], root: Path, limit: int = 20000) -> tupl
     return "\n".join(chunks).strip(), assets
 
 
+_MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def _linked_source_files(path: Path, *, limit: int = 20) -> list[Path]:
+    allowed_suffixes = {".md", ".markdown", ".txt", ".json", ".toml", ".yaml", ".yml"}
+    queue: list[Path] = [path]
+    ordered: list[Path] = []
+    seen: set[Path] = set()
+
+    while queue and len(ordered) < limit:
+        current = queue.pop(0)
+        if current in seen or not current.exists() or not current.is_file():
+            continue
+        seen.add(current)
+        ordered.append(current)
+        if current.suffix.lower() not in {".md", ".markdown"}:
+            continue
+        try:
+            text = read_text(current)
+        except UnicodeDecodeError:
+            continue
+        for match in _MARKDOWN_LINK_RE.findall(text):
+            link = match.strip()
+            if not link or _is_url(link) or link.startswith("#") or link.startswith("mailto:"):
+                continue
+            normalized = link.split("#", 1)[0].split("?", 1)[0].strip()
+            if not normalized:
+                continue
+            candidate = (current.parent / normalized).resolve()
+            if candidate.exists() and candidate.is_file() and candidate.suffix.lower() in allowed_suffixes and candidate not in seen:
+                queue.append(candidate)
+    return ordered
+
+
 def ingest_source(source_input: str) -> IngestedSource:
     if _is_url(source_input):
         with httpx.Client(timeout=10) as client:
@@ -124,21 +159,32 @@ def ingest_source(source_input: str) -> IngestedSource:
 
     path = Path(source_input).expanduser().resolve()
     if path.is_file():
-        text = read_text(path)
-        return IngestedSource(
-            source_kind="requirements_markdown" if path.suffix.lower() in {".md", ".markdown"} else "document_file",
-            primary_source=str(path),
-            project_name=path.stem or path.name,
-            content=text,
-            notes=["Normalized single-file source input."],
-            assets=[
+        linked_paths = _linked_source_files(path)
+        if len(linked_paths) > 1:
+            root = path.parent
+            text, assets = _combine_text(linked_paths, root)
+            notes = [
+                "Normalized single-file source input.",
+                f"Expanded {len(linked_paths) - 1} linked document(s) referenced from the entry file.",
+            ]
+        else:
+            text = read_text(path)
+            assets = [
                 IngestedAsset(
                     path=str(path),
                     kind="file",
                     digest=sha256_text(text),
                     bytes=len(text.encode("utf-8")),
                 )
-            ],
+            ]
+            notes = ["Normalized single-file source input."]
+        return IngestedSource(
+            source_kind="requirements_markdown" if path.suffix.lower() in {".md", ".markdown"} else "document_file",
+            primary_source=str(path),
+            project_name=path.stem or path.name,
+            content=text,
+            notes=notes,
+            assets=assets,
         )
 
     if path.is_dir():

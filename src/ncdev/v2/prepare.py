@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from src.scaffolder.generator import ProjectConfig, ProjectGenerator
+from scaffolder.generator import ProjectConfig, ProjectGenerator
 
 from ncdev.utils import write_text
 from ncdev.v2.models import (

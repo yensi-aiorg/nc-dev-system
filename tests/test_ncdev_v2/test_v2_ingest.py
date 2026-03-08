@@ -38,3 +38,17 @@ def test_ingest_directory_bundle_reads_nonstandard_markdown_names(tmp_path: Path
     )
     ingested = ingest_source(str(docs))
     assert "Authentication" in ingested.content
+
+
+def test_ingest_markdown_file_expands_local_links(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    linked = root / "details.md"
+    linked.write_text("- User can manage invoices\n", encoding="utf-8")
+    readme = root / "README.md"
+    readme.write_text("# Docs\n\nSee [details](./details.md)\n", encoding="utf-8")
+
+    ingested = ingest_source(str(readme))
+
+    assert "User can manage invoices" in ingested.content
+    assert any("Expanded" in note for note in ingested.notes)

@@ -1,4 +1,6 @@
-from ncdev.cli import build_parser
+from pathlib import Path
+
+from ncdev.cli import _resolve_target_repo, build_parser
 
 
 def test_cli_build_analysis_only_flag() -> None:
@@ -63,3 +65,14 @@ def test_cli_full_v2_defaults() -> None:
     assert args.repair_cycles == 1
     assert args.dry_run is False
     assert args.target_repo is None
+
+
+def test_resolve_target_repo_uses_workspace_git_repo(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    assert _resolve_target_repo(None, tmp_path) == tmp_path
+
+
+def test_resolve_target_repo_prefers_explicit_value(tmp_path: Path) -> None:
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    assert _resolve_target_repo(str(explicit), tmp_path) == explicit

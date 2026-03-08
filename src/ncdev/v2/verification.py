@@ -12,8 +12,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from src.tester.results import TestSuiteResults
-from src.tester.runner import TestRunner
+from tester.results import TestSuiteResults
+from tester.runner import TestRunner
 
 from ncdev.utils import write_json
 from ncdev.v2.models import (

@@ -6,7 +6,7 @@ MongoDB + Docker, following the mandatory structure defined in CLAUDE.md.
 
 Quick usage::
 
-    from src.scaffolder import ProjectGenerator, ProjectConfig
+    from scaffolder import ProjectGenerator, ProjectConfig
 
     config = ProjectConfig(
         name="my-project",
@@ -18,8 +18,8 @@ Quick usage::
     project_path = await generator.generate("/tmp/output")
 """
 
-from src.scaffolder.generator import ProjectConfig, ProjectGenerator
-from src.scaffolder.templates import TemplateRenderer
+from .generator import ProjectConfig, ProjectGenerator
+from .templates import TemplateRenderer
 
 __all__ = [
     "ProjectConfig",
