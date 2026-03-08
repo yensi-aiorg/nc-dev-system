@@ -33,6 +33,7 @@ def test_cli_discover_v2_defaults() -> None:
     args = parser.parse_args(["discover-v2", "--source", "/tmp/requirements.md"])
     assert args.dry_run is False
     assert args.target_repo is None
+    assert args.ui == "headless"
 
 
 def test_cli_status_v2_parses_run_id() -> None:
@@ -46,6 +47,7 @@ def test_cli_prepare_v2_defaults() -> None:
     args = parser.parse_args(["prepare-v2", "--source", "/tmp/requirements.md"])
     assert args.dry_run is False
     assert args.target_repo is None
+    assert args.ui == "headless"
 
 
 def test_cli_execute_v2_defaults() -> None:
@@ -53,6 +55,7 @@ def test_cli_execute_v2_defaults() -> None:
     args = parser.parse_args(["execute-v2", "--run-id", "v2-123"])
     assert args.run_id == "v2-123"
     assert args.dry_run is False
+    assert args.ui == "headless"
 
 
 def test_cli_verify_v2_defaults() -> None:
@@ -61,6 +64,7 @@ def test_cli_verify_v2_defaults() -> None:
     assert args.run_id == "v2-123"
     assert args.base_url == "http://localhost:23000"
     assert args.dry_run is False
+    assert args.ui == "headless"
 
 
 def test_cli_repair_v2_defaults() -> None:
@@ -68,6 +72,7 @@ def test_cli_repair_v2_defaults() -> None:
     args = parser.parse_args(["repair-v2", "--run-id", "v2-123"])
     assert args.run_id == "v2-123"
     assert args.dry_run is False
+    assert args.ui == "headless"
 
 
 def test_cli_full_v2_defaults() -> None:
@@ -77,6 +82,7 @@ def test_cli_full_v2_defaults() -> None:
     assert args.repair_cycles == 1
     assert args.dry_run is False
     assert args.target_repo is None
+    assert args.ui == "headless"
 
 
 def test_resolve_target_repo_uses_workspace_git_repo(tmp_path: Path) -> None:
@@ -94,6 +100,7 @@ def test_quickstart_text_mentions_discover_and_full() -> None:
     text = _quickstart_text()
     assert "discover-v2" in text
     assert "full-v2" in text
+    assert "--ui headed" in text
 
 
 def test_doctor_report_detects_git_repo(tmp_path: Path) -> None:

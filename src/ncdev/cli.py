@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import threading
 from pathlib import Path
 
 from rich.console import Console
@@ -14,6 +15,7 @@ from ncdev.engine import (
     summarize_status,
 )
 from ncdev.preflight import run_preflight
+from ncdev.utils import make_run_id
 from ncdev.v2.engine import (
     load_v2_run_state,
     run_v2_deliver,
@@ -25,6 +27,7 @@ from ncdev.v2.engine import (
     run_v2_verify,
     summarize_v2_status,
 )
+from ncdev.v2.ui import watch_run_dashboard
 
 console = Console()
 
@@ -60,6 +63,10 @@ Recommended flow:
 3. Run the full loop
    ncdev full-v2 --source ./docs/README.md --base-url http://localhost:23000
 
+Optional live UI:
+- headed terminal dashboard:
+  ncdev full-v2 --source ./docs/README.md --base-url http://localhost:23000 --ui headed
+
 Useful variants:
 - explicit target repo:
   ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000
@@ -68,6 +75,37 @@ Useful variants:
 - verify again:
   ncdev verify-v2 --run-id <run-id> --base-url http://localhost:23000
 """
+
+
+def _run_with_ui(run_dir: Path, callback):
+    stop_event = threading.Event()
+    result: dict[str, object] = {}
+    error: dict[str, BaseException] = {}
+
+    def _worker() -> None:
+        try:
+            result["value"] = callback()
+        except BaseException as exc:  # pragma: no cover - re-raised in caller
+            error["value"] = exc
+        finally:
+            stop_event.set()
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    try:
+        watch_run_dashboard(run_dir, stop_event, console=console)
+    finally:
+        stop_event.set()
+        thread.join()
+    if "value" in error:
+        raise error["value"]
+    return result["value"]
+
+
+def _run_v2_command(ui_mode: str, run_dir: Path, callback):
+    if ui_mode == "headed":
+        return _run_with_ui(run_dir, callback)
+    return callback()
 
 
 def _doctor_report(workspace: Path) -> tuple[bool, str]:
@@ -135,6 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
     discover_v2.add_argument("--target-repo", default=None, help="Existing target repository to inspect and operate on")
     discover_v2.add_argument("--workspace", default=None)
     discover_v2.add_argument("--dry-run", action="store_true", help="Use local heuristic discovery only")
+    discover_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
 
     status_v2 = sub.add_parser("status-v2", help="Print V2 run status")
     status_v2.add_argument("--run-id", required=True)
@@ -145,22 +184,26 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_v2.add_argument("--target-repo", default=None, help="Existing target repository to prepare instead of scaffolding a hidden one")
     prepare_v2.add_argument("--workspace", default=None)
     prepare_v2.add_argument("--dry-run", action="store_true", help="Use local heuristic discovery only")
+    prepare_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
 
     execute_v2 = sub.add_parser("execute-v2", help="Run queued V2 jobs for a prepared target project")
     execute_v2.add_argument("--run-id", required=True)
     execute_v2.add_argument("--workspace", default=None)
     execute_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs")
+    execute_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
 
     verify_v2 = sub.add_parser("verify-v2", help="Run V2 verification against the prepared target project")
     verify_v2.add_argument("--run-id", required=True)
     verify_v2.add_argument("--workspace", default=None)
     verify_v2.add_argument("--base-url", default="http://localhost:23000")
     verify_v2.add_argument("--dry-run", action="store_true", help="Do not invoke project test or browser commands")
+    verify_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
 
     repair_v2 = sub.add_parser("repair-v2", help="Run V2 repair jobs for failed execution or verification")
     repair_v2.add_argument("--run-id", required=True)
     repair_v2.add_argument("--workspace", default=None)
     repair_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs")
+    repair_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
 
     deliver_v2 = sub.add_parser("deliver-v2", help="Assemble the V2 delivery summary artifact")
     deliver_v2.add_argument("--run-id", required=True)
@@ -173,6 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     full_v2.add_argument("--base-url", default="http://localhost:23000")
     full_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs or test/browser commands")
     full_v2.add_argument("--repair-cycles", type=int, default=1)
+    full_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
 
     return parser
 
@@ -235,12 +279,19 @@ def main() -> int:
     if args.command == "discover-v2":
         workspace = _workspace(args.workspace)
         target_repo = _resolve_target_repo(args.target_repo, workspace)
-        state = run_v2_discovery(
-            workspace=workspace,
-            source_path=Path(args.source).resolve(),
-            dry_run=bool(args.dry_run),
-            command="discover-v2",
-            target_repo_path=target_repo,
+        run_id = make_run_id("v2")
+        run_dir = workspace / ".nc-dev" / "v2" / "runs" / run_id
+        state = _run_v2_command(
+            args.ui,
+            run_dir,
+            lambda: run_v2_discovery(
+                workspace=workspace,
+                source_path=Path(args.source).resolve(),
+                dry_run=bool(args.dry_run),
+                command="discover-v2",
+                target_repo_path=target_repo,
+                run_id=run_id,
+            ),
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -256,12 +307,19 @@ def main() -> int:
     if args.command == "prepare-v2":
         workspace = _workspace(args.workspace)
         target_repo = _resolve_target_repo(args.target_repo, workspace)
-        state = run_v2_prepare(
-            workspace=workspace,
-            source_path=Path(args.source).resolve(),
-            dry_run=bool(args.dry_run),
-            command="prepare-v2",
-            target_repo_path=target_repo,
+        run_id = make_run_id("v2")
+        run_dir = workspace / ".nc-dev" / "v2" / "runs" / run_id
+        state = _run_v2_command(
+            args.ui,
+            run_dir,
+            lambda: run_v2_prepare(
+                workspace=workspace,
+                source_path=Path(args.source).resolve(),
+                dry_run=bool(args.dry_run),
+                command="prepare-v2",
+                target_repo_path=target_repo,
+                run_id=run_id,
+            ),
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -269,11 +327,16 @@ def main() -> int:
 
     if args.command == "execute-v2":
         workspace = _workspace(args.workspace)
-        state = run_v2_execute(
-            workspace=workspace,
-            run_id=args.run_id,
-            dry_run=bool(args.dry_run),
-            command="execute-v2",
+        run_dir = workspace / ".nc-dev" / "v2" / "runs" / args.run_id
+        state = _run_v2_command(
+            args.ui,
+            run_dir,
+            lambda: run_v2_execute(
+                workspace=workspace,
+                run_id=args.run_id,
+                dry_run=bool(args.dry_run),
+                command="execute-v2",
+            ),
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -281,12 +344,17 @@ def main() -> int:
 
     if args.command == "verify-v2":
         workspace = _workspace(args.workspace)
-        state = run_v2_verify(
-            workspace=workspace,
-            run_id=args.run_id,
-            base_url=args.base_url,
-            dry_run=bool(args.dry_run),
-            command="verify-v2",
+        run_dir = workspace / ".nc-dev" / "v2" / "runs" / args.run_id
+        state = _run_v2_command(
+            args.ui,
+            run_dir,
+            lambda: run_v2_verify(
+                workspace=workspace,
+                run_id=args.run_id,
+                base_url=args.base_url,
+                dry_run=bool(args.dry_run),
+                command="verify-v2",
+            ),
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -294,11 +362,16 @@ def main() -> int:
 
     if args.command == "repair-v2":
         workspace = _workspace(args.workspace)
-        state = run_v2_repair(
-            workspace=workspace,
-            run_id=args.run_id,
-            dry_run=bool(args.dry_run),
-            command="repair-v2",
+        run_dir = workspace / ".nc-dev" / "v2" / "runs" / args.run_id
+        state = _run_v2_command(
+            args.ui,
+            run_dir,
+            lambda: run_v2_repair(
+                workspace=workspace,
+                run_id=args.run_id,
+                dry_run=bool(args.dry_run),
+                command="repair-v2",
+            ),
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
@@ -318,14 +391,21 @@ def main() -> int:
     if args.command == "full-v2":
         workspace = _workspace(args.workspace)
         target_repo = _resolve_target_repo(args.target_repo, workspace)
-        state = run_v2_full(
-            workspace=workspace,
-            source_path=Path(args.source).resolve(),
-            base_url=args.base_url,
-            dry_run=bool(args.dry_run),
-            repair_cycles=int(args.repair_cycles),
-            command="full-v2",
-            target_repo_path=target_repo,
+        run_id = make_run_id("v2")
+        run_dir = workspace / ".nc-dev" / "v2" / "runs" / run_id
+        state = _run_v2_command(
+            args.ui,
+            run_dir,
+            lambda: run_v2_full(
+                workspace=workspace,
+                source_path=Path(args.source).resolve(),
+                base_url=args.base_url,
+                dry_run=bool(args.dry_run),
+                repair_cycles=int(args.repair_cycles),
+                command="full-v2",
+                target_repo_path=target_repo,
+                run_id=run_id,
+            ),
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")

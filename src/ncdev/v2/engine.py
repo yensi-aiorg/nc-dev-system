@@ -73,11 +73,12 @@ def run_v2_discovery(
     command: str = "discover-v2",
     *,
     target_repo_path: Path | None = None,
+    run_id: str | None = None,
 ) -> V2RunState:
     config = ensure_default_v2_config(workspace)
     ensure_v2_schema_files(workspace)
 
-    run_id = make_run_id("v2")
+    run_id = run_id or make_run_id("v2")
     run_dir = init_v2_run_dirs(workspace, run_id)
     state = _base_state(run_id, workspace=workspace, run_dir=run_dir, command=command)
     state.phase = V2Phase.INGEST
@@ -176,6 +177,7 @@ def run_v2_prepare(
     command: str = "prepare-v2",
     *,
     target_repo_path: Path | None = None,
+    run_id: str | None = None,
 ) -> V2RunState:
     state = run_v2_discovery(
         workspace=workspace,
@@ -183,6 +185,7 @@ def run_v2_prepare(
         dry_run=dry_run,
         command=command,
         target_repo_path=target_repo_path,
+        run_id=run_id,
     )
     run_dir = Path(state.run_dir)
     outputs_dir = run_dir / "outputs"
@@ -377,6 +380,7 @@ def run_v2_full(
     repair_cycles: int = 1,
     command: str = "full-v2",
     target_repo_path: Path | None = None,
+    run_id: str | None = None,
 ) -> V2RunState:
     state = run_v2_prepare(
         workspace=workspace,
@@ -384,6 +388,7 @@ def run_v2_full(
         dry_run=dry_run,
         command=command,
         target_repo_path=target_repo_path,
+        run_id=run_id,
     )
     state = run_v2_execute(workspace=workspace, run_id=state.run_id, dry_run=dry_run, command=command)
     state = run_v2_verify(workspace=workspace, run_id=state.run_id, base_url=base_url, dry_run=dry_run, command=command)

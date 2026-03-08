@@ -210,6 +210,8 @@ class CodexRunner:
         prompt_path: str,
         worktree_path: str,
         output_path: str,
+        stdout_log_path: str | None = None,
+        stderr_log_path: str | None = None,
     ) -> CodexResult:
         """Execute Codex CLI to implement a feature.
 
@@ -233,6 +235,8 @@ class CodexRunner:
         prompt_file = Path(prompt_path)
         worktree = Path(worktree_path)
         output_file = Path(output_path)
+        stdout_log_file = Path(stdout_log_path).resolve() if stdout_log_path else None
+        stderr_log_file = Path(stderr_log_path).resolve() if stderr_log_path else None
 
         if not prompt_file.exists():
             raise CodexRunnerError(f"Prompt file not found: {prompt_path}")
@@ -241,6 +245,12 @@ class CodexRunner:
 
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
+        if stdout_log_file:
+            stdout_log_file.parent.mkdir(parents=True, exist_ok=True)
+            stdout_log_file.write_text("", encoding="utf-8")
+        if stderr_log_file:
+            stderr_log_file.parent.mkdir(parents=True, exist_ok=True)
+            stderr_log_file.write_text("", encoding="utf-8")
 
         # Read the prompt content
         prompt_content = prompt_file.read_text(encoding="utf-8")
@@ -290,13 +300,51 @@ class CodexRunner:
             )
 
         # Monitor the process with timeout
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
-                timeout=self.timeout_seconds,
+        async def _read_stream(stream, chunks: list[str], log_file: Path | None) -> None:
+            while True:
+                chunk = await stream.read(4096)
+                if not chunk:
+                    return
+                text = chunk.decode("utf-8", errors="replace")
+                chunks.append(text)
+                if log_file:
+                    with log_file.open("a", encoding="utf-8") as handle:
+                        handle.write(text)
+
+        use_streaming = bool(stdout_log_file or stderr_log_file) and all(
+            hasattr(obj, attr)
+            for obj, attr in (
+                (process, "wait"),
+                (process, "stdout"),
+                (process, "stderr"),
+                (getattr(process, "stdout", None), "read"),
+                (getattr(process, "stderr", None), "read"),
             )
-            stdout_text = stdout_bytes.decode("utf-8", errors="replace")
-            stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+        )
+
+        try:
+            if use_streaming:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        _read_stream(process.stdout, stdout_chunks, stdout_log_file),
+                        _read_stream(process.stderr, stderr_chunks, stderr_log_file),
+                        process.wait(),
+                    ),
+                    timeout=self.timeout_seconds,
+                )
+                stdout_text = "".join(stdout_chunks)
+                stderr_text = "".join(stderr_chunks)
+            else:  # pragma: no cover - compatibility path for older mocks
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self.timeout_seconds,
+                )
+                stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+                stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+                if stdout_log_file:
+                    stdout_log_file.write_text(stdout_text, encoding="utf-8")
+                if stderr_log_file:
+                    stderr_log_file.write_text(stderr_text, encoding="utf-8")
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - start_time
             console.print(
@@ -307,11 +355,15 @@ class CodexRunner:
                 await asyncio.wait_for(process.communicate(), timeout=10.0)
             except asyncio.TimeoutError:
                 pass
+            stdout_text = "".join(stdout_chunks)
+            stderr_text = "".join(stderr_chunks)
 
             return CodexResult(
                 success=False,
                 errors=[f"Process timed out after {self.timeout_seconds}s"],
                 duration_seconds=elapsed,
+                stdout=stdout_text,
+                stderr=stderr_text,
                 exit_code=-1,
             )
 

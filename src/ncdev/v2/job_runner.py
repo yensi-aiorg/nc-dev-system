@@ -36,6 +36,24 @@ def _job_artifact_path(run_dir: Path, job_id: str, suffix: str) -> Path:
     return run_dir / "logs" / "jobs" / f"{job_id}-{suffix}"
 
 
+def _job_status_path(run_dir: Path) -> Path:
+    return run_dir / "logs" / "job-status.json"
+
+
+def _write_job_status(run_dir: Path, payload: dict) -> None:
+    write_json(_job_status_path(run_dir), payload)
+
+
+def _persist_job_run_log(run_dir: Path, project_name: str, queue_path: Path, records: list[JobRunRecord]) -> None:
+    payload = JobRunLogDoc(
+        generator="ncdev.v2.job_runner",
+        source_inputs=[str(queue_path)],
+        project_name=project_name,
+        records=records,
+    )
+    write_json(run_dir / "outputs" / queue_path.name.replace("queue", "run-log"), payload.model_dump(mode="json"))
+
+
 def _load_json(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -104,11 +122,22 @@ async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
         )
 
     try:
-        result = await runner.run(
-            prompt_path=job.request_artifact,
-            worktree_path=str(worktree.path),
-            output_path=str(output_path),
-        )
+        try:
+            result = await runner.run(
+                prompt_path=job.request_artifact,
+                worktree_path=str(worktree.path),
+                output_path=str(output_path),
+                stdout_log_path=str(_job_artifact_path(run_dir, job.job_id, "codex-stdout.log")),
+                stderr_log_path=str(_job_artifact_path(run_dir, job.job_id, "codex-stderr.log")),
+            )
+        except TypeError as exc:
+            if "stdout_log_path" not in str(exc) and "stderr_log_path" not in str(exc):
+                raise
+            result = await runner.run(
+                prompt_path=job.request_artifact,
+                worktree_path=str(worktree.path),
+                output_path=str(output_path),
+            )
     except CodexRunnerError as exc:
         return JobRunRecord(
             job_id=job.job_id,
@@ -432,8 +461,32 @@ def run_job_queue(
     job_queue = _load_job_queue(queue_path)
     records: list[JobRunRecord] = []
     completed: dict[str, str] = {}
+    _write_job_status(
+        run_dir,
+        {
+            "queue_name": queue_name,
+            "project_name": job_queue.project_name,
+            "status": "running",
+            "completed": 0,
+            "total": len(job_queue.jobs),
+        },
+    )
 
     for job in job_queue.jobs:
+        _write_job_status(
+            run_dir,
+            {
+                "queue_name": queue_name,
+                "project_name": job_queue.project_name,
+                "status": "running",
+                "job_id": job.job_id,
+                "title": job.title,
+                "provider": job.provider,
+                "model": job.model,
+                "completed": len(records),
+                "total": len(job_queue.jobs),
+            },
+        )
         blocked = [job_id for job_id in job.depends_on if completed.get(job_id) != "passed"]
         if blocked:
             records.append(
@@ -450,12 +503,24 @@ def run_job_queue(
                 )
             )
             completed[job.job_id] = "blocked"
+            _persist_job_run_log(run_dir, job_queue.project_name, queue_path, records)
             continue
 
         record = asyncio.run(_run_job(job, run_dir, registry, dry_run=dry_run, prior_records=records))
         records.append(record)
         completed[job.job_id] = "passed" if record.status in {"passed", "stubbed", "dry-run"} else record.status
+        _persist_job_run_log(run_dir, job_queue.project_name, queue_path, records)
 
+    _write_job_status(
+        run_dir,
+        {
+            "queue_name": queue_name,
+            "project_name": job_queue.project_name,
+            "status": "complete",
+            "completed": len(records),
+            "total": len(job_queue.jobs),
+        },
+    )
     return JobRunLogDoc(
         generator="ncdev.v2.job_runner",
         source_inputs=[str(queue_path)],

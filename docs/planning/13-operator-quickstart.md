@@ -101,6 +101,16 @@ PYTHONPATH=src python -m ncdev.cli full-v2 \
   --base-url http://localhost:23000
 ```
 
+For the same run with the live terminal dashboard:
+
+```bash
+PYTHONPATH=src python -m ncdev.cli full-v2 \
+  --source /path/to/requirements-or-doc-folder \
+  --target-repo /path/to/target-repo \
+  --base-url http://localhost:23000 \
+  --ui headed
+```
+
 For a rehearsal:
 
 ```bash
@@ -140,6 +150,13 @@ Inside the target repo, inspect:
 - `docs/evidence/`
 
 These are the artifacts Claude should be able to review during the loop, and they are the primary material for final human review.
+
+If you use `--ui headed`, NC Dev also renders a single live terminal dashboard showing:
+
+- pipeline task states
+- active and recent jobs
+- provider/model pools acting as agent counts
+- the latest log tail from job execution or verification
 
 ## Suggested Usage Pattern
 

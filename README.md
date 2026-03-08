@@ -88,6 +88,9 @@ ncdev verify-v2 --run-id <run-id> --base-url http://localhost:23000
 # Full loop: prepare -> execute -> verify -> repair -> deliver
 ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000
 
+# Same flow with the live terminal dashboard
+ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000 --ui headed
+
 # Inspect run status
 ncdev status-v2 --run-id <run-id>
 ```
@@ -100,6 +103,7 @@ ncdev status-v2 --run-id <run-id>
 - Verification contracts and evidence expectations persisted per run
 - Playwright screenshot/report recognition inside the target repo
 - Delivery summary and release-gate reporting
+- Optional headed terminal dashboard for live phases, jobs, agent pools, and log tails
 - Optional generated scaffold when no `--target-repo` is supplied
 
 ## Prerequisites
