@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _utc_now() -> datetime:
@@ -43,6 +43,151 @@ class TaskType(str, Enum):
     ISSUE_TRIAGE = "issue_triage"
     FIX_BATCH = "fix_batch"
     DELIVERY_PACK = "delivery_pack"
+    SENTINEL_FIX = "sentinel_fix"
+    SENTINEL_REPRODUCE = "sentinel_reproduce"
+
+
+class ErrorSource(str, Enum):
+    BACKEND = "backend"
+    FRONTEND = "frontend"
+
+
+class ErrorSeverity(str, Enum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class FixOutcome(str, Enum):
+    FIXED = "fixed"
+    CANNOT_REPRODUCE = "cannot_reproduce"
+    FIX_FAILED = "fix_failed"
+    VALIDATION_FAILED = "validation_failed"
+    CHECKOUT_FAILED = "checkout_failed"
+    BLOCKED = "blocked"
+
+
+class ServiceInfo(BaseModel):
+    name: str
+    version: str
+    git_sha: str
+    git_repo: str
+    environment: str = "production"
+    default_branch: str = "main"
+
+
+class ErrorDetail(BaseModel):
+    error_type: str
+    error_code: str
+    message: str
+    stack_trace: str | None = None
+    file: str | None = None
+    line: int | None = None
+    function: str | None = None
+    component: str | None = None
+
+
+class ChainNode(BaseModel):
+    service: str
+    endpoint: str
+    method: str
+    status_code: int
+    duration_ms: int
+
+
+class RequestChain(BaseModel):
+    chain_id: str
+    nodes: list[ChainNode]
+    failed_node_index: int
+
+
+class NetworkFailure(BaseModel):
+    url: str
+    method: str
+    status_code: int | None = None
+    error: str
+    duration_ms: int | None = None
+
+
+class FrontendContext(BaseModel):
+    url: str
+    user_agent: str | None = None
+    viewport: str | None = None
+    interaction_trail: list[str] = Field(default_factory=list)
+    console_errors: list[str] = Field(default_factory=list)
+    network_failures: list[NetworkFailure] = Field(default_factory=list)
+    component_stack: str | None = None
+    core_web_vitals: dict[str, float] | None = None
+
+
+class ErrorFrequency(BaseModel):
+    last_hour: int
+    last_24h: int
+    first_seen: datetime
+    affected_users: int = 0
+
+
+class DeployInfo(BaseModel):
+    sha: str
+    timestamp: datetime
+    message: str
+
+
+class ErrorContext(BaseModel):
+    request: dict[str, Any] | None = None
+    environment: dict[str, str] = Field(default_factory=dict)
+    recent_deploys: list[DeployInfo] = Field(default_factory=list)
+    similar_successful_request: dict[str, Any] | None = None
+    recent_log_lines: list[str] = Field(default_factory=list)
+    related_files: list[str] = Field(default_factory=list)
+
+
+class TriageInfo(BaseModel):
+    ticket_id: str
+    assignee: str = "ncdev"
+    priority: int = 1
+    notes: str = ""
+    auto_deploy: bool = False
+    max_attempts: int = 3
+
+
+class SentinelFailureReport(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    report_id: str
+    schema_version: str = "1.0"
+    service: ServiceInfo
+    source: ErrorSource
+    severity: ErrorSeverity
+    error: ErrorDetail
+    chain: RequestChain | None = None
+    frontend_context: FrontendContext | None = None
+    frequency: ErrorFrequency
+    context: ErrorContext
+    triage: TriageInfo | None = None
+    detected_at: datetime
+    approved_at: datetime | None = None
+
+
+class SentinelFixResult(BaseModel):
+    report_id: str
+    run_id: str
+    schema_version: str = "1.0"
+    outcome: FixOutcome
+    outcome_detail: str
+    pr_url: str | None = None
+    fix_branch: str | None = None
+    commit_sha: str | None = None
+    files_changed: list[str] = Field(default_factory=list)
+    reproduction_test: str | None = None
+    agent_reasoning: str | None = None
+    fix_description: str | None = None
+    attempts_used: int = 0
+    max_attempts: int = 3
+    duration_seconds: int = 0
+    started_at: datetime
+    completed_at: datetime
 
 
 class ArtifactEnvelope(BaseModel):
