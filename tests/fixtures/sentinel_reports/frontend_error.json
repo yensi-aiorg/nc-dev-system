@@ -1,0 +1,72 @@
+{
+  "report_id": "rpt_fe_001",
+  "schema_version": "1.0",
+  "service": {
+    "name": "helyx-ui",
+    "version": "2.1.0",
+    "git_sha": "a1b2c3d4e5f6",
+    "git_repo": "git@github.com:yensi-solutions/helyx.git",
+    "environment": "production",
+    "default_branch": "main"
+  },
+  "source": "frontend",
+  "severity": "high",
+  "error": {
+    "error_type": "REACT_RENDER_ERROR",
+    "error_code": "F100",
+    "message": "Cannot read properties of undefined (reading 'map')",
+    "stack_trace": "TypeError: Cannot read properties of undefined (reading 'map')\n    at ProjectList (src/features/projects/ProjectList.tsx:42:18)\n    at renderWithHooks (react-dom.development.js:16305:18)",
+    "file": "src/features/projects/ProjectList.tsx",
+    "line": 42,
+    "function": "ProjectList",
+    "component": "ProjectList"
+  },
+  "frontend_context": {
+    "url": "https://helyx.local/projects",
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    "viewport": "1440x900",
+    "interaction_trail": [
+      "navigate /dashboard",
+      "click .sidebar-link[href='/projects']",
+      "error rendered"
+    ],
+    "console_errors": [
+      "TypeError: Cannot read properties of undefined (reading 'map')"
+    ],
+    "network_failures": [
+      {
+        "url": "/api/projects",
+        "method": "GET",
+        "status_code": 500,
+        "error": "Internal Server Error",
+        "duration_ms": 120
+      }
+    ],
+    "component_stack": "ProjectList > ProjectsPage > Layout > App"
+  },
+  "frequency": {
+    "last_hour": 15,
+    "last_24h": 89,
+    "first_seen": "2026-03-15T11:00:00Z",
+    "affected_users": 8
+  },
+  "context": {
+    "environment": {"react_version": "19.0.0", "vite_version": "6.0.0", "node_version": "22.0.0"},
+    "recent_deploys": [
+      {"sha": "a1b2c3d4e5f6", "timestamp": "2026-03-15T09:00:00Z", "message": "Refactor project list to use new API"}
+    ],
+    "related_files": [
+      "src/features/projects/types.ts",
+      "src/services/projectService.ts"
+    ]
+  },
+  "triage": {
+    "ticket_id": "SEN-043",
+    "priority": 1,
+    "notes": "API returning 500 causes frontend crash — needs null guard AND backend fix",
+    "auto_deploy": false,
+    "max_attempts": 3
+  },
+  "detected_at": "2026-03-15T11:00:00Z",
+  "approved_at": "2026-03-15T11:05:00Z"
+}
