@@ -5,6 +5,8 @@ from pathlib import Path
 
 from ncdev.adapters.base import ProviderAdapter
 from ncdev.utils import write_json
+from typing import Any
+
 from ncdev.v2.models import (
     BuildPlanDoc,
     ExecutionJob,
@@ -14,6 +16,7 @@ from ncdev.v2.models import (
     RoutingDecision,
     RoutingPlanDoc,
     ScaffoldManifestDocV2,
+    SentinelFailureReport,
     TaskRequestDoc,
     TaskType,
     TargetProjectContractDoc,
@@ -338,3 +341,85 @@ def materialize_repair_job_queue(
         project_name=target_contract.project_name,
         jobs=jobs,
     )
+
+
+def materialize_fix_from_report(
+    run_dir: Path,
+    report: SentinelFailureReport,
+    target_path: str,
+    registry: dict[str, Any],
+) -> JobQueueDoc:
+    outputs_dir = run_dir / "outputs"
+    task_requests_dir = outputs_dir / "task-requests"
+    task_requests_dir.mkdir(parents=True, exist_ok=True)
+
+    reproduce_id = f"reproduce-{report.report_id}"
+    fix_id = f"fix-{report.report_id}"
+
+    reproduce_request = TaskRequestDoc(
+        generator="ncdev.v2.jobs",
+        schema_id="task-request.v2",
+        task_type=TaskType.SENTINEL_REPRODUCE,
+        provider="anthropic_claude_code",
+        model="opus",
+        title=f"Reproduce failure {report.report_id}",
+        prompt=f"Reproduce the failure described in sentinel report {report.report_id}.",
+        input_artifacts=[],
+        expected_outputs=[],
+        metadata={"report_id": report.report_id},
+    )
+    reproduce_request_path = task_requests_dir / f"{reproduce_id}.json"
+    _persist_request(reproduce_request_path, reproduce_request)
+
+    fix_request = TaskRequestDoc(
+        generator="ncdev.v2.jobs",
+        schema_id="task-request.v2",
+        task_type=TaskType.SENTINEL_FIX,
+        provider="openai_codex",
+        model="gpt-5.2-codex",
+        title=f"Fix failure {report.report_id}",
+        prompt=f"Fix the failure described in sentinel report {report.report_id}.",
+        input_artifacts=[],
+        expected_outputs=[],
+        metadata={"report_id": report.report_id},
+    )
+    fix_request_path = task_requests_dir / f"{fix_id}.json"
+    _persist_request(fix_request_path, fix_request)
+
+    jobs = [
+        ExecutionJob(
+            job_id=reproduce_id,
+            task_type=TaskType.SENTINEL_REPRODUCE,
+            provider="anthropic_claude_code",
+            model="opus",
+            title=f"Reproduce failure {report.report_id}",
+            request_artifact=str(reproduce_request_path),
+            target_path=target_path,
+            input_artifacts=[],
+            depends_on=[],
+            metadata={"report_id": report.report_id},
+        ),
+        ExecutionJob(
+            job_id=fix_id,
+            task_type=TaskType.SENTINEL_FIX,
+            provider="openai_codex",
+            model="gpt-5.2-codex",
+            title=f"Fix failure {report.report_id}",
+            request_artifact=str(fix_request_path),
+            target_path=target_path,
+            input_artifacts=[],
+            depends_on=[reproduce_id],
+            metadata={"report_id": report.report_id},
+        ),
+    ]
+
+    job_queue = JobQueueDoc(
+        generator="ncdev.v2.jobs",
+        source_inputs=[str(outputs_dir)],
+        project_name=report.service.name,
+        jobs=jobs,
+    )
+    job_queue_path = outputs_dir / "job-queue.json"
+    write_json(job_queue_path, job_queue.model_dump(mode="json"))
+
+    return job_queue
