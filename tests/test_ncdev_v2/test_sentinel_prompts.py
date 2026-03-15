@@ -184,3 +184,62 @@ class TestBuildFixPrompt:
             test_failure_output="some failure output",
         )
         assert "minimal change" in prompt
+
+
+from ncdev.v2.sentinel_prompts import detect_frontend_test_type, detect_monorepo_subdir
+
+
+def test_detect_frontend_test_type_component_error() -> None:
+    assert detect_frontend_test_type("REACT_RENDER_ERROR") == "vitest"
+
+
+def test_detect_frontend_test_type_effect_error() -> None:
+    assert detect_frontend_test_type("REACT_EFFECT_ERROR") == "vitest"
+
+
+def test_detect_frontend_test_type_event_error() -> None:
+    assert detect_frontend_test_type("REACT_EVENT_ERROR") == "vitest"
+
+
+def test_detect_frontend_test_type_state_error() -> None:
+    assert detect_frontend_test_type("STATE_ERROR") == "vitest"
+
+
+def test_detect_frontend_test_type_network_error() -> None:
+    assert detect_frontend_test_type("NETWORK_ERROR") == "playwright"
+
+
+def test_detect_frontend_test_type_api_error() -> None:
+    assert detect_frontend_test_type("API_ERROR") == "playwright"
+
+
+def test_detect_frontend_test_type_routing_error() -> None:
+    assert detect_frontend_test_type("ROUTING_ERROR") == "playwright"
+
+
+def test_detect_frontend_test_type_unknown_defaults_playwright() -> None:
+    assert detect_frontend_test_type("SOME_UNKNOWN_ERROR") == "playwright"
+
+
+def test_detect_monorepo_subdir_api() -> None:
+    assert detect_monorepo_subdir("api/app/services/order_service.py") == "api"
+
+
+def test_detect_monorepo_subdir_ui() -> None:
+    assert detect_monorepo_subdir("ui/src/components/Cart.tsx") == "ui"
+
+
+def test_detect_monorepo_subdir_backend() -> None:
+    assert detect_monorepo_subdir("backend/src/main.py") == "backend"
+
+
+def test_detect_monorepo_subdir_frontend() -> None:
+    assert detect_monorepo_subdir("frontend/src/App.tsx") == "frontend"
+
+
+def test_detect_monorepo_subdir_src_direct() -> None:
+    assert detect_monorepo_subdir("src/services/order.py") is None
+
+
+def test_detect_monorepo_subdir_no_slash() -> None:
+    assert detect_monorepo_subdir("order.py") is None

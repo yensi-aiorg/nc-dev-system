@@ -143,3 +143,38 @@ def build_fix_prompt(
     return _FIX_TEMPLATE.format(
         test_failure_output=test_failure_output,
     )
+
+
+_VITEST_ERROR_TYPES = {
+    "REACT_RENDER_ERROR",
+    "REACT_EFFECT_ERROR",
+    "REACT_EVENT_ERROR",
+    "STATE_ERROR",
+}
+
+_PLAYWRIGHT_ERROR_TYPES = {
+    "NETWORK_ERROR",
+    "API_ERROR",
+    "TIMEOUT_ERROR",
+    "ROUTING_ERROR",
+    "PERFORMANCE_LCP",
+    "PERFORMANCE_CLS",
+    "PERFORMANCE_INP",
+}
+
+_KNOWN_MONOREPO_PREFIXES = ("api/", "ui/", "backend/", "frontend/", "server/", "client/", "web/", "app/")
+
+
+def detect_frontend_test_type(error_type: str) -> str:
+    """Return 'vitest' for component/state errors, 'playwright' for page/network errors."""
+    if error_type in _VITEST_ERROR_TYPES:
+        return "vitest"
+    return "playwright"
+
+
+def detect_monorepo_subdir(file_path: str) -> str | None:
+    """Detect monorepo subdirectory from a file path. Returns None if not a monorepo layout."""
+    for prefix in _KNOWN_MONOREPO_PREFIXES:
+        if file_path.startswith(prefix):
+            return prefix.rstrip("/")
+    return None
