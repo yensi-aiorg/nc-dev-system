@@ -99,7 +99,7 @@ Phase 6: DELIVER (Opus) — Usage docs, screenshots, build report, push to GitHu
 Builders are OpenAI Codex CLI processes, NOT Claude Code agents.
 Authentication is handled by the Codex CLI itself (`codex login`), not API keys.
 ```bash
-codex exec --full-auto --json \
+codex exec --full-auto --sandbox danger-full-access --json \
   --cd .worktrees/feature-name \
   "$(cat .nc-dev/prompts/build-feature-name.md)" \
   -o .nc-dev/codex-results/feature-name.json 2>&1 &

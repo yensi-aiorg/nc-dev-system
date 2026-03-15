@@ -163,6 +163,7 @@ class OpenAICodexAdapter(ProviderAdapter):
             self.cli_name,
             "exec",
             "--full-auto",
+            "--sandbox", "danger-full-access",
             "--json",
         ]
         target_path = str(options.get("target_path", "")).strip()

@@ -113,7 +113,7 @@ def execute_change_plan(
 
         while attempts < max_retries and not passed:
             attempts += 1
-            rc, out = _run(["codex", "exec", "--skip-git-repo-check", prompt], worktree)
+            rc, out = _run(["codex", "exec", "--skip-git-repo-check", "--sandbox", "danger-full-access", prompt], worktree)
             if rc == 0:
                 passed = True
                 notes = out[:500]

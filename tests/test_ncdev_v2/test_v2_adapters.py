@@ -75,7 +75,7 @@ def test_codex_adapter_run_task_writes_result_artifact(tmp_path: Path) -> None:
     assert result_path.exists()
     assert str(result_path) in result.artifact_paths
     called_cmd = mock_run.call_args.args[0]
-    assert called_cmd[:4] == ["codex", "exec", "--full-auto", "--json"]
+    assert called_cmd[:6] == ["codex", "exec", "--full-auto", "--sandbox", "danger-full-access", "--json"]
     assert "--cd" in called_cmd
 
 

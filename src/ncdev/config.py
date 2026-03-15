@@ -28,7 +28,7 @@ class AnalysisConfig(BaseModel):
             ),
             AnalysisModelCommand(
                 name="codex_cli",
-                command=["codex", "exec", "--skip-git-repo-check", "{prompt}"],
+                command=["codex", "exec", "--skip-git-repo-check", "--sandbox", "danger-full-access", "{prompt}"],
             ),
         ]
     )

@@ -272,6 +272,7 @@ class CodexRunner:
             self.codex_binary,
             "exec",
             "--full-auto",
+            "--sandbox", "danger-full-access",
             "--json",
             "--cd", str(worktree),
             prompt_content,
