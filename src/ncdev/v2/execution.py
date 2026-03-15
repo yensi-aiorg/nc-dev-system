@@ -105,11 +105,11 @@ def execute_routed_tasks(
             "task_request_path": task_request_path,
             "task_request": task_request.model_dump(mode="json"),
         }
-        # Pass target_path for tasks that need to write to the target repo
-        if target_repo_path and decision.task_type in (
+        # Pass target_path for Codex tasks that need --cd to the target repo
+        # Only for providers that support --cd (openai_codex), not Claude CLI
+        if target_repo_path and decision.provider == "openai_codex" and decision.task_type in (
             TaskType.BUILD_BATCH,
             TaskType.TEST_AUTHORING,
-            TaskType.QA_SWEEP,
         ):
             task_options["target_path"] = target_repo_path
 

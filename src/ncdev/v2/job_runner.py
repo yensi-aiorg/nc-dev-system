@@ -20,6 +20,36 @@ from ncdev.v2.models import (
 )
 
 
+import subprocess as _subprocess
+
+
+def _ensure_target_repo_clean(job_queue: "JobQueueDoc") -> None:
+    """Commit any uncommitted changes on the target repo before worktree builds.
+
+    The discovery execution phase may have written directly to the target repo.
+    Worktree merges will fail if main has dirty state, so commit first.
+    """
+    target_paths = {job.target_path for job in job_queue.jobs if job.target_path}
+    for target_path in target_paths:
+        repo = Path(target_path)
+        if not (repo / ".git").exists():
+            continue
+        status = _subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, check=False,
+        )
+        if status.stdout.strip():
+            _subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=False)
+            _subprocess.run(
+                [
+                    "git", "-c", "user.name=NC Dev System",
+                    "-c", "user.email=ncdev@example.invalid",
+                    "commit", "-m", "chore: commit discovery execution changes before worktree builds",
+                ],
+                cwd=repo, capture_output=True, check=False,
+            )
+
+
 def _load_job_queue(path: Path) -> JobQueueDoc:
     return JobQueueDoc.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
@@ -459,6 +489,7 @@ def run_job_queue(
 ) -> JobRunLogDoc:
     queue_path = run_dir / "outputs" / queue_name
     job_queue = _load_job_queue(queue_path)
+    _ensure_target_repo_clean(job_queue)
     records: list[JobRunRecord] = []
     completed: dict[str, str] = {}
     _write_job_status(
