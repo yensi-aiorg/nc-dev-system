@@ -25,6 +25,8 @@ class RoutingConfig(BaseModel):
     test_authoring: list[str] = Field(default_factory=lambda: ["openai_codex"])
     review: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
     second_opinion: list[str] = Field(default_factory=lambda: ["anthropic_claude_code", "openai_codex"])
+    sentinel_reproduce: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    sentinel_fix: list[str] = Field(default_factory=lambda: ["openai_codex"])
 
     def providers_for(self, task_type: TaskType) -> list[str]:
         mapping = {
@@ -35,8 +37,56 @@ class RoutingConfig(BaseModel):
             TaskType.DESIGN_BRIEF: self.design_brief,
             TaskType.BUILD_BATCH: self.implementation,
             TaskType.TEST_AUTHORING: self.test_authoring,
+            TaskType.SENTINEL_REPRODUCE: self.sentinel_reproduce,
+            TaskType.SENTINEL_FIX: self.sentinel_fix,
         }
         return mapping.get(task_type, self.review)
+
+
+class SentinelServiceConfig(BaseModel):
+    repo_path: str = ""
+    git_remote: str = ""
+    default_branch: str = "main"
+    language: str = "python"
+    test_commands: dict[str, str] = Field(default_factory=dict)
+    pr_labels: list[str] = Field(default_factory=lambda: ["sentinel-auto", "bug"])
+    auto_deploy: bool = False
+
+
+class SentinelIntakeConfig(BaseModel):
+    enabled: bool = True
+    port: int = 16650
+    api_key: str = ""
+    max_concurrent_runs: int = 3
+    queue_max_size: int = 50
+
+
+class SentinelRateLimitConfig(BaseModel):
+    max_fixes_per_hour: int = 10
+    max_fixes_per_service_per_hour: int = 5
+    cooldown_after_failure_seconds: int = 300
+
+
+class SentinelCallbackConfig(BaseModel):
+    enabled: bool = True
+    url: str = ""
+    api_key: str = ""
+    retry_count: int = 3
+    retry_delay_seconds: int = 5
+
+
+class SentinelGitConfig(BaseModel):
+    branch_prefix: str = "sentinel/fix/"
+    commit_prefix: str = "[sentinel-fix]"
+    pr_label: str = "sentinel-auto"
+
+
+class SentinelConfig(BaseModel):
+    intake: SentinelIntakeConfig = Field(default_factory=SentinelIntakeConfig)
+    rate_limits: SentinelRateLimitConfig = Field(default_factory=SentinelRateLimitConfig)
+    services: dict[str, SentinelServiceConfig] = Field(default_factory=dict)
+    callback: SentinelCallbackConfig = Field(default_factory=SentinelCallbackConfig)
+    git: SentinelGitConfig = Field(default_factory=SentinelGitConfig)
 
 
 class QualityGateConfig(BaseModel):
@@ -63,6 +113,7 @@ class NCDevV2Config(BaseModel):
     )
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     quality_gates: QualityGateConfig = Field(default_factory=QualityGateConfig)
+    sentinel: SentinelConfig = Field(default_factory=SentinelConfig)
 
     def to_yaml_dict(self) -> dict[str, object]:
         return self.model_dump(mode="python")
