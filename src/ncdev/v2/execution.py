@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from ncdev.adapters.base import ProviderAdapter
 from ncdev.utils import write_json
@@ -48,6 +49,7 @@ def execute_routed_tasks(
     outputs_dir: Path,
     *,
     dry_run: bool,
+    target_repo_path: str = "",
 ) -> ExecutionLogDoc:
     results: list[TaskExecutionRecord] = []
     for decision in routing_plan.decisions:
@@ -97,16 +99,25 @@ def execute_routed_tasks(
             _task_request_path(outputs_dir, decision.task_type),
             task_request,
         )
+        task_options: dict[str, Any] = {
+            "dry_run": dry_run,
+            "fallback_providers": decision.fallback_providers,
+            "task_request_path": task_request_path,
+            "task_request": task_request.model_dump(mode="json"),
+        }
+        # Pass target_path for tasks that need to write to the target repo
+        if target_repo_path and decision.task_type in (
+            TaskType.BUILD_BATCH,
+            TaskType.TEST_AUTHORING,
+            TaskType.QA_SWEEP,
+        ):
+            task_options["target_path"] = target_repo_path
+
         result = adapter.run_task(
             task_type=decision.task_type,
             artifact_paths=artifact_paths,
             model=decision.model,
-            options={
-                "dry_run": dry_run,
-                "fallback_providers": decision.fallback_providers,
-                "task_request_path": task_request_path,
-                "task_request": task_request.model_dump(mode="json"),
-            },
+            options=task_options,
         )
         record = TaskExecutionRecord.model_validate(result.model_dump(mode="json"))
         record.input_artifacts = resolved_inputs

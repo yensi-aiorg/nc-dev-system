@@ -148,7 +148,11 @@ def run_v2_discovery(
         "discovery artifacts generated",
         artifacts=[str(path) for path in output_paths[1:]],
     )
-    execution_doc = execute_routed_tasks(routing_doc, registry, run_dir / "outputs", dry_run=dry_run)
+    execution_doc = execute_routed_tasks(
+        routing_doc, registry, run_dir / "outputs",
+        dry_run=dry_run,
+        target_repo_path=str(Path(str(target_repo_path)).resolve()) if target_repo_path else "",
+    )
     execution_path = persist_v2_artifact(run_dir, "execution-log.json", execution_doc.model_dump(mode="json"))
     state.artifacts.append(str(execution_path))
     _set_task(
