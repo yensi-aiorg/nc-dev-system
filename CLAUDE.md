@@ -260,6 +260,27 @@ project-name/
     └── screenshots/
 ```
 
+## Frontend Design Stack (MANDATORY for all generated projects)
+
+Every frontend must use these component libraries for visually polished UIs:
+
+| Layer | Library | Purpose | Install |
+|-------|---------|---------|---------|
+| **Core** | shadcn/ui | Buttons, forms, dialogs, tables, charts | `npx shadcn add <component>` |
+| **Animation** | Magic UI | Animated text, cards, landing blocks | `npx shadcn add` (compatible) |
+| **3D / Effects** | Aceternity UI | Parallax heroes, spotlights, sparkles, 3D cards | Copy from ui.aceternity.com |
+| **Backgrounds** | Eldora UI | Animated backgrounds, wavy text, beams | `npx shadcn add` (compatible) |
+| **Motion** | Framer Motion | Transitions, gestures, layout animations | `npm install framer-motion` |
+
+### Design Rules
+- **Never use plain unstyled HTML** — every element must use shadcn/ui or equivalent
+- **Every page needs at least one animated/visual element** — use Magic UI or Aceternity
+- **Dark themes with vivid accents** preferred unless project specifies otherwise
+- **No placeholder images** — generate with Nano Banana 2 or use real assets
+- **Component layering** — combine shadcn (structure) + Magic UI (animation) + Aceternity (effects)
+
+---
+
 ## Frontend Architecture Rules (STRICTLY ENFORCED)
 
 ### The Golden Rule: Components NEVER Call APIs Directly
