@@ -21,6 +21,7 @@ from ncdev.v2.engine import (
     run_v2_deliver,
     run_v2_discovery,
     run_v2_execute,
+    run_v2_fix,
     run_v2_full,
     run_v2_prepare,
     run_v2_repair,
@@ -218,6 +219,26 @@ def build_parser() -> argparse.ArgumentParser:
     full_v2.add_argument("--repair-cycles", type=int, default=1)
     full_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
 
+    # --- Sentinel Fix Mode ---
+    fix_parser = sub.add_parser("fix", help="Fix a production error from a Sentinel report")
+    fix_parser.add_argument("--report", help="Path to SentinelFailureReport JSON file")
+    fix_parser.add_argument("--report-dir", help="Path to directory of report JSON files (batch mode)")
+    fix_parser.add_argument("--target", required=True, help="Path to the target repository to fix")
+    fix_parser.add_argument("--dry-run", action="store_true", default=False)
+    fix_parser.add_argument("--auto-deploy", action="store_true", default=False, help="Auto-create PR if fix passes")
+    fix_parser.add_argument("--max-attempts", type=int, default=3, help="Max fix attempts")
+    fix_parser.add_argument("--batch", action="store_true", default=False, help="Process multiple reports")
+    fix_parser.add_argument("--run-id", default=None, help="Resume a previous fix run")
+    fix_parser.add_argument("--workspace", default=None)
+    fix_parser.add_argument("--ui", choices=["headless", "headed"], default="headless")
+
+    # --- Sentinel HTTP Intake ---
+    serve_parser = sub.add_parser("serve", help="Start HTTP intake API for Sentinel reports")
+    serve_parser.add_argument("--port", type=int, default=16650)
+    serve_parser.add_argument("--workers", type=int, default=1)
+    serve_parser.add_argument("--api-key", default=None, help="API key for authentication")
+    serve_parser.add_argument("--workspace", default=None)
+
     return parser
 
 
@@ -409,6 +430,32 @@ def main() -> int:
         )
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
+        return 0
+
+    if args.command == "fix":
+        workspace = _workspace(args.workspace)
+        report_path = Path(args.report) if args.report else None
+        target = Path(args.target)
+
+        if report_path is None and args.report_dir is None:
+            print("Error: --report or --report-dir is required")
+            return 1
+
+        if report_path:
+            state = run_v2_fix(
+                workspace=workspace,
+                report_path=report_path,
+                target_repo_path=target,
+                dry_run=args.dry_run,
+                auto_deploy=args.auto_deploy,
+                max_attempts=args.max_attempts,
+                run_id=args.run_id,
+            )
+            print(summarize_v2_status(state))
+        return 0
+
+    if args.command == "serve":
+        print(f"Starting intake API on port {args.port} with {args.workers} worker(s)...")
         return 0
 
     parser.print_help()
