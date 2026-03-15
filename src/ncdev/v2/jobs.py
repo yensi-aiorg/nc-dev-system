@@ -78,13 +78,20 @@ def materialize_job_queue(
                 options={"fallback_providers": build_decision.fallback_providers},
             )
             request.title = f"{request.title}: {batch.title}"
+            operating_mode = target_contract.operating_mode or "website_saas"
+            mode_instruction = (
+                "Follow feature-first implementation using the project's operating mode and conventions."
+                if operating_mode != "website_saas"
+                else "Follow feature-first implementation and preserve the website SaaS operating mode defaults unless the source artifacts explicitly override them."
+            )
             request.prompt = _append_lines(
                 request.prompt,
                 [
                     f"Batch ID: {batch.id}",
                     f"Batch summary: {batch.summary}",
+                    f"Project type: {target_contract.target_type} (operating mode: {operating_mode})",
                     "Work only inside the target repository referenced in the input artifacts.",
-                    "Follow feature-first implementation and preserve the website SaaS operating mode defaults unless the source artifacts explicitly override them.",
+                    mode_instruction,
                     "Acceptance criteria:",
                     *[f"- {criterion}" for criterion in batch.acceptance_criteria],
                 ],

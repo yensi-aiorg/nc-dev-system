@@ -136,7 +136,31 @@ def _ensure_website_saas_baseline(project_root: Path) -> None:
         run_evidence.chmod(0o755)
 
 
-def _verification_contract_for_target(project_root: Path, project_name: str) -> VerificationContractDoc:
+def _ensure_cli_baseline(project_root: Path) -> None:
+    """Create minimal baseline directories for a CLI/library project."""
+    for d in ["src", "tests", "docs"]:
+        (project_root / d).mkdir(parents=True, exist_ok=True)
+    scripts_dir = project_root / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    run_tests = scripts_dir / "run-tests.sh"
+    if not run_tests.exists():
+        write_text(
+            run_tests,
+            "#!/usr/bin/env bash\nset -euo pipefail\n"
+            "pytest -q\n",
+        )
+        run_tests.chmod(0o755)
+
+
+def _ensure_project_baseline(project_root: Path, target_type: str) -> None:
+    """Apply the correct baseline scaffold based on project type."""
+    if target_type in ("cli", "library"):
+        _ensure_cli_baseline(project_root)
+    else:
+        _ensure_website_saas_baseline(project_root)
+
+
+def _verification_contract_for_target(project_root: Path, project_name: str, target_type: str = "web") -> VerificationContractDoc:
     commands: list[str] = []
     if (project_root / "backend").exists():
         commands.append("cd backend && pytest -q")
@@ -148,6 +172,35 @@ def _verification_contract_for_target(project_root: Path, project_name: str) -> 
         commands.append("cd frontend && npx playwright test")
 
     startup_commands, teardown_commands = _verification_startup_commands(project_root)
+
+    if target_type in ("cli", "library"):
+        return VerificationContractDoc(
+            generator="ncdev.v2.prepare",
+            source_inputs=[str(project_root)],
+            project_name=project_name,
+            commands=commands,
+            startup_commands=startup_commands,
+            teardown_commands=teardown_commands,
+            healthcheck_path="",
+            startup_timeout_seconds=10,
+            healthcheck_interval_seconds=1,
+            required_viewports=[],
+            evidence_paths=[
+                "docs",
+            ],
+            required_checks=[
+                "unit",
+                "integration",
+            ],
+            issue_bundle_fields=[
+                "title",
+                "severity",
+                "expected",
+                "actual",
+                "console_logs",
+            ],
+        )
+
     return VerificationContractDoc(
         generator="ncdev.v2.prepare",
         source_inputs=[str(project_root)],
@@ -204,7 +257,7 @@ def prepare_target_project(
         generator = ProjectGenerator(project_config)
         project_root = asyncio.run(generator.generate(output_root))
 
-    _ensure_website_saas_baseline(project_root)
+    _ensure_project_baseline(project_root, target_contract.target_type)
     initialized_git = (project_root / ".git").exists() or _init_git_repo(project_root)
 
     files_written = sorted(
@@ -224,5 +277,5 @@ def prepare_target_project(
         existing_repo=existing_repo,
         scaffold_applied=scaffold_applied,
     )
-    verification_contract = _verification_contract_for_target(project_root, feature_map.project_name)
+    verification_contract = _verification_contract_for_target(project_root, feature_map.project_name, target_contract.target_type)
     return manifest, verification_contract

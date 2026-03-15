@@ -24,6 +24,40 @@ from ncdev.v2.models import (
 )
 
 
+import re
+
+_MD_FORMAT_RE = re.compile(r"[*_`~]+")
+_MD_FIELD_PREFIX_RE = re.compile(r"^[A-Za-z]+:\*\*\s*")
+_SKIP_WORDS = {"capability", "requirement", "project", "service", "category", "technology", "version/notes", "notes"}
+
+
+def _strip_md(text: str) -> str:
+    """Strip markdown formatting (bold, italic, code, strikethrough) from text."""
+    cleaned = _MD_FORMAT_RE.sub("", text).strip()
+    cleaned = _MD_FIELD_PREFIX_RE.sub("", cleaned).strip()
+    return cleaned
+
+
+def _is_feature_like(text: str) -> bool:
+    """Filter out lines that look like field labels, metadata, or structural markdown."""
+    lower = text.lower().rstrip(":")
+    if lower in _SKIP_WORDS:
+        return False
+    # Skip single-word structural labels (e.g. "Features:", "Process:", "Dependency")
+    if text.endswith(":") and " " not in text.strip(":"):
+        return False
+    # Skip field-label prefixes
+    if lower.startswith(("tool:", "input:", "output:", "auth:", "storage:", "model:", "strategy:")):
+        return False
+    # Skip very short or very long entries
+    if len(text) < 5 or len(text) > 120:
+        return False
+    # Skip bare dependency/tool names (single words like "yt-dlp", "ffmpeg")
+    if " " not in text and len(text) < 15:
+        return False
+    return True
+
+
 def _feature_lines(text: str) -> list[str]:
     lines: list[str] = []
     seen: set[str] = set()
@@ -32,20 +66,56 @@ def _feature_lines(text: str) -> list[str]:
         if not item:
             continue
         if item.startswith(("-", "*")) or item[:2].isdigit():
-            cleaned = item.lstrip("-*0123456789. ").strip()
-            if cleaned and cleaned.lower() not in seen:
+            cleaned = _strip_md(item.lstrip("-*0123456789. ").strip())
+            if cleaned and _is_feature_like(cleaned) and cleaned.lower() not in seen:
                 seen.add(cleaned.lower())
                 lines.append(cleaned)
             continue
         if item.startswith("|") and item.endswith("|"):
-            cells = [cell.strip(" *`") for cell in item.split("|")[1:-1]]
+            cells = [_strip_md(cell.strip()) for cell in item.split("|")[1:-1]]
             if not cells or set("".join(cells)) <= {"-", ":"}:
                 continue
             candidate = cells[0].strip()
-            if candidate and candidate.lower() not in {"capability", "requirement", "project", "service"} and candidate.lower() not in seen:
+            if candidate and _is_feature_like(candidate) and candidate.lower() not in seen:
                 seen.add(candidate.lower())
                 lines.append(candidate)
     return lines
+
+
+# ---------------------------------------------------------------------------
+# Project type detection
+# ---------------------------------------------------------------------------
+
+_CLI_SIGNALS = [
+    "cli", "command-line", "command line", "terminal", "click", "argparse",
+    "typer", "fire", "standalone cli", "cli tool", "cli entry",
+    "pip install", "pipx", "entry_points", "console_scripts",
+    "project.scripts", "skill",
+]
+_WEB_SIGNALS = [
+    "frontend", "react", "vue", "angular", "next.js", "nuxt",
+    "web app", "webapp", "dashboard", "spa", "single page",
+    "html", "css", "tailwind", "vite", "webpack",
+    "rest api", "graphql", "fastapi", "express", "flask",
+]
+_LIB_SIGNALS = [
+    "library", "package", "sdk", "module", "pip install",
+    "import from", "importable", "reusable",
+]
+
+
+def _detect_project_type(text: str) -> str:
+    """Detect project type from source text. Returns 'cli', 'web', or 'library'."""
+    lower = text.lower()
+    cli_score = sum(1 for sig in _CLI_SIGNALS if sig in lower)
+    web_score = sum(1 for sig in _WEB_SIGNALS if sig in lower)
+    lib_score = sum(1 for sig in _LIB_SIGNALS if sig in lower)
+
+    if cli_score > web_score and cli_score >= lib_score:
+        return "cli"
+    if lib_score > web_score and lib_score > cli_score:
+        return "library"
+    return "web"
 
 
 def run_discovery_pipeline(
@@ -74,9 +144,15 @@ def run_discovery_pipeline_with_target(
             text = f"{text}\n\n## TARGET REPOSITORY CONTEXT\n{repo_ingested.content}".strip()
             source_inputs.append(repo_ingested.primary_source)
             target_repo_notes = repo_ingested.notes
+    project_type = _detect_project_type(text)
     feature_lines = _feature_lines(text)
     if not feature_lines:
-        feature_lines = ["Core delivery workflow", "Primary user journey", "Admin and support baseline"]
+        if project_type == "cli":
+            feature_lines = ["Core CLI pipeline", "Configuration management", "Output formatting"]
+        elif project_type == "library":
+            feature_lines = ["Core API surface", "Configuration", "Documentation"]
+        else:
+            feature_lines = ["Core delivery workflow", "Primary user journey", "Admin and support baseline"]
 
     source_pack = SourcePackDoc(
         generator="ncdev.v2.discovery.pipeline",
@@ -114,13 +190,41 @@ def run_discovery_pipeline_with_target(
         ],
     )
 
+    surfaces_for_type = {
+        "cli": ["cli"],
+        "library": ["library"],
+        "web": ["web"],
+    }
+    platforms_for_type = {
+        "cli": ["cli", "terminal"],
+        "library": ["python", "npm"],
+        "web": ["web"],
+    }
+    ux_for_type = {
+        "cli": [
+            "Prioritize clear, readable terminal output.",
+            "Use progress indicators for long-running operations.",
+            "Provide helpful error messages with actionable suggestions.",
+        ],
+        "library": [
+            "Prioritize clean, intuitive API surface.",
+            "Provide sensible defaults with easy overrides.",
+            "Include comprehensive docstrings and type hints.",
+        ],
+        "web": [
+            "Prioritize clarity of primary flows over dashboard density.",
+            "Keep design tokens separate from business logic.",
+            "Support visually distinctive styling through theme-level changes.",
+        ],
+    }
+
     features = [
         FeatureCandidate(
             name=item[:80],
             description=item,
             audience=["end user"],
             priority="P1" if idx else "P0",
-            surfaces=["web"],
+            surfaces=surfaces_for_type.get(project_type, ["web"]),
         )
         for idx, item in enumerate(feature_lines)
     ]
@@ -129,12 +233,8 @@ def run_discovery_pipeline_with_target(
         source_inputs=source_inputs,
         project_name=project_name,
         features=features,
-        ux_principles=[
-            "Prioritize clarity of primary flows over dashboard density.",
-            "Keep design tokens separate from business logic.",
-            "Support visually distinctive styling through theme-level changes.",
-        ],
-        recommended_platforms=["web"],
+        ux_principles=ux_for_type.get(project_type, ux_for_type["web"]),
+        recommended_platforms=platforms_for_type.get(project_type, ["web"]),
     )
 
     design_pack = DesignPackDoc(
@@ -207,65 +307,165 @@ def run_discovery_pipeline_with_target(
             for idx, feature in enumerate(features)
         ],
     )
-    target_contract = TargetProjectContractDoc(
-        generator="ncdev.v2.discovery.pipeline",
-        source_inputs=source_inputs,
-        project_name=project_name,
-        target_type="web",
-        target_repo_path=target_repo_value,
-        stack={
-            "frontend": "React 19 + Vite + TypeScript",
-            "backend": "FastAPI + Python 3.12",
-            "storage": "MongoDB",
-            "e2e": "Playwright",
-        },
-        ownership_rules=[
-            "All generated application code belongs in the target project.",
-            "All generated tests belong in the target project.",
-            "NC Dev System only retains orchestration metadata and evidence artifacts.",
-        ],
-        required_artifacts=[
-            "frontend/",
-            "backend/",
-            "docker-compose.yml",
-            "frontend/playwright.config.ts",
-            "frontend/e2e/screenshots/",
-            "frontend/test-results/",
-            "frontend/playwright-report/",
-        ],
-    )
-    scaffold_plan = ScaffoldPlanDoc(
-        generator="ncdev.v2.discovery.pipeline",
-        source_inputs=source_inputs,
-        project_name=project_name,
-        directories=[
-            "frontend/src",
-            "frontend/e2e",
-            "frontend/e2e/screenshots",
-            "backend/app",
-            "backend/tests",
-            "docs/evidence",
-        ],
-        files=[
-            "frontend/package.json",
-            "frontend/playwright.config.ts",
-            "backend/pyproject.toml",
-            "docker-compose.yml",
-            "scripts/run-tests.sh",
-            "scripts/run-evidence-checks.sh",
-        ],
-        commands=[
-            "npm install",
-            "python -m venv .venv",
-            "pytest -q",
-            "npx playwright test",
-        ],
-        test_harness=[
-            "frontend unit tests",
-            "backend unit tests",
-            "integration tests",
-            "playwright e2e tests",
-            "evidence capture directory",
-        ],
-    )
+    if project_type == "cli":
+        target_contract = TargetProjectContractDoc(
+            generator="ncdev.v2.discovery.pipeline",
+            source_inputs=source_inputs,
+            project_name=project_name,
+            target_type="cli",
+            operating_mode="python_cli",
+            target_repo_path=target_repo_value,
+            stack={
+                "language": "Python 3.12+",
+                "cli_framework": "click",
+                "testing": "pytest",
+            },
+            ownership_rules=[
+                "All generated application code belongs in the target project.",
+                "All generated tests belong in the target project.",
+                "NC Dev System only retains orchestration metadata and evidence artifacts.",
+            ],
+            required_artifacts=[
+                "src/",
+                "tests/",
+                "pyproject.toml",
+                "README.md",
+            ],
+        )
+        scaffold_plan = ScaffoldPlanDoc(
+            generator="ncdev.v2.discovery.pipeline",
+            source_inputs=source_inputs,
+            project_name=project_name,
+            directories=[
+                "src",
+                "tests",
+                "docs",
+            ],
+            files=[
+                "pyproject.toml",
+                "README.md",
+                "Makefile",
+                ".gitignore",
+                ".env.example",
+            ],
+            commands=[
+                "python -m venv .venv",
+                "pip install -e '.[dev]'",
+                "pytest -q",
+            ],
+            test_harness=[
+                "unit tests",
+                "integration tests",
+            ],
+        )
+    elif project_type == "library":
+        target_contract = TargetProjectContractDoc(
+            generator="ncdev.v2.discovery.pipeline",
+            source_inputs=source_inputs,
+            project_name=project_name,
+            target_type="library",
+            operating_mode="python_library",
+            target_repo_path=target_repo_value,
+            stack={
+                "language": "Python 3.12+",
+                "testing": "pytest",
+            },
+            ownership_rules=[
+                "All generated application code belongs in the target project.",
+                "All generated tests belong in the target project.",
+                "NC Dev System only retains orchestration metadata and evidence artifacts.",
+            ],
+            required_artifacts=[
+                "src/",
+                "tests/",
+                "pyproject.toml",
+                "README.md",
+            ],
+        )
+        scaffold_plan = ScaffoldPlanDoc(
+            generator="ncdev.v2.discovery.pipeline",
+            source_inputs=source_inputs,
+            project_name=project_name,
+            directories=[
+                "src",
+                "tests",
+                "docs",
+            ],
+            files=[
+                "pyproject.toml",
+                "README.md",
+                ".gitignore",
+            ],
+            commands=[
+                "python -m venv .venv",
+                "pip install -e '.[dev]'",
+                "pytest -q",
+            ],
+            test_harness=[
+                "unit tests",
+                "integration tests",
+            ],
+        )
+    else:
+        target_contract = TargetProjectContractDoc(
+            generator="ncdev.v2.discovery.pipeline",
+            source_inputs=source_inputs,
+            project_name=project_name,
+            target_type="web",
+            target_repo_path=target_repo_value,
+            stack={
+                "frontend": "React 19 + Vite + TypeScript",
+                "backend": "FastAPI + Python 3.12",
+                "storage": "MongoDB",
+                "e2e": "Playwright",
+            },
+            ownership_rules=[
+                "All generated application code belongs in the target project.",
+                "All generated tests belong in the target project.",
+                "NC Dev System only retains orchestration metadata and evidence artifacts.",
+            ],
+            required_artifacts=[
+                "frontend/",
+                "backend/",
+                "docker-compose.yml",
+                "frontend/playwright.config.ts",
+                "frontend/e2e/screenshots/",
+                "frontend/test-results/",
+                "frontend/playwright-report/",
+            ],
+        )
+        scaffold_plan = ScaffoldPlanDoc(
+            generator="ncdev.v2.discovery.pipeline",
+            source_inputs=source_inputs,
+            project_name=project_name,
+            directories=[
+                "frontend/src",
+                "frontend/e2e",
+                "frontend/e2e/screenshots",
+                "backend/app",
+                "backend/tests",
+                "docs/evidence",
+            ],
+            files=[
+                "frontend/package.json",
+                "frontend/playwright.config.ts",
+                "backend/pyproject.toml",
+                "docker-compose.yml",
+                "scripts/run-tests.sh",
+                "scripts/run-evidence-checks.sh",
+            ],
+            commands=[
+                "npm install",
+                "python -m venv .venv",
+                "pytest -q",
+                "npx playwright test",
+            ],
+            test_harness=[
+                "frontend unit tests",
+                "backend unit tests",
+                "integration tests",
+                "playwright e2e tests",
+                "evidence capture directory",
+            ],
+        )
     return source_pack, research_pack, feature_map, design_pack, design_brief, build_plan, phase_plan, target_contract, scaffold_plan
