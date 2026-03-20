@@ -19,7 +19,7 @@ class AnalysisModelCommand(BaseModel):
 
 
 class AnalysisConfig(BaseModel):
-    models_required: list[str] = Field(default_factory=lambda: ["claude_cli", "codex_cli"])
+    models_required: list[str] = Field(default_factory=lambda: ["claude_cli", "claude_cli_review"])
     model_commands: list[AnalysisModelCommand] = Field(
         default_factory=lambda: [
             AnalysisModelCommand(
@@ -27,8 +27,8 @@ class AnalysisConfig(BaseModel):
                 command=["claude", "--print", "{prompt}"],
             ),
             AnalysisModelCommand(
-                name="codex_cli",
-                command=["codex", "exec", "--skip-git-repo-check", "--sandbox", "danger-full-access", "{prompt}"],
+                name="claude_cli_review",
+                command=["claude", "--print", "{prompt}", "--model", "claude-sonnet-4-6"],
             ),
         ]
     )
@@ -117,7 +117,7 @@ def load_config(workspace: Path) -> NCDevConfig:
 
     return NCDevConfig(
         analysis=AnalysisConfig(
-            models_required=models.get("required", ["claude_cli", "codex_cli"]),
+            models_required=models.get("required", ["claude_cli", "claude_cli_review"]),
             model_commands=[AnalysisModelCommand(name=x["name"], command=x["command"]) for x in commands]
             if commands
             else AnalysisConfig().model_commands,

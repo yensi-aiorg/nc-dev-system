@@ -222,7 +222,7 @@ def _run_optional_integrations(
 
     if config.integrations.visual_designer.enabled and requirements_path is not None:
         try:
-            journey = requirements_path.read_text(encoding="utf-8")[:2000]
+            journey = requirements_path.read_text(encoding="utf-8")[:20000]
             vd = VisualDesignerClient(base_url=config.integrations.visual_designer.base_url)
             results["results"]["visual_designer"] = vd.generate_references(journey=journey)
         except Exception as exc:  # noqa: BLE001

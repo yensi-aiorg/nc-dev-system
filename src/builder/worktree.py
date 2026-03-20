@@ -148,6 +148,12 @@ class WorktreeManager:
             f"from [green]{base_branch}[/green]..."
         )
 
+        # Clean up stale branch from a previous run if it exists
+        try:
+            await _run_git("branch", "-D", branch_name, cwd=self.repo_path)
+        except Exception:
+            pass  # Branch doesn't exist — that's fine
+
         await _run_git(
             "worktree",
             "add",

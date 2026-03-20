@@ -506,12 +506,12 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     async def phase3_build(self) -> dict[str, Any]:
-        """Build features in parallel using Codex builders (or fallback).
+        """Build features in parallel using CLI builders (or fallback).
 
         For each feature extracted in Phase 1, creates a git worktree and
-        spawns a Codex builder.  Up to ``max_parallel_builders`` builders run
+        spawns a CLI builder.  Up to ``max_parallel_builders`` builders run
         concurrently.  If a builder fails twice, the feature falls back to
-        Claude Sonnet via sub-agent.
+        an alternative builder via sub-agent.
         """
         features_data = self._require_artefact(
             self.config.features_path, "features (run Phase 1 first)"
@@ -578,7 +578,7 @@ class Pipeline:
     async def _build_single_feature(self, feature: dict[str, Any]) -> dict[str, Any]:
         """Build a single feature, retrying with fallback on failure.
 
-        Attempts the Codex CLI first (up to ``max_codex_attempts``). On
+        Attempts the CLI builder first (up to ``max_codex_attempts``). On
         failure, falls back to the builder module's fallback strategy.
         """
         feature_name = feature.get("name", "unnamed")
@@ -606,43 +606,43 @@ class Pipeline:
         except ImportError:
             pass
 
-        # Fallback: attempt Codex CLI directly.
-        # Codex CLI handles its own authentication via `codex login`.
+        # Fallback: attempt CLI builder directly.
         for attempt in range(1, self.config.build.max_codex_attempts + 1):
             console.print(
-                f"    Codex attempt {attempt}/{self.config.build.max_codex_attempts} "
+                f"    Builder attempt {attempt}/{self.config.build.max_codex_attempts} "
                 f"for {feature_name}..."
             )
 
             result_path = self.config.results_dir / f"{sanitized}.json"
             ensure_dir(self.config.results_dir)
 
-            codex_cmd = (
-                f'codex exec --full-auto --json '
+            builder_cmd = (
+                f'claude -p "$(cat {prompt_path})" '
+                f'--output-format json '
+                f'--model claude-sonnet-4-6 '
+                f'--allowedTools "Edit,Write,Bash,Read,Glob,Grep" '
                 f'--cd "{self.config.output_dir}" '
-                f'"$(cat {prompt_path})" '
-                f"-o {result_path}"
             )
 
             returncode, stdout, stderr = await run_command(
-                codex_cmd,
+                builder_cmd,
                 cwd=self.config.output_dir,
                 timeout=self.config.build.codex_timeout,
             )
 
             if returncode == 0:
-                console.print(f"    [green]Codex succeeded for {feature_name}[/green]")
+                console.print(f"    [green]Builder succeeded for {feature_name}[/green]")
                 return {"success": True, "feature": feature_name, "attempt": attempt}
 
             console.print(
-                f"    [yellow]Codex attempt {attempt} failed "
+                f"    [yellow]Builder attempt {attempt} failed "
                 f"(exit {returncode}): {stderr[:200]}[/yellow]"
             )
 
         return {
             "success": False,
             "feature": feature_name,
-            "error": f"Codex failed after {self.config.build.max_codex_attempts} attempts",
+            "error": f"Builder failed after {self.config.build.max_codex_attempts} attempts",
         }
 
     # ------------------------------------------------------------------

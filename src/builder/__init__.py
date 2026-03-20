@@ -1,14 +1,17 @@
 """NC Dev System builder module.
 
-Manages the full feature-building pipeline: git worktree creation, Codex prompt
-generation, builder process execution, code review, and fallback strategies.
+Manages the full feature-building pipeline: git worktree creation, CLI builder
+prompt generation, builder process execution, code review, and fallback strategies.
+
+Supports configurable CLI backends (Claude Code or OpenAI Codex) via the
+CodexRunner's ``cli_mode`` parameter.
 
 Key classes:
     WorktreeManager   - Git worktree lifecycle management
-    PromptGenerator   - Codex builder prompt generation
-    CodexRunner       - Codex CLI process spawning and monitoring
+    PromptGenerator   - CLI builder prompt generation
+    CodexRunner       - CLI builder process spawning and monitoring (Claude or Codex)
     BuildReviewer     - Code review, test execution, and pattern scanning
-    FallbackStrategy  - Codex -> retry -> Sonnet -> escalate chain
+    FallbackStrategy  - Builder -> retry -> Sonnet -> escalate chain
 """
 
 from .codex_runner import CodexResult, CodexRunner, CodexRunnerError

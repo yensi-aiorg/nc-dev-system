@@ -21,12 +21,12 @@ class RoutingConfig(BaseModel):
     market_research: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
     feature_extraction: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
     design_brief: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
-    implementation: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    test_authoring: list[str] = Field(default_factory=lambda: ["openai_codex"])
+    implementation: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    test_authoring: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
     review: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
-    second_opinion: list[str] = Field(default_factory=lambda: ["anthropic_claude_code", "openai_codex"])
+    second_opinion: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
     sentinel_reproduce: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
-    sentinel_fix: list[str] = Field(default_factory=lambda: ["openai_codex"])
+    sentinel_fix: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
 
     def providers_for(self, task_type: TaskType) -> list[str]:
         mapping = {
@@ -100,11 +100,11 @@ class NCDevV2Config(BaseModel):
         default_factory=lambda: {
             "anthropic_claude_code": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={"planning": "opus", "review": "sonnet"},
+                preferred_models={"planning": "opus", "review": "sonnet", "implementation": "sonnet", "test_implementation": "sonnet"},
                 features={"use_subagents": True, "use_hooks": True, "use_mcp": True},
             ),
             "openai_codex": ProviderPreferenceConfig(
-                enabled=True,
+                enabled=False,
                 preferred_models={"implementation": "gpt-5.4-codex", "test_implementation": "gpt-5.4-codex"},
                 defaults={"reasoning_effort": "high"},
             ),

@@ -53,6 +53,7 @@ class _FakeAsyncProcess:
 class TestBuildMethod:
     @pytest.mark.unit
     def test_values(self):
+        assert BuildMethod.CLAUDE == "claude"
         assert BuildMethod.CODEX == "codex"
         assert BuildMethod.SONNET == "sonnet"
         assert BuildMethod.MANUAL == "manual"
@@ -60,6 +61,7 @@ class TestBuildMethod:
     @pytest.mark.unit
     def test_string_comparison(self):
         assert BuildMethod.CODEX.value == "codex"
+        assert BuildMethod.CLAUDE.value == "claude"
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +359,7 @@ class TestFallbackStrategyExecute:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(return_value=_make_codex_result(success=True))
 
         reviewer = MagicMock()
@@ -377,7 +380,7 @@ class TestFallbackStrategyExecute:
         )
 
         assert result.success is True
-        assert result.method == "codex"
+        assert result.method == "claude"
         assert result.attempts == 1
 
     @pytest.mark.unit
@@ -396,6 +399,7 @@ class TestFallbackStrategyExecute:
             return _make_codex_result(success=True)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(side_effect=codex_run_side_effect)
 
         reviewer = MagicMock()
@@ -416,7 +420,7 @@ class TestFallbackStrategyExecute:
         )
 
         assert result.success is True
-        assert result.method == "codex"
+        assert result.method == "claude"
         assert result.attempts == 2
 
     @pytest.mark.unit
@@ -426,6 +430,7 @@ class TestFallbackStrategyExecute:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(
             return_value=_make_codex_result(success=False, errors=["fail"])
         )
@@ -470,6 +475,7 @@ class TestFallbackStrategyExecute:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(
             return_value=_make_codex_result(success=False, errors=["codex fail"])
         )
@@ -514,6 +520,7 @@ class TestFallbackStrategyExecute:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(
             side_effect=CodexRunnerError("process crashed")
         )
@@ -552,6 +559,7 @@ class TestFallbackStrategyExecute:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(return_value=_make_codex_result(success=True))
 
         review_call_count = 0
@@ -591,6 +599,7 @@ class TestFallbackStrategyExecute:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(
             return_value=_make_codex_result(success=False, errors=["fail"])
         )
@@ -638,6 +647,7 @@ class TestFallbackStrategyParallel:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(return_value=_make_codex_result(success=True))
 
         reviewer = MagicMock()
@@ -682,6 +692,7 @@ class TestFallbackStrategyParallel:
             return _make_codex_result(success=True)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(side_effect=codex_run_side_effect)
 
         reviewer = MagicMock()
@@ -722,6 +733,7 @@ class TestFallbackStrategyHistory:
         prompt_gen = _make_mock_prompt_generator(tmp_path)
 
         codex_runner = MagicMock()
+        codex_runner.cli_mode = "claude"
         codex_runner.run = AsyncMock(return_value=_make_codex_result(success=True))
 
         reviewer = MagicMock()
@@ -742,6 +754,6 @@ class TestFallbackStrategyHistory:
         )
 
         assert len(result.attempt_history) == 1
-        assert result.attempt_history[0].method == BuildMethod.CODEX
+        assert result.attempt_history[0].method == BuildMethod.CLAUDE
         assert result.attempt_history[0].success is True
         assert result.attempt_history[0].review_passed is True

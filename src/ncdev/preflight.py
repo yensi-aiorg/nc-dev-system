@@ -17,7 +17,7 @@ def run_preflight(required: list[str]) -> PreflightResult:
 
 
 def required_commands(mode: str, full: bool) -> list[str]:
-    base = ["git", "claude", "codex"]
+    base = ["git", "claude"]
     if full:
         base.extend(["pytest", "python3"])
         if mode == "greenfield":

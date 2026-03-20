@@ -75,7 +75,24 @@ def _candidate_files(root: Path) -> list[Path]:
     return ordered[:60]
 
 
-def _combine_text(paths: Iterable[Path], root: Path, limit: int = 20000) -> tuple[str, list[IngestedAsset]]:
+def _smart_truncate(text: str, limit: int) -> str:
+    """Truncate long text keeping beginning and end for context.
+
+    For files that exceed *limit*, returns the first 80% and last 20% of
+    the budget with a marker in between so that function signatures, imports
+    (top) and exports/entrypoints (bottom) are preserved.
+    """
+    if len(text) <= limit:
+        return text
+    head_size = int(limit * 0.8)
+    tail_size = limit - head_size - 80  # leave room for marker
+    if tail_size < 200:
+        return text[:limit]
+    marker = f"\n\n... [{len(text) - head_size - tail_size} chars omitted] ...\n\n"
+    return text[:head_size] + marker + text[-tail_size:]
+
+
+def _combine_text(paths: Iterable[Path], root: Path, limit: int = 20000, per_file_limit: int = 4000) -> tuple[str, list[IngestedAsset]]:
     chunks: list[str] = []
     assets: list[IngestedAsset] = []
     used = 0
@@ -86,7 +103,8 @@ def _combine_text(paths: Iterable[Path], root: Path, limit: int = 20000) -> tupl
             continue
         rel = str(path.relative_to(root))
         digest = sha256_text(text)
-        chunks.append(f"\n## FILE: {rel}\n{text[:4000]}")
+        truncated = _smart_truncate(text, per_file_limit)
+        chunks.append(f"\n## FILE: {rel}\n{truncated}")
         assets.append(
             IngestedAsset(
                 path=str(path),
@@ -145,7 +163,7 @@ def ingest_source(source_input: str) -> IngestedSource:
             source_kind="url_reference",
             primary_source=source_input,
             project_name=(urlparse(source_input).hostname or "web-source").replace(".", "-"),
-            content=text[:20000],
+            content=_smart_truncate(text, 100000),
             notes=["Fetched remote source for discovery normalization."],
             assets=[
                 IngestedAsset(
@@ -162,7 +180,8 @@ def ingest_source(source_input: str) -> IngestedSource:
         linked_paths = _linked_source_files(path)
         if len(linked_paths) > 1:
             root = path.parent
-            text, assets = _combine_text(linked_paths, root)
+            pf_limit = 16000 if len(linked_paths) <= 10 else 4000
+            text, assets = _combine_text(linked_paths, root, per_file_limit=pf_limit)
             notes = [
                 "Normalized single-file source input.",
                 f"Expanded {len(linked_paths) - 1} linked document(s) referenced from the entry file.",
@@ -190,7 +209,15 @@ def ingest_source(source_input: str) -> IngestedSource:
     if path.is_dir():
         is_repo = (path / ".git").exists()
         candidate_paths = _candidate_files(path)
-        combined, assets = _combine_text(candidate_paths, path)
+        # For small source directories (not full repos), read files fully
+        # so plan/requirements documents are not truncated.
+        if len(candidate_paths) <= 10 and not is_repo:
+            pf_limit = 100000  # effectively unlimited for small doc bundles
+            total_limit = 200000
+        else:
+            pf_limit = 4000
+            total_limit = 20000
+        combined, assets = _combine_text(candidate_paths, path, limit=total_limit, per_file_limit=pf_limit)
         source_kind = "repo_directory" if is_repo else "directory_bundle"
         notes = [
             "Normalized directory input using selected high-signal project files.",

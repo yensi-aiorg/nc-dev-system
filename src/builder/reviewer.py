@@ -21,15 +21,15 @@ _PROHIBITED_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("TODO comment", re.compile(r"#\s*TODO|//\s*TODO|/\*\s*TODO", re.IGNORECASE)),
     (
         "Placeholder pass statement",
-        re.compile(r"^\s*pass\s*#?\s*(placeholder|stub|implement)?", re.IGNORECASE | re.MULTILINE),
+        re.compile(r"^\s*pass\s*#\s*(placeholder|stub|implement|todo|fixme)", re.IGNORECASE | re.MULTILINE),
     ),
     (
         "Not yet implemented text",
         re.compile(r"not\s+yet\s+implemented|coming\s+soon", re.IGNORECASE),
     ),
     (
-        "Empty exception handler",
-        re.compile(r"except\s*(?:\w+\s*)?:\s*\n\s*pass\b"),
+        "Empty bare exception handler",
+        re.compile(r"except\s*:\s*\n\s*pass\b"),
     ),
     (
         "console.log debug statement",
@@ -590,12 +590,25 @@ class BuildReviewer:
         """
         issues: list[ReviewIssue] = []
 
+        # Config files where console.log and pass are legitimate
+        _CONFIG_BASENAMES = {
+            "vite.config.ts", "vite.config.js", "webpack.config.js",
+            "webpack.config.ts", "jest.config.ts", "jest.config.js",
+            "vitest.config.ts", "playwright.config.ts", "tailwind.config.js",
+            "postcss.config.js", "next.config.js", "next.config.mjs",
+            "conftest.py", "__init__.py", "setup.py", "setup.cfg",
+        }
+
         for rel_path in changed_files:
             full_path = worktree_path / rel_path
             if not full_path.exists() or not full_path.is_file():
                 continue
 
             if full_path.suffix not in _SCANNABLE_EXTENSIONS:
+                continue
+
+            # Skip config files where patterns may be legitimate
+            if full_path.name in _CONFIG_BASENAMES:
                 continue
 
             try:

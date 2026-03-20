@@ -42,17 +42,30 @@ requirements and delivers tested, production-ready codebases.
 ## AI Tier Architecture
 
 - **Claude Code Opus 4.6**: Orchestrator (Team Lead), reviewer, architecture, delivery
-- **OpenAI Codex GPT 5.3**: Builders (x3 parallel), feature implementation, unit tests — uses Codex tokens, NOT Claude tokens
-- **Claude Code Sonnet 4.5**: Tester (Playwright + AI Vision), fallback builder if Codex fails
+- **Claude Code Sonnet 4.6**: Builders (x3 parallel), feature implementation, unit tests (default)
 - **Claude Code Haiku 4.5**: Quick validation, lint checks, simple fixes
+- **OpenAI Codex** (optional, disabled by default): Alternative builder — enable via config
 - **Ollama Local Models**: Mock data, test fixtures, bulk generation, vision pre-screening (free)
+
+### Builder Configuration
+
+The builder provider is configurable. Set via environment variables or `BuildConfig`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NC_BUILDER_CLI` | `claude` | CLI to use: `claude` or `codex` |
+| `NC_BUILDER_MODEL` | `claude-sonnet-4-6` | Model for the builder CLI |
+| `NC_MAX_BUILDER_ATTEMPTS` | `2` | Retries before fallback |
+| `NC_BUILDER_TIMEOUT` | `600` | Per-builder timeout in seconds |
+
+Routing is configured in `.nc-dev/v2/config.yaml` under `routing:`.
 
 ## AI Integration (Adapter Pattern - MANDATORY)
 
 All AI features in generated projects MUST use the adapter pattern:
 - **Development/Testing**: CLI-based access via Python subprocesses (NOT SDK integrations)
-  - Claude CLI (Anthropic)
-  - Codex CLI (OpenAI)
+  - Claude CLI (Anthropic) — primary builder
+  - Codex CLI (OpenAI) — optional alternative builder
   - Gemini CLI (Google)
 - **Production**: Open Router (multi-model access)
 - **Local**: Ollama API (localhost:11434)
@@ -78,10 +91,10 @@ Always try local models first, fall back to cloud only when local fails.
 
 ```
 Phase 1: UNDERSTAND (Opus) — Parse requirements, extract features, design architecture
-Phase 2: SCAFFOLD (Sonnet/Codex) — Create repo, generate project, set up mocks
-Phase 3: BUILD (3x Codex GPT 5.3) — Parallel feature building in isolated worktrees
+Phase 2: SCAFFOLD (Sonnet) — Create repo, generate project, set up mocks
+Phase 3: BUILD (3x Sonnet 4.6) — Parallel feature building in isolated worktrees
 Phase 4: VERIFY (Sonnet) — Unit tests, E2E tests, screenshots, AI vision analysis
-Phase 5: HARDEN (Sonnet/Codex) — Error handling, responsive, accessibility, performance
+Phase 5: HARDEN (Sonnet) — Error handling, responsive, accessibility, performance
 Phase 6: DELIVER (Opus) — Usage docs, screenshots, build report, push to GitHub
 ```
 
@@ -90,14 +103,24 @@ Phase 6: DELIVER (Opus) — Usage docs, screenshots, build report, push to GitHu
 - Repository: Created on GitHub under the user's account or org
 - Branch strategy: main + feature branches (nc-dev/feature-name)
 - Commit format: `feat(scope): description` / `fix(scope): description` / `test(scope): description`
-- Worktrees: Each Codex builder uses isolated worktree in .worktrees/
+- Worktrees: Each builder uses isolated worktree in .worktrees/
 - Small, incremental commits after each logical unit of work
 - All tests must pass before committing
 
-## Codex Builder Invocation
+## Builder Invocation
 
-Builders are OpenAI Codex CLI processes, NOT Claude Code agents.
-Authentication is handled by the Codex CLI itself (`codex login`), not API keys.
+Builders are Claude CLI processes by default (configurable to Codex via `NC_BUILDER_CLI=codex`).
+
+**Claude CLI (default):**
+```bash
+claude -p "$(cat .nc-dev/prompts/build-feature-name.md)" \
+  --output-format json \
+  --model claude-sonnet-4-6 \
+  --allowedTools "Edit,Write,Bash,Read,Glob,Grep" \
+  --cd .worktrees/feature-name 2>&1 &
+```
+
+**Codex CLI (optional):**
 ```bash
 codex exec --full-auto --sandbox danger-full-access --json \
   --cd .worktrees/feature-name \
@@ -105,7 +128,7 @@ codex exec --full-auto --sandbox danger-full-access --json \
   -o .nc-dev/codex-results/feature-name.json 2>&1 &
 ```
 
-Fallback: If Codex fails 2x on a feature, Claude Code Sonnet takes over as subagent.
+Fallback: If the primary builder fails 2x on a feature, the fallback builder takes over.
 
 ## Generated Project Structure (MANDATORY)
 

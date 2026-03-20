@@ -115,6 +115,9 @@ def test_run_job_queue_executes_codex_jobs_with_mocked_runner(tmp_path: Path, mo
         files_changed = ["frontend/src/generated.tsx", "backend/app/main.py"]
 
     class FakeCodexRunner:
+        def __init__(self, **kwargs):
+            pass
+
         async def run(self, prompt_path: str, worktree_path: str, output_path: str):
             job_name = Path(prompt_path).stem
             generated = Path(worktree_path) / "frontend" / "src" / f"{job_name}.tsx"
@@ -168,38 +171,51 @@ def test_run_job_queue_falls_back_to_secondary_provider(tmp_path: Path, monkeypa
     requests_dir = run_dir / "outputs" / "jobs" / "requests"
     for request_path in requests_dir.glob("batch-*.json"):
         payload = json.loads(request_path.read_text(encoding="utf-8"))
-        payload["fallback_providers"] = ["anthropic_claude_code"]
+        payload["fallback_providers"] = ["openai_codex"]
         request_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     async def fake_codex_job(job, run_dir):
+        if job.provider == "anthropic_claude_code":
+            return JobRunRecord(
+                job_id=job.job_id,
+                provider=job.provider,
+                model=job.model,
+                task_type=job.task_type,
+                status="failed",
+                summary="primary builder failed",
+                request_artifact=job.request_artifact,
+                artifact_paths=[],
+                metadata={},
+            )
+        # Fallback provider succeeds
         return JobRunRecord(
             job_id=job.job_id,
-            provider="openai_codex",
-            model="gpt-5.2-codex",
+            provider=job.provider,
+            model=job.model,
             task_type=job.task_type,
-            status="failed",
-            summary="codex failed",
+            status="passed",
+            summary="fallback builder passed",
             request_artifact=job.request_artifact,
             artifact_paths=[],
             metadata={},
         )
 
-    class FakeClaudeAdapter:
+    class FakeCodexAdapter:
         def name(self) -> str:
-            return "anthropic_claude_code"
+            return "openai_codex"
 
         def healthcheck(self) -> bool:
             return True
 
         def version_info(self) -> ProviderVersionInfo:
-            return ProviderVersionInfo(provider=self.name(), cli="claude", version="test")
+            return ProviderVersionInfo(provider=self.name(), cli="codex", version="test")
 
         def available_models(self) -> list[str]:
-            return ["opus"]
+            return ["gpt-5.4-codex"]
 
         def capabilities(self, model: str) -> CapabilityDescriptor:
             _ = model
-            return CapabilityDescriptor(planning=True, code_review=True)
+            return CapabilityDescriptor(planning=False, code_review=False)
 
         def supports_feature(self, feature_name: str) -> bool:
             return False
@@ -209,25 +225,25 @@ def test_run_job_queue_falls_back_to_secondary_provider(tmp_path: Path, monkeypa
 
         def run_task(self, task_type, artifact_paths, model, options=None):
             return TaskExecutionRecord(
-                provider="anthropic_claude_code",
+                provider="openai_codex",
                 model=model,
                 task_type=task_type,
                 status="passed",
                 summary="fallback passed",
                 input_artifacts=[str(path) for path in artifact_paths],
                 artifact_paths=[str(Path(options["task_request_path"]))],
-                metadata={"adapter": "fake-claude"},
+                metadata={"adapter": "fake-codex"},
             )
 
     monkeypatch.setattr("ncdev.v2.job_runner._run_codex_job", fake_codex_job)
 
     log = run_job_queue(
         run_dir=run_dir,
-        registry={"anthropic_claude_code": FakeClaudeAdapter()},
+        registry={"openai_codex": FakeCodexAdapter()},
         dry_run=False,
     )
 
     build_records = [record for record in log.records if record.task_type == TaskType.BUILD_BATCH]
     assert build_records
-    assert any(record.provider == "anthropic_claude_code" for record in build_records)
-    assert any(record.metadata["fallback_from"] == "openai_codex" for record in build_records if record.provider == "anthropic_claude_code")
+    assert any(record.provider == "openai_codex" for record in build_records)
+    assert any(record.metadata["fallback_from"] == "anthropic_claude_code" for record in build_records if record.provider == "openai_codex")

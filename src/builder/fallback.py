@@ -1,9 +1,9 @@
 """Fallback strategy management for builder agents.
 
-Implements the Codex -> Codex retry -> Sonnet -> escalate chain:
-1. Attempt feature build with Codex CLI
-2. If Codex fails, retry once with Codex
-3. If Codex fails again, fall back to Claude Code Sonnet (via `claude` CLI)
+Implements the Builder -> Builder retry -> Sonnet -> escalate chain:
+1. Attempt feature build with the primary builder CLI
+2. If the builder fails, retry once
+3. If the builder fails again, fall back to Claude Code Sonnet (via `claude` CLI)
 4. If Sonnet also fails, escalate to the user for manual intervention
 
 Tracks attempt history for debugging and reporting.
@@ -33,7 +33,9 @@ console = Console()
 class BuildMethod(str, Enum):
     """Method used to build a feature."""
 
+    CLAUDE = "claude"
     CODEX = "codex"
+    PRIMARY = "primary"
     SONNET = "sonnet"
     MANUAL = "manual"
 
@@ -59,7 +61,7 @@ class BuildResult:
 
     success: bool
     feature_name: str
-    method: str  # "codex", "sonnet", or "manual"
+    method: str  # "claude", "codex", "primary", "sonnet", or "manual"
     attempts: int
     result: dict = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
@@ -88,7 +90,7 @@ class SonnetRunner:
     """Runs feature builds using Claude Code Sonnet CLI as a fallback.
 
     Invokes the `claude` CLI with a prompt to implement the feature, as a
-    subprocess. This is used when Codex fails repeatedly.
+    subprocess. This is used when the primary builder fails repeatedly.
     """
 
     def __init__(
@@ -138,7 +140,7 @@ class SonnetRunner:
             self.claude_binary,
             "-p", prompt,
             "--output-format", "json",
-            "--model", "claude-sonnet-4-5-20250514",
+            "--model", "claude-sonnet-4-6",
             "--allowedTools",
             "Edit,Write,Bash,Read,Glob,Grep",
             "--cd", str(wt_path),
@@ -256,7 +258,7 @@ class SonnetRunner:
 
 
 class FallbackStrategy:
-    """Manages the Codex -> Codex retry -> Sonnet -> escalate fallback chain.
+    """Manages the Builder -> Builder retry -> Sonnet -> escalate fallback chain.
 
     Orchestrates the full build pipeline for a single feature:
     1. Generate a prompt from the feature spec
@@ -274,6 +276,7 @@ class FallbackStrategy:
         reviewer: BuildReviewer,
         sonnet_runner: SonnetRunner | None = None,
         codex_timeout: float = 600.0,
+        builder_timeout: float | None = None,
         sonnet_timeout: float = 900.0,
     ):
         """Initialize the fallback strategy.
@@ -281,10 +284,11 @@ class FallbackStrategy:
         Args:
             worktree_manager: Manager for git worktrees.
             prompt_generator: Generator for builder prompts.
-            codex_runner: Runner for Codex CLI.
+            codex_runner: Runner for the primary builder CLI.
             reviewer: Reviewer for build output.
             sonnet_runner: Optional Sonnet runner (created with defaults if None).
-            codex_timeout: Timeout for each Codex attempt.
+            codex_timeout: Timeout for each builder attempt (backward-compat alias for builder_timeout).
+            builder_timeout: Timeout for each builder attempt (takes precedence over codex_timeout).
             sonnet_timeout: Timeout for the Sonnet fallback attempt.
         """
         self.worktree_manager = worktree_manager
@@ -292,7 +296,8 @@ class FallbackStrategy:
         self.codex_runner = codex_runner
         self.reviewer = reviewer
         self.sonnet_runner = sonnet_runner or SonnetRunner(timeout_seconds=sonnet_timeout)
-        self.codex_timeout = codex_timeout
+        self.builder_timeout = builder_timeout if builder_timeout is not None else codex_timeout
+        self.codex_timeout = self.builder_timeout  # backward-compat alias
         self.sonnet_timeout = sonnet_timeout
 
     async def execute_with_fallback(
@@ -305,8 +310,8 @@ class FallbackStrategy:
         """Execute the full fallback chain for a feature build.
 
         Attempts:
-        1. Codex attempt 1
-        2. Codex attempt 2 (retry)
+        1. Builder attempt 1
+        2. Builder attempt 2 (retry)
         3. Claude Code Sonnet (fallback)
         4. Escalate to user (manual)
 
@@ -317,7 +322,7 @@ class FallbackStrategy:
             feature: Feature specification dict.
             architecture: Architecture context dict.
             project_path: Absolute path to the project.
-            max_codex_attempts: Maximum Codex attempts before falling back (default: 2).
+            max_codex_attempts: Maximum builder attempts before falling back (default: 2).
 
         Returns:
             BuildResult with the final outcome and full attempt history.
@@ -327,10 +332,19 @@ class FallbackStrategy:
         attempt_history: list[BuildAttempt] = []
         all_errors: list[str] = []
 
+        # Determine the build method based on the runner's cli_mode
+        cli_mode = getattr(self.codex_runner, "cli_mode", "codex")
+        if cli_mode == "claude":
+            primary_method = BuildMethod.CLAUDE
+        else:
+            primary_method = BuildMethod.CODEX
+        primary_label = cli_mode.capitalize()
+
         console.print(
             Panel(
                 f"[bold cyan]Starting build pipeline for:[/bold cyan] {feature_name}\n"
-                f"  Max Codex attempts: {max_codex_attempts}\n"
+                f"  Max builder attempts: {max_codex_attempts}\n"
+                f"  Primary builder: {primary_label}\n"
                 f"  Fallback: Sonnet CLI\n"
                 f"  Escalation: Manual",
                 title="Build Pipeline",
@@ -349,14 +363,15 @@ class FallbackStrategy:
         )
         worktree_path_str = str(worktree_info.path)
 
-        # Set up output path for Codex results
+        # Set up output path for builder results
         results_dir = Path(project_path) / ".nc-dev" / "codex-results"
         results_dir.mkdir(parents=True, exist_ok=True)
 
-        # ---- Codex attempts ----
+        # ---- Builder attempts ----
         for attempt_num in range(1, max_codex_attempts + 1):
             console.print(
-                f"\n[cyan]Codex attempt {attempt_num}/{max_codex_attempts}[/cyan]"
+                f"\n[cyan]Builder attempt {attempt_num}/{max_codex_attempts} "
+                f"({primary_label})[/cyan]"
             )
 
             attempt_start = time.monotonic()
@@ -365,7 +380,7 @@ class FallbackStrategy:
             )
 
             attempt = BuildAttempt(
-                method=BuildMethod.CODEX,
+                method=primary_method,
                 attempt_number=attempt_num,
                 success=False,
                 started_at=datetime.now(timezone.utc).isoformat(),
@@ -382,8 +397,8 @@ class FallbackStrategy:
                 attempt.errors.append(str(exc))
                 attempt.duration_seconds = time.monotonic() - attempt_start
                 attempt_history.append(attempt)
-                all_errors.append(f"Codex attempt {attempt_num}: {exc}")
-                console.print(f"[red]Codex attempt {attempt_num} crashed:[/red] {exc}")
+                all_errors.append(f"Builder attempt {attempt_num}: {exc}")
+                console.print(f"[red]Builder attempt {attempt_num} crashed:[/red] {exc}")
                 continue
 
             attempt.duration_seconds = time.monotonic() - attempt_start
@@ -395,13 +410,13 @@ class FallbackStrategy:
                 all_errors.extend(codex_result.errors)
                 attempt_history.append(attempt)
                 console.print(
-                    f"[red]Codex attempt {attempt_num} failed:[/red] "
+                    f"[red]Builder attempt {attempt_num} failed:[/red] "
                     f"{len(codex_result.errors)} errors"
                 )
                 continue
 
             # Run review
-            console.print(f"[cyan]Reviewing Codex attempt {attempt_num}...[/cyan]")
+            console.print(f"[cyan]Reviewing builder attempt {attempt_num}...[/cyan]")
             review = await self.reviewer.review(worktree_path_str, feature)
             attempt.review_passed = review.passed
 
@@ -413,7 +428,7 @@ class FallbackStrategy:
                 result = BuildResult(
                     success=True,
                     feature_name=feature_name,
-                    method=BuildMethod.CODEX.value,
+                    method=primary_method.value,
                     attempts=attempt_num,
                     result={
                         "files_created": codex_result.files_created,
@@ -432,17 +447,17 @@ class FallbackStrategy:
             # Review failed -- record and continue to next attempt
             review_issues = "; ".join(review.issues[:3])
             all_errors.append(
-                f"Codex attempt {attempt_num} review failed: {review_issues}"
+                f"Builder attempt {attempt_num} review failed: {review_issues}"
             )
             attempt_history.append(attempt)
             console.print(
-                f"[yellow]Codex attempt {attempt_num} review failed:[/yellow] "
+                f"[yellow]Builder attempt {attempt_num} review failed:[/yellow] "
                 f"{len(review.issues)} issues"
             )
 
         # ---- Sonnet fallback ----
         console.print(
-            "\n[magenta]All Codex attempts failed. "
+            "\n[magenta]All builder attempts failed. "
             "Falling back to Claude Code Sonnet...[/magenta]"
         )
 
@@ -551,7 +566,7 @@ class FallbackStrategy:
             architecture: Architecture context dict.
             project_path: Absolute path to the project.
             max_parallel: Maximum concurrent builds (default: 3).
-            max_codex_attempts: Maximum Codex attempts per feature.
+            max_codex_attempts: Maximum builder attempts per feature.
 
         Returns:
             List of BuildResult, one per feature.
@@ -561,7 +576,7 @@ class FallbackStrategy:
                 f"[bold cyan]Parallel build pipeline[/bold cyan]\n"
                 f"  Features: {len(features)}\n"
                 f"  Max parallel: {max_parallel}\n"
-                f"  Max Codex attempts per feature: {max_codex_attempts}",
+                f"  Max builder attempts per feature: {max_codex_attempts}",
                 title="Parallel Builds",
                 border_style="cyan",
             )

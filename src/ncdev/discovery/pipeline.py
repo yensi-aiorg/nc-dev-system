@@ -29,6 +29,13 @@ import re
 _MD_FORMAT_RE = re.compile(r"[*_`~]+")
 _MD_FIELD_PREFIX_RE = re.compile(r"^[A-Za-z]+:\*\*\s*")
 _SKIP_WORDS = {"capability", "requirement", "project", "service", "category", "technology", "version/notes", "notes"}
+_SKIP_HEADER_WORDS = {
+    "summary", "file structure", "new files to create", "existing files to modify",
+    "reference specs", "existing codebase notes", "key files", "key commands",
+    "tech stack", "architecture", "overview", "introduction", "prerequisites",
+    "setup", "installation", "configuration", "appendix", "changelog", "table of contents",
+    "dependencies", "environment", "development", "deployment", "contributing",
+}
 
 
 def _strip_md(text: str) -> str:
@@ -58,19 +65,80 @@ def _is_feature_like(text: str) -> bool:
     return True
 
 
+_TASK_HEADER_RE = re.compile(
+    r"^#{1,3}\s+"                          # 1-3 '#' + space
+    r"(?:Task\s+\d+[:\.]?\s*|Step\s+\d+[:\.]?\s*)?"  # optional "Task N:" or "Step N:"
+    r"(.+)",
+    re.IGNORECASE,
+)
+
+
 def _feature_lines(text: str) -> list[str]:
-    lines: list[str] = []
+    """Extract feature names from source text.
+
+    Recognises three patterns:
+    1. Markdown headers that look like task/feature titles (## Task 1: Design DNA …)
+    2. Bullet / numbered list items (- Feature, * Feature, 1. Feature)
+    3. Markdown table first-column cells
+    """
+    header_features: list[str] = []
+    bullet_features: list[str] = []
     seen: set[str] = set()
+    in_code_block = False
+    in_target_repo_context = False
+
     for raw in text.splitlines():
         item = raw.strip()
         if not item:
             continue
+
+        # Track fenced code blocks (``` or ~~~) and skip their content
+        if item.startswith("```") or item.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+
+        # --- Markdown headers (## Task N: Title) ---
+        hdr_match = _TASK_HEADER_RE.match(item)
+        if hdr_match:
+            cleaned = _strip_md(hdr_match.group(1).strip())
+            # Strip leading "Task N:" residue after regex capture
+            cleaned = re.sub(r"^(?:Task|Step)\s+\d+[:\.]?\s*", "", cleaned, flags=re.IGNORECASE).strip()
+            # Skip ingestion-injected headers (## FILE: …)
+            if cleaned.startswith("FILE:"):
+                continue
+            # Once we hit TARGET REPOSITORY CONTEXT, stop extracting headers
+            # (those belong to the existing repo, not the source requirements)
+            if cleaned.upper().startswith("TARGET REPOSITORY"):
+                in_target_repo_context = True
+                continue
+            if in_target_repo_context:
+                continue
+            # Skip file paths (e.g. "backend/tests/test_foo.py")
+            if "/" in cleaned and ("." in cleaned.split("/")[-1]):
+                continue
+            # Skip document-level titles (containing "Plan", "Implementation", etc.)
+            lower_cleaned = cleaned.lower()
+            if any(kw in lower_cleaned for kw in ("implementation plan", "upgrade plan", "integration plan")):
+                continue
+            # Skip structural/meta headers
+            if lower_cleaned.rstrip(":") in _SKIP_HEADER_WORDS:
+                continue
+            if cleaned and _is_feature_like(cleaned) and cleaned.lower() not in seen:
+                seen.add(cleaned.lower())
+                header_features.append(cleaned)
+            continue
+
+        # --- Bullet / numbered list items ---
         if item.startswith(("-", "*")) or item[:2].isdigit():
             cleaned = _strip_md(item.lstrip("-*0123456789. ").strip())
             if cleaned and _is_feature_like(cleaned) and cleaned.lower() not in seen:
                 seen.add(cleaned.lower())
-                lines.append(cleaned)
+                bullet_features.append(cleaned)
             continue
+
+        # --- Markdown table cells ---
         if item.startswith("|") and item.endswith("|"):
             cells = [_strip_md(cell.strip()) for cell in item.split("|")[1:-1]]
             if not cells or set("".join(cells)) <= {"-", ":"}:
@@ -78,8 +146,13 @@ def _feature_lines(text: str) -> list[str]:
             candidate = cells[0].strip()
             if candidate and _is_feature_like(candidate) and candidate.lower() not in seen:
                 seen.add(candidate.lower())
-                lines.append(candidate)
-    return lines
+                bullet_features.append(candidate)
+
+    # Prefer header-derived features when present (they are higher-signal
+    # and less noisy than bullet items scraped from prose).
+    if header_features:
+        return header_features
+    return bullet_features
 
 
 # ---------------------------------------------------------------------------

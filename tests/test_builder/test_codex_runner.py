@@ -318,7 +318,42 @@ class TestCodexRunnerRun:
             "test_results": {"passed": 5, "failed": 0},
         })
 
-        # Write a result file as Codex would
+        # In claude mode, output is parsed from stdout (not output file)
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(
+            return_value=(codex_output.encode("utf-8"), b"")
+        )
+        mock_process.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            runner = CodexRunner(timeout_seconds=30)
+            result = await runner.run(
+                prompt_path=str(prompt_file),
+                worktree_path=str(worktree),
+                output_path=str(output_file),
+            )
+
+        assert result.success is True
+        assert result.exit_code == 0
+        assert "app.py" in result.files_created
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_successful_execution_codex_mode(self, tmp_path: Path):
+        """Codex mode reads from the output file."""
+        prompt_file = tmp_path / "prompt.md"
+        prompt_file.write_text("Build the feature")
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        output_file = tmp_path / "result.json"
+
+        codex_output = json.dumps({
+            "files_created": ["app.py"],
+            "files_modified": [],
+            "test_results": {"passed": 5, "failed": 0},
+        })
+
+        # In codex mode, output is written to the output file
         output_file.write_text(codex_output)
 
         mock_process = AsyncMock()
@@ -326,7 +361,7 @@ class TestCodexRunnerRun:
         mock_process.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            runner = CodexRunner(timeout_seconds=30)
+            runner = CodexRunner(timeout_seconds=30, cli_mode="codex")
             result = await runner.run(
                 prompt_path=str(prompt_file),
                 worktree_path=str(worktree),
@@ -375,10 +410,10 @@ class TestCodexRunnerRun:
 
         with patch(
             "asyncio.create_subprocess_exec",
-            side_effect=FileNotFoundError("codex not found"),
+            side_effect=FileNotFoundError("claude not found"),
         ):
-            runner = CodexRunner(codex_binary="codex-nonexistent")
-            with pytest.raises(CodexRunnerError, match="Codex binary not found"):
+            runner = CodexRunner(cli_binary="claude-nonexistent")
+            with pytest.raises(CodexRunnerError, match="(Builder CLI not found|CLI not found)"):
                 await runner.run(
                     prompt_path=str(prompt_file),
                     worktree_path=str(worktree),
@@ -562,7 +597,15 @@ class TestCodexRunnerCheckAvailable:
 class TestCodexRunnerCheckAuthenticated:
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_authenticated(self):
+    async def test_claude_mode_always_authenticated(self):
+        """Claude mode does not require separate auth, always returns True."""
+        runner = CodexRunner(cli_mode="claude")
+        result = await runner.check_authenticated()
+        assert result is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_codex_mode_authenticated(self):
         mock_process = AsyncMock()
         mock_process.communicate = AsyncMock(
             return_value=(b"Authenticated", b"")
@@ -570,14 +613,14 @@ class TestCodexRunnerCheckAuthenticated:
         mock_process.returncode = 0
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            runner = CodexRunner()
+            runner = CodexRunner(cli_mode="codex")
             result = await runner.check_authenticated()
 
         assert result is True
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_not_authenticated(self):
+    async def test_codex_mode_not_authenticated(self):
         mock_process = AsyncMock()
         mock_process.communicate = AsyncMock(
             return_value=(b"Not logged in", b"")
@@ -585,7 +628,7 @@ class TestCodexRunnerCheckAuthenticated:
         mock_process.returncode = 1
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            runner = CodexRunner()
+            runner = CodexRunner(cli_mode="codex")
             result = await runner.check_authenticated()
 
         assert result is False
@@ -601,13 +644,24 @@ class TestCodexRunnerInit:
     def test_default_values(self):
         runner = CodexRunner()
         assert runner.timeout_seconds == 600.0
-        assert runner.codex_binary == "codex"
+        assert runner.cli_mode == "claude"
+        assert runner.cli_binary == "claude"
+        # Backward-compat property
+        assert runner.codex_binary == "claude"
 
     @pytest.mark.unit
     def test_custom_values(self):
         runner = CodexRunner(
             timeout_seconds=300,
-            codex_binary="/usr/bin/codex",
+            cli_binary="/usr/bin/claude",
         )
         assert runner.timeout_seconds == 300
-        assert runner.codex_binary == "/usr/bin/codex"
+        assert runner.cli_binary == "/usr/bin/claude"
+        assert runner.codex_binary == "/usr/bin/claude"
+
+    @pytest.mark.unit
+    def test_codex_mode(self):
+        runner = CodexRunner(cli_mode="codex")
+        assert runner.cli_mode == "codex"
+        assert runner.cli_binary == "codex"
+        assert runner.codex_binary == "codex"

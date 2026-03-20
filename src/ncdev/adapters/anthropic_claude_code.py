@@ -66,6 +66,8 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
             planning=True,
             test_planning=True,
             code_review=True,
+            implementation=True,
+            test_implementation=True,
             image_input=True,
             shell_execution=True,
             mcp=True,

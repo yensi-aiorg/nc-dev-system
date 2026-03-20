@@ -59,16 +59,44 @@ class OllamaConfig(BaseModel):
 class BuildConfig(BaseModel):
     """Tuning knobs for the build pipeline."""
 
-    max_codex_attempts: int = Field(
-        default=2, ge=1, description="How many times to retry Codex before falling back to Sonnet"
+    max_builder_attempts: int = Field(
+        default=2, ge=1, description="How many times to retry the builder CLI before falling back",
+        alias="max_codex_attempts",
     )
-    codex_timeout: int = Field(default=600, ge=60, description="Codex process timeout in seconds")
+    builder_timeout: int = Field(
+        default=600, ge=60, description="Builder process timeout in seconds",
+        alias="codex_timeout",
+    )
+    builder_cli: str = Field(
+        default="claude", description="Builder CLI to use: 'claude' or 'codex'"
+    )
+    builder_model: str = Field(
+        default="claude-sonnet-4-6", description="Model to use for building"
+    )
+    fallback_cli: str = Field(
+        default="claude", description="Fallback builder CLI if primary fails"
+    )
+    fallback_model: str = Field(
+        default="claude-sonnet-4-6", description="Fallback model for building"
+    )
     max_parallel_builders: int = Field(
-        default=3, ge=1, description="Maximum concurrent Codex builders"
+        default=3, ge=1, description="Maximum concurrent builders"
     )
     max_fix_iterations: int = Field(
         default=3, ge=1, description="Maximum fix-retest cycles in Phase 4"
     )
+
+    model_config = {"populate_by_name": True}
+
+    @property
+    def max_codex_attempts(self) -> int:
+        """Backward-compatible alias for ``max_builder_attempts``."""
+        return self.max_builder_attempts
+
+    @property
+    def codex_timeout(self) -> int:
+        """Backward-compatible alias for ``builder_timeout``."""
+        return self.builder_timeout
 
 
 class Config(BaseModel):
@@ -121,7 +149,7 @@ class Config(BaseModel):
 
     @property
     def results_dir(self) -> Path:
-        """Directory that stores Codex builder result files."""
+        """Directory that stores builder result files."""
         return self.nc_dev_path / "codex-results"
 
     @property
@@ -182,8 +210,10 @@ class Config(BaseModel):
         Recognised variables (all optional):
             NC_PROJECT_NAME, NC_OUTPUT_DIR, NC_PHASES,
             NC_OLLAMA_URL, NC_OLLAMA_CODE_MODEL, NC_OLLAMA_TIMEOUT,
-            NC_MAX_CODEX_ATTEMPTS, NC_CODEX_TIMEOUT, NC_MAX_PARALLEL_BUILDERS,
-            NC_MAX_FIX_ITERATIONS.
+            NC_BUILDER_CLI, NC_BUILDER_MODEL,
+            NC_MAX_BUILDER_ATTEMPTS (fallback: NC_MAX_CODEX_ATTEMPTS),
+            NC_BUILDER_TIMEOUT (fallback: NC_CODEX_TIMEOUT),
+            NC_MAX_PARALLEL_BUILDERS, NC_MAX_FIX_ITERATIONS.
         """
         ollama_kwargs: dict[str, Any] = {}
         if os.environ.get("NC_OLLAMA_URL"):
@@ -194,10 +224,16 @@ class Config(BaseModel):
             ollama_kwargs["timeout"] = int(os.environ["NC_OLLAMA_TIMEOUT"])
 
         build_kwargs: dict[str, Any] = {}
-        if os.environ.get("NC_MAX_CODEX_ATTEMPTS"):
-            build_kwargs["max_codex_attempts"] = int(os.environ["NC_MAX_CODEX_ATTEMPTS"])
-        if os.environ.get("NC_CODEX_TIMEOUT"):
-            build_kwargs["codex_timeout"] = int(os.environ["NC_CODEX_TIMEOUT"])
+        if os.environ.get("NC_BUILDER_CLI"):
+            build_kwargs["builder_cli"] = os.environ["NC_BUILDER_CLI"]
+        if os.environ.get("NC_BUILDER_MODEL"):
+            build_kwargs["builder_model"] = os.environ["NC_BUILDER_MODEL"]
+        max_attempts = os.environ.get("NC_MAX_BUILDER_ATTEMPTS") or os.environ.get("NC_MAX_CODEX_ATTEMPTS")
+        if max_attempts:
+            build_kwargs["max_builder_attempts"] = int(max_attempts)
+        builder_timeout = os.environ.get("NC_BUILDER_TIMEOUT") or os.environ.get("NC_CODEX_TIMEOUT")
+        if builder_timeout:
+            build_kwargs["builder_timeout"] = int(builder_timeout)
         if os.environ.get("NC_MAX_PARALLEL_BUILDERS"):
             build_kwargs["max_parallel_builders"] = int(os.environ["NC_MAX_PARALLEL_BUILDERS"])
         if os.environ.get("NC_MAX_FIX_ITERATIONS"):

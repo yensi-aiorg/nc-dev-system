@@ -43,8 +43,8 @@ class TestMaterializeFixFromReport:
         queue = materialize_fix_from_report(run_dir, report, "/target/repo", {})
         assert queue.jobs[0].provider == "anthropic_claude_code"
         assert queue.jobs[0].model == "opus"
-        assert queue.jobs[1].provider == "openai_codex"
-        assert queue.jobs[1].model == "gpt-5.2-codex"
+        assert queue.jobs[1].provider == "anthropic_claude_code"
+        assert queue.jobs[1].model == "sonnet"
 
     def test_fix_depends_on_reproduce(self, tmp_path: Path):
         run_dir = tmp_path / "run"

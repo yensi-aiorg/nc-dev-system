@@ -129,7 +129,10 @@ async def _commit_worktree_changes(worktree_path: Path, job: ExecutionJob) -> tu
 
 
 async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
-    runner = CodexRunner()
+    if job.provider == "anthropic_claude_code":
+        runner = CodexRunner(cli_mode="claude", cli_model=job.model)
+    else:
+        runner = CodexRunner(cli_mode="codex")
     reviewer = BuildReviewer()
     output_path = _job_output_path(run_dir, job.job_id)
     target_repo = Path(job.target_path)
@@ -388,7 +391,7 @@ async def _run_with_fallbacks(
             continue
         adapter = registry[provider_name]
         model_name = _fallback_model(adapter, job.model)
-        if provider_name == "openai_codex" and job.task_type in {
+        if job.task_type in {
             TaskType.BUILD_BATCH,
             TaskType.TEST_AUTHORING,
             TaskType.FIX_BATCH,
@@ -457,7 +460,7 @@ async def _run_job(
     if job.task_type == TaskType.DELIVERY_PACK:
         return _run_delivery_job(job, run_dir, prior_records)
 
-    if job.provider == "openai_codex" and job.task_type in {
+    if job.task_type in {
         TaskType.BUILD_BATCH,
         TaskType.TEST_AUTHORING,
         TaskType.FIX_BATCH,

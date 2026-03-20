@@ -26,8 +26,7 @@ Thumbs.db
 
 # NC Dev System working directories
 .worktrees/
-.nc-dev/codex-results/
-.nc-dev/prompts/
+.nc-dev/
 test-results/
 
 # Coverage

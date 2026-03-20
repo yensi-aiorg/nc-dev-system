@@ -1,8 +1,12 @@
-"""Codex CLI process management for builder agents.
+"""CLI builder process management for builder agents.
 
-Spawns and monitors OpenAI Codex CLI processes that implement features
-in isolated worktrees. Handles timeouts, process crashes, output parsing,
-and structured result reporting.
+Spawns and monitors CLI builder processes (Claude Code or OpenAI Codex) that
+implement features in isolated worktrees. Handles timeouts, process crashes,
+output parsing, and structured result reporting.
+
+Supports two CLI modes:
+- "claude" (default): Uses the Claude Code CLI
+- "codex": Uses the OpenAI Codex CLI
 """
 
 import asyncio
@@ -22,7 +26,7 @@ console = Console()
 
 @dataclass
 class CodexResult:
-    """Structured result from a Codex CLI execution."""
+    """Structured result from a CLI builder execution."""
 
     success: bool
     files_created: list[str] = field(default_factory=list)
@@ -56,7 +60,7 @@ class CodexResult:
 
 
 class CodexRunnerError(Exception):
-    """Raised when the Codex runner encounters an unrecoverable error."""
+    """Raised when the builder runner encounters an unrecoverable error."""
 
     def __init__(self, message: str, result: CodexResult | None = None):
         self.result = result
@@ -64,9 +68,9 @@ class CodexRunnerError(Exception):
 
 
 def _parse_codex_output(raw_json: str) -> dict:
-    """Parse the JSON output from Codex CLI.
+    """Parse the JSON output from a CLI builder.
 
-    Codex may produce multiple JSON objects or wrap output differently.
+    The builder may produce multiple JSON objects or wrap output differently.
     This tries several strategies to extract valid JSON.
     """
     raw_json = raw_json.strip()
@@ -79,7 +83,7 @@ def _parse_codex_output(raw_json: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Strategy 2: last valid JSON object in output (Codex may emit progress before JSON)
+    # Strategy 2: last valid JSON object in output (builder may emit progress before JSON)
     last_brace = raw_json.rfind("}")
     if last_brace != -1:
         first_brace = raw_json.rfind("{", 0, last_brace)
@@ -105,9 +109,9 @@ def _parse_codex_output(raw_json: str) -> dict:
 def _extract_files_from_output(
     output: dict,
 ) -> tuple[list[str], list[str]]:
-    """Extract lists of created and modified files from Codex output.
+    """Extract lists of created and modified files from builder output.
 
-    Codex output format may vary; this handles common structures.
+    Builder output format may vary; this handles common structures.
     """
     created: list[str] = []
     modified: list[str] = []
@@ -147,7 +151,7 @@ def _extract_files_from_output(
 
 
 def _extract_test_results(output: dict) -> dict:
-    """Extract test result summary from Codex output."""
+    """Extract test result summary from builder output."""
     if "test_results" in output:
         return output["test_results"]
 
@@ -158,7 +162,7 @@ def _extract_test_results(output: dict) -> dict:
 
 
 def _extract_errors(output: dict, stderr: str) -> list[str]:
-    """Extract error messages from Codex output and stderr."""
+    """Extract error messages from builder output and stderr."""
     errors: list[str] = []
 
     if "errors" in output and isinstance(output["errors"], list):
@@ -181,29 +185,56 @@ def _extract_errors(output: dict, stderr: str) -> list[str]:
 
 
 class CodexRunner:
-    """Manages Codex CLI process execution for feature building.
+    """Manages CLI builder process execution for feature building.
 
-    Spawns Codex CLI processes with --full-auto --json flags, monitors their
-    execution, parses output, and returns structured results. Handles timeouts
-    and process crashes gracefully.
+    Supports two CLI modes:
+    - "claude" (default): Spawns Claude Code CLI processes with -p and --output-format json
+    - "codex": Spawns Codex CLI processes with --full-auto --json flags
+
+    Monitors execution, parses output, and returns structured results.
+    Handles timeouts and process crashes gracefully.
+
+    The class name is kept as CodexRunner for backward compatibility.
     """
 
     def __init__(
         self,
         timeout_seconds: float = 600.0,
         codex_binary: str = "codex",
+        cli_binary: str | None = None,
+        cli_mode: str = "claude",
+        cli_model: str = "claude-sonnet-4-6",
     ):
-        """Initialize the Codex runner.
+        """Initialize the builder runner.
 
         Args:
-            timeout_seconds: Maximum time to wait for a Codex process (default: 600s).
-            codex_binary: Path to the codex CLI binary (default: "codex").
+            timeout_seconds: Maximum time to wait for a builder process (default: 600s).
+            codex_binary: Path to the codex CLI binary (backward-compat alias for cli_binary).
+            cli_binary: Path to the CLI binary. Defaults based on cli_mode if not set.
+            cli_mode: CLI mode to use - "claude" or "codex" (default: "claude").
+            cli_model: Model to use for claude mode (default: "claude-sonnet-4-6").
 
-        Authentication is handled by the Codex CLI itself (via ``codex login``).
-        No API keys are needed here.
+        When cli_mode is "codex", authentication is handled by the Codex CLI itself
+        (via ``codex login``). When cli_mode is "claude", no separate auth is needed.
         """
         self.timeout_seconds = timeout_seconds
-        self.codex_binary = codex_binary
+        self.cli_mode = cli_mode
+        self.cli_model = cli_model
+
+        # Resolve cli_binary: explicit cli_binary > backward-compat codex_binary > mode default
+        if cli_binary is not None:
+            self.cli_binary = cli_binary
+        elif codex_binary != "codex":
+            # User explicitly set codex_binary to a custom path
+            self.cli_binary = codex_binary
+        else:
+            # Use default based on mode
+            self.cli_binary = "claude" if cli_mode == "claude" else "codex"
+
+    @property
+    def codex_binary(self) -> str:
+        """Backward-compatible property returning the CLI binary path."""
+        return self.cli_binary
 
     async def run(
         self,
@@ -213,10 +244,15 @@ class CodexRunner:
         stdout_log_path: str | None = None,
         stderr_log_path: str | None = None,
     ) -> CodexResult:
-        """Execute Codex CLI to implement a feature.
+        """Execute the CLI builder to implement a feature.
 
-        Spawns: codex exec --full-auto --json --cd {worktree_path}
-                "$(cat {prompt_path})" -o {output_path}
+        For codex mode, spawns:
+            codex exec --full-auto --json --cd {worktree_path}
+                    "$(cat {prompt_path})" -o {output_path}
+
+        For claude mode, spawns:
+            claude -p {prompt_content} --output-format json --model {cli_model}
+                   --allowedTools "Edit,Write,Bash,Read,Glob,Grep" --cd {worktree_path}
 
         Monitors stdout/stderr for progress, parses JSON output,
         and returns a structured result.
@@ -224,7 +260,7 @@ class CodexRunner:
         Args:
             prompt_path: Path to the prompt markdown file.
             worktree_path: Path to the git worktree for the feature.
-            output_path: Path to write the JSON result output.
+            output_path: Path to write the JSON result output (used by codex mode).
 
         Returns:
             CodexResult with execution details.
@@ -255,29 +291,73 @@ class CodexRunner:
         # Read the prompt content
         prompt_content = prompt_file.read_text(encoding="utf-8")
 
+        mode_label = self.cli_mode.capitalize()
         console.print(
             Panel(
-                f"[cyan]Starting Codex builder[/cyan]\n"
+                f"[cyan]Starting {mode_label} builder[/cyan]\n"
+                f"  CLI: {self.cli_binary} ({self.cli_mode} mode)\n"
                 f"  Prompt: {prompt_path}\n"
                 f"  Worktree: {worktree_path}\n"
                 f"  Output: {output_path}\n"
                 f"  Timeout: {self.timeout_seconds}s",
-                title="Codex Runner",
+                title="Builder Runner",
                 border_style="cyan",
             )
         )
 
-        # Build the command
-        cmd = [
-            self.codex_binary,
-            "exec",
-            "--full-auto",
-            "--sandbox", "danger-full-access",
-            "--json",
-            "--cd", str(worktree),
-            prompt_content,
-            "-o", str(output_file),
-        ]
+        # Build the command based on cli_mode.
+        # For large prompts (>100KB), pass via a temp file to avoid ARG_MAX limits.
+        _use_prompt_file = len(prompt_content.encode("utf-8")) > 100_000
+        if _use_prompt_file:
+            _prompt_tmp = worktree / ".nc-dev-prompt.md"
+            _prompt_tmp.parent.mkdir(parents=True, exist_ok=True)
+            _prompt_tmp.write_text(prompt_content, encoding="utf-8")
+
+        if self.cli_mode == "codex":
+            if _use_prompt_file:
+                cmd = [
+                    self.cli_binary,
+                    "exec",
+                    "--full-auto",
+                    "--sandbox", "danger-full-access",
+                    "--json",
+                    "--cd", str(worktree),
+                    f"$(cat {_prompt_tmp})",
+                    "-o", str(output_file),
+                ]
+            else:
+                cmd = [
+                    self.cli_binary,
+                    "exec",
+                    "--full-auto",
+                    "--sandbox", "danger-full-access",
+                    "--json",
+                    "--cd", str(worktree),
+                    prompt_content,
+                    "-o", str(output_file),
+                ]
+        else:
+            # claude mode
+            if _use_prompt_file:
+                cmd = [
+                    self.cli_binary,
+                    "-p", f"Read the file .nc-dev-prompt.md in the current directory for your full instructions, then follow them.",
+                    "--output-format", "json",
+                    "--model", self.cli_model,
+                    "--allowedTools",
+                    "Edit,Write,Bash,Read,Glob,Grep",
+                    "--cd", str(worktree),
+                ]
+            else:
+                cmd = [
+                    self.cli_binary,
+                    "-p", prompt_content,
+                    "--output-format", "json",
+                    "--model", self.cli_model,
+                    "--allowedTools",
+                    "Edit,Write,Bash,Read,Glob,Grep",
+                    "--cd", str(worktree),
+                ]
 
         start_time = time.monotonic()
         stdout_chunks: list[str] = []
@@ -291,12 +371,12 @@ class CodexRunner:
             )
         except FileNotFoundError:
             raise CodexRunnerError(
-                f"Codex binary not found: '{self.codex_binary}'. "
-                "Ensure the Codex CLI is installed and in PATH."
+                f"Builder CLI not found: '{self.cli_binary}'. "
+                f"Ensure the {mode_label} CLI is installed and in PATH."
             )
         except PermissionError:
             raise CodexRunnerError(
-                f"Permission denied executing: '{self.codex_binary}'. "
+                f"Permission denied executing: '{self.cli_binary}'. "
                 "Check file permissions."
             )
 
@@ -349,7 +429,7 @@ class CodexRunner:
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - start_time
             console.print(
-                f"[red]Codex process timed out after {elapsed:.1f}s. Killing...[/red]"
+                f"[red]Builder process timed out after {elapsed:.1f}s. Killing...[/red]"
             )
             process.kill()
             try:
@@ -376,18 +456,21 @@ class CodexRunner:
             for line in stderr_text.strip().split("\n")[:10]:
                 console.print(f"  [dim]{line.strip()}[/dim]")
 
-        # Try to read the output file (Codex writes JSON result here)
+        # Parse output based on mode
         raw_output: dict = {}
-        if output_file.exists():
-            try:
-                raw_output = json.loads(
-                    output_file.read_text(encoding="utf-8")
-                )
-            except (json.JSONDecodeError, OSError):
-                # Fall back to parsing stdout
+        if self.cli_mode == "codex":
+            # Codex writes JSON result to the output file
+            if output_file.exists():
+                try:
+                    raw_output = json.loads(
+                        output_file.read_text(encoding="utf-8")
+                    )
+                except (json.JSONDecodeError, OSError):
+                    raw_output = _parse_codex_output(stdout_text)
+            else:
                 raw_output = _parse_codex_output(stdout_text)
         else:
-            # No output file; parse from stdout
+            # Claude mode: parse result from stdout only (no -o support)
             raw_output = _parse_codex_output(stdout_text)
 
         # Extract structured data
@@ -422,7 +505,7 @@ class CodexRunner:
         output_path: str,
         feature_name: str = "feature",
     ) -> CodexResult:
-        """Execute Codex CLI with a live progress spinner.
+        """Execute CLI builder with a live progress spinner.
 
         Same as run() but displays a Rich live spinner while the process executes.
 
@@ -446,10 +529,10 @@ class CodexRunner:
         """Display a formatted result summary to the console."""
         if result.success:
             style = "green"
-            title = "Codex Build Succeeded"
+            title = "Builder Succeeded"
         else:
             style = "red"
-            title = "Codex Build Failed"
+            title = "Builder Failed"
 
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column("Key", style="bold")
@@ -480,14 +563,16 @@ class CodexRunner:
                 )
 
     async def check_available(self) -> bool:
-        """Check if the Codex CLI is available in PATH.
+        """Check if the CLI builder is available in PATH.
+
+        Uses ``claude --version`` for claude mode, ``codex --version`` for codex mode.
 
         Returns:
-            True if the codex binary can be found and executed.
+            True if the CLI binary can be found and executed.
         """
         try:
             process = await asyncio.create_subprocess_exec(
-                self.codex_binary, "--version",
+                self.cli_binary, "--version",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -495,24 +580,35 @@ class CodexRunner:
                 process.communicate(), timeout=10.0
             )
             version = stdout_bytes.decode("utf-8", errors="replace").strip()
-            console.print(f"[green]Codex CLI available:[/green] {version}")
+            mode_label = self.cli_mode.capitalize()
+            console.print(f"[green]{mode_label} CLI available:[/green] {version}")
             return True
         except (FileNotFoundError, asyncio.TimeoutError):
+            mode_label = self.cli_mode.capitalize()
             console.print(
-                f"[red]Codex CLI not available:[/red] '{self.codex_binary}' "
+                f"[red]{mode_label} CLI not available:[/red] '{self.cli_binary}' "
                 "not found in PATH."
             )
             return False
 
     async def check_authenticated(self) -> bool:
-        """Check if the Codex CLI is authenticated (via ``codex login``).
+        """Check if the CLI builder is authenticated.
+
+        For codex mode, checks via ``codex login status``.
+        For claude mode, this is a no-op that always returns True (no separate auth needed).
 
         Returns:
-            True if ``codex login status`` exits successfully.
+            True if authentication is confirmed or not required.
         """
+        if self.cli_mode == "claude":
+            # Claude CLI does not need separate authentication
+            console.print("[green]Builder CLI (claude) does not require separate auth.[/green]")
+            return True
+
+        # Codex mode: check via codex login status
         try:
             process = await asyncio.create_subprocess_exec(
-                self.codex_binary, "login", "status",
+                self.cli_binary, "login", "status",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
