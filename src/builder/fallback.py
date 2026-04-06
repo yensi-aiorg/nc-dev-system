@@ -143,7 +143,6 @@ class SonnetRunner:
             "--model", "claude-sonnet-4-6",
             "--allowedTools",
             "Edit,Write,Bash,Read,Glob,Grep",
-            "--cd", str(wt_path),
         ]
 
         start_time = time.monotonic()
@@ -154,6 +153,7 @@ class SonnetRunner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=os.environ.copy(),
+                cwd=str(wt_path),
             )
         except FileNotFoundError:
             return CodexResult(

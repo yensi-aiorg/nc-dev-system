@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from pathlib import Path
 
 from builder.codex_runner import CodexRunner, CodexRunnerError
@@ -154,6 +155,40 @@ async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
             metadata={"runner": "codex", "target_path": str(target_repo)},
         )
 
+    # Stage artifacts into worktree for data locality
+    artifacts_dir = worktree.path / ".ncdev" / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    for artifact_path_str in job.input_artifacts:
+        src = Path(artifact_path_str)
+        if src.exists() and src.is_file():
+            shutil.copy2(src, artifacts_dir / src.name)
+
+    # Copy the request artifact into worktree too
+    request_src = Path(job.request_artifact)
+    local_request_path = worktree.path / ".ncdev" / "request.json"
+    if request_src.exists():
+        shutil.copy2(request_src, local_request_path)
+
+    # Preflight validation: ensure prompt is not abstract
+    try:
+        request_content = local_request_path.read_text(encoding="utf-8")
+        request_data = json.loads(request_content)
+        prompt_text = request_data.get("prompt", "")
+        if len(prompt_text) < 200:
+            return JobRunRecord(
+                job_id=job.job_id,
+                task_type=job.task_type,
+                provider=job.provider,
+                model=job.model,
+                status="failed",
+                summary=f"Preflight failed: prompt is too short ({len(prompt_text)} chars). Likely missing inlined context.",
+                request_artifact=job.request_artifact,
+                output_artifacts=[str(worktree.path)],
+                metadata={"runner": "codex", "failure_kind": "preflight_prompt_too_short"},
+            )
+    except Exception:
+        pass  # Non-fatal — continue with execution
+
     try:
         try:
             result = await runner.run(
@@ -189,6 +224,12 @@ async def _run_codex_job(job: ExecutionJob, run_dir: Path) -> JobRunRecord:
                 "preserved_worktree": True,
             },
         )
+
+    # Stage all changes before review so git diff works correctly
+    try:
+        await _run_git("add", "-A", cwd=worktree.path)
+    except WorktreeError:
+        pass  # Non-fatal — review will use git status fallback
 
     feature = {
         "name": job.title,

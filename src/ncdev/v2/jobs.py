@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ncdev.adapters.base import ProviderAdapter
 from ncdev.utils import write_json
+from ncdev.v2.prompt_assembler import assemble_build_prompt, assemble_repair_prompt, assemble_test_authoring_prompt
 from typing import Any
 
 from ncdev.v2.models import (
@@ -63,6 +64,32 @@ def materialize_job_queue(
 
     build_decision = routing.get(TaskType.BUILD_BATCH)
     build_dependencies: list[str] = []
+
+    # Load artifact content once for all batches (inlined into prompts)
+    _build_plan_dict = build_plan.model_dump(mode="json")
+    _target_contract_dict = target_contract.model_dump(mode="json")
+    _scaffold_manifest_dict = scaffold_manifest.model_dump(mode="json")
+    _verification_contract_dict = verification_contract.model_dump(mode="json")
+
+    _feature_map_path = outputs_dir / "feature-map.json"
+    _feature_map_dict = json.loads(_feature_map_path.read_text(encoding="utf-8")) if _feature_map_path.exists() else {}
+
+    _design_brief_path = outputs_dir / "design-brief.json"
+    _design_brief_dict = json.loads(_design_brief_path.read_text(encoding="utf-8")) if _design_brief_path.exists() else {}
+
+    # Try to load original source spec for richer context
+    _source_spec: str | None = None
+    source_pack_path = outputs_dir / "source-pack.json"
+    if source_pack_path.exists():
+        source_pack = json.loads(source_pack_path.read_text(encoding="utf-8"))
+        # The source pack may contain the original spec content
+        _source_spec = source_pack.get("raw_content") or source_pack.get("content")
+    # Also try the normalized source
+    source_norm_path = outputs_dir / "source-pack-normalized.json"
+    if not _source_spec and source_norm_path.exists():
+        source_norm = json.loads(source_norm_path.read_text(encoding="utf-8"))
+        _source_spec = source_norm.get("content") or source_norm.get("raw_content")
+
     if build_decision and build_decision.provider in registry:
         adapter = registry[build_decision.provider]
         build_inputs = [
@@ -74,38 +101,39 @@ def materialize_job_queue(
             outputs_dir / "verification-contract.json",
         ]
         for batch in build_plan.batches:
-            request = adapter.build_task_request(
+            # Assemble a CONCRETE, SELF-CONTAINED prompt with all context inlined
+            concrete_prompt = assemble_build_prompt(
+                batch_id=batch.id,
+                batch_summary=batch.summary,
+                acceptance_criteria=batch.acceptance_criteria,
+                build_plan=_build_plan_dict,
+                feature_map=_feature_map_dict,
+                design_brief=_design_brief_dict,
+                target_contract=_target_contract_dict,
+                scaffold_manifest=_scaffold_manifest_dict,
+                verification_contract=_verification_contract_dict,
+                source_spec=_source_spec,
+            )
+
+            request = TaskRequestDoc(
+                generator=f"{adapter.name()}.build_task_request",
+                source_inputs=[str(path) for path in build_inputs],
                 task_type=TaskType.BUILD_BATCH,
-                artifact_paths=build_inputs,
+                provider=adapter.name(),
                 model=build_decision.model,
-                options={"fallback_providers": build_decision.fallback_providers},
-            )
-            request.title = f"{request.title}: {batch.title}"
-            operating_mode = target_contract.operating_mode or "website_saas"
-            mode_instruction = (
-                "Follow feature-first implementation using the project's operating mode and conventions."
-                if operating_mode != "website_saas"
-                else "Follow feature-first implementation and preserve the website SaaS operating mode defaults unless the source artifacts explicitly override them."
-            )
-            request.prompt = _append_lines(
-                request.prompt,
-                [
-                    f"Batch ID: {batch.id}",
-                    f"Batch summary: {batch.summary}",
-                    f"Project type: {target_contract.target_type} (operating mode: {operating_mode})",
-                    "Work only inside the target repository referenced in the input artifacts.",
-                    mode_instruction,
-                    "Acceptance criteria:",
-                    *[f"- {criterion}" for criterion in batch.acceptance_criteria],
-                ],
-            )
-            request.metadata.update(
-                {
+                title=f"Build Batch: {batch.title}",
+                prompt=concrete_prompt,
+                input_artifacts=[str(path) for path in build_inputs],
+                expected_outputs=[],
+                fallback_providers=list(build_decision.fallback_providers),
+                metadata={
+                    "adapter": adapter.name(),
+                    "mode": "build",
                     "batch_id": batch.id,
                     "batch_title": batch.title,
                     "target_path": scaffold_manifest.target_path,
                     "required_checks": verification_contract.required_checks,
-                }
+                },
             )
             request_path = _persist_request(_job_request_path(outputs_dir, batch.id), request)
             jobs.append(

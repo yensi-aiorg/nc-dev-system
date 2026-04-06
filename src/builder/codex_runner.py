@@ -321,7 +321,6 @@ class CodexRunner:
                     "--full-auto",
                     "--sandbox", "danger-full-access",
                     "--json",
-                    "--cd", str(worktree),
                     f"$(cat {_prompt_tmp})",
                     "-o", str(output_file),
                 ]
@@ -332,7 +331,6 @@ class CodexRunner:
                     "--full-auto",
                     "--sandbox", "danger-full-access",
                     "--json",
-                    "--cd", str(worktree),
                     prompt_content,
                     "-o", str(output_file),
                 ]
@@ -346,7 +344,6 @@ class CodexRunner:
                     "--model", self.cli_model,
                     "--allowedTools",
                     "Edit,Write,Bash,Read,Glob,Grep",
-                    "--cd", str(worktree),
                 ]
             else:
                 cmd = [
@@ -356,7 +353,6 @@ class CodexRunner:
                     "--model", self.cli_model,
                     "--allowedTools",
                     "Edit,Write,Bash,Read,Glob,Grep",
-                    "--cd", str(worktree),
                 ]
 
         start_time = time.monotonic()
@@ -368,6 +364,7 @@ class CodexRunner:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=str(worktree),
             )
         except FileNotFoundError:
             raise CodexRunnerError(

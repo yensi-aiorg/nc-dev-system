@@ -76,7 +76,8 @@ def test_codex_adapter_run_task_writes_result_artifact(tmp_path: Path) -> None:
     assert str(result_path) in result.artifact_paths
     called_cmd = mock_run.call_args.args[0]
     assert called_cmd[:6] == ["codex", "exec", "--full-auto", "--sandbox", "danger-full-access", "--json"]
-    assert "--cd" in called_cmd
+    # --cd was replaced with cwd= parameter in subprocess.run
+    assert "cwd" in mock_run.call_args.kwargs or mock_run.call_args.kwargs.get("cwd") is not None
 
 
 def test_claude_adapter_timeout_is_classified(tmp_path: Path) -> None:

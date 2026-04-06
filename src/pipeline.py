@@ -617,11 +617,11 @@ class Pipeline:
             ensure_dir(self.config.results_dir)
 
             builder_cmd = (
+                f'cd "{self.config.output_dir}" && '
                 f'claude -p "$(cat {prompt_path})" '
                 f'--output-format json '
                 f'--model claude-sonnet-4-6 '
                 f'--allowedTools "Edit,Write,Bash,Read,Glob,Grep" '
-                f'--cd "{self.config.output_dir}" '
             )
 
             returncode, stdout, stderr = await run_command(

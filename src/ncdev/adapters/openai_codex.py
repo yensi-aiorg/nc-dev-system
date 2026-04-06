@@ -167,8 +167,7 @@ class OpenAICodexAdapter(ProviderAdapter):
             "--json",
         ]
         target_path = str(options.get("target_path", "")).strip()
-        if target_path:
-            cmd.extend(["--cd", target_path])
+        run_cwd = target_path if target_path else None
         cmd.append(prompt)
         if result_path is not None:
             result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -182,6 +181,7 @@ class OpenAICodexAdapter(ProviderAdapter):
                 text=True,
                 check=False,
                 timeout=timeout_seconds,
+                cwd=run_cwd,
             )
         except subprocess.TimeoutExpired as exc:
             return TaskExecutionResult(

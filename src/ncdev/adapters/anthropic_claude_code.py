@@ -179,8 +179,7 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
             model,
         ]
         target_path = str(options.get("target_path", "")).strip()
-        if target_path:
-            cmd.extend(["--cd", target_path])
+        run_cwd = target_path if target_path else None
 
         timeout_seconds = float(options.get("timeout_seconds", 600.0))
         try:
@@ -190,6 +189,7 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
                 text=True,
                 check=False,
                 timeout=timeout_seconds,
+                cwd=run_cwd,
             )
         except subprocess.TimeoutExpired as exc:
             return TaskExecutionResult(

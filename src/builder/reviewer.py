@@ -412,33 +412,46 @@ class BuildReviewer:
 
     async def _get_changed_files(self, worktree_path: Path) -> list[str]:
         """Get list of changed files in the worktree."""
+        # Try staged files first (after git add -A)
+        exit_code, stdout, _ = await _run_command(
+            "git", "diff", "--cached", "--name-only",
+            cwd=worktree_path,
+            timeout=30.0,
+        )
+        if exit_code == 0 and stdout.strip():
+            return [f.strip() for f in stdout.strip().split("\n") if f.strip()]
+
         # Try diff against HEAD~1
         exit_code, stdout, _ = await _run_command(
             "git", "diff", "--name-only", "HEAD~1",
             cwd=worktree_path,
             timeout=30.0,
         )
-        if exit_code != 0 or not stdout.strip():
-            # Fall back to diff against main
-            exit_code, stdout, _ = await _run_command(
-                "git", "diff", "--name-only", "main",
-                cwd=worktree_path,
-                timeout=30.0,
-            )
-        if exit_code != 0 or not stdout.strip():
-            # Last resort: show untracked + modified files
-            exit_code, stdout, _ = await _run_command(
-                "git", "status", "--porcelain",
-                cwd=worktree_path,
-                timeout=30.0,
-            )
-            if stdout:
-                return [
-                    line[3:].strip()
-                    for line in stdout.split("\n")
-                    if line.strip()
-                ]
-            return []
+        if exit_code == 0 and stdout.strip():
+            return [f.strip() for f in stdout.strip().split("\n") if f.strip()]
+
+        # Fall back to diff against main
+        exit_code, stdout, _ = await _run_command(
+            "git", "diff", "--name-only", "main",
+            cwd=worktree_path,
+            timeout=30.0,
+        )
+        if exit_code == 0 and stdout.strip():
+            return [f.strip() for f in stdout.strip().split("\n") if f.strip()]
+
+        # Last resort: show untracked + modified files
+        exit_code, stdout, _ = await _run_command(
+            "git", "status", "--porcelain",
+            cwd=worktree_path,
+            timeout=30.0,
+        )
+        if stdout:
+            return [
+                line[3:].strip()
+                for line in stdout.split("\n")
+                if line.strip()
+            ]
+        return []
 
         return [f.strip() for f in stdout.split("\n") if f.strip()]
 
@@ -586,9 +599,17 @@ class BuildReviewer:
         """Scan changed files for prohibited code patterns.
 
         Only scans files with recognized source code extensions.
+        Skips vendored/dependency directories automatically.
         Returns a list of issues found.
         """
         issues: list[ReviewIssue] = []
+
+        # Directories that contain vendored/third-party code — never scan
+        _SKIP_DIRS = {
+            ".venv", "venv", "node_modules", ".pytest_cache",
+            ".ruff_cache", ".mypy_cache", ".tox", "site-packages",
+            ".egg-info", "dist", "__pycache__", ".git",
+        }
 
         # Config files where console.log and pass are legitimate
         _CONFIG_BASENAMES = {
@@ -600,6 +621,11 @@ class BuildReviewer:
         }
 
         for rel_path in changed_files:
+            # Skip vendored/dependency directories
+            path_parts = Path(rel_path).parts
+            if any(part in _SKIP_DIRS or part.endswith(".egg-info") for part in path_parts):
+                continue
+
             full_path = worktree_path / rel_path
             if not full_path.exists() or not full_path.is_file():
                 continue
