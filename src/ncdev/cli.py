@@ -29,6 +29,7 @@ from ncdev.v2.engine import (
     summarize_v2_status,
 )
 from ncdev.v2.ui import watch_run_dashboard
+from ncdev.v3.engine import run_v3_full
 
 console = Console()
 
@@ -218,6 +219,17 @@ def build_parser() -> argparse.ArgumentParser:
     full_v2.add_argument("--dry-run", action="store_true", help="Do not invoke provider CLIs or test/browser commands")
     full_v2.add_argument("--repair-cycles", type=int, default=1)
     full_v2.add_argument("--ui", choices=["headless", "headed"], default="headless")
+
+    # --- V3: Sequential Verified Sprint Engine ---
+    full_v3 = sub.add_parser("full-v3", help="Run the V3 sequential verified sprint pipeline")
+    full_v3.add_argument("--source", required=True, help="Path to source requirements or spec")
+    full_v3.add_argument("--target-repo", default=None, help="Existing target repository")
+    full_v3.add_argument("--workspace", default=None)
+    full_v3.add_argument("--base-url", default="http://localhost:23000")
+    full_v3.add_argument("--dry-run", action="store_true", help="Do not invoke builders")
+    full_v3.add_argument("--model", default="sonnet", choices=["opus", "sonnet", "haiku"], help="Builder model")
+    full_v3.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
+    full_v3.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
 
     # --- Sentinel Fix Mode ---
     fix_parser = sub.add_parser("fix", help="Fix a production error from a Sentinel report")
@@ -431,6 +443,24 @@ def main() -> int:
         console.print(summarize_v2_status(state))
         console.print(f"run_dir={state.run_dir}")
         return 0
+
+    if args.command == "full-v3":
+        workspace = _workspace(args.workspace)
+        target_repo = _resolve_target_repo(args.target_repo, workspace)
+        state = run_v3_full(
+            workspace=workspace,
+            source_path=Path(args.source).resolve(),
+            base_url=args.base_url,
+            dry_run=bool(args.dry_run),
+            target_repo_path=target_repo,
+            builder_model=args.model,
+            builder_timeout=args.timeout,
+            max_repair_attempts=args.max_repairs,
+        )
+        console.print(f"run_id={state.run_id} status={state.status}")
+        console.print(f"features: {state.completed_features}/{state.total_features} passed")
+        console.print(f"run_dir={state.run_dir}")
+        return 0 if state.status == "passed" else 1
 
     if args.command == "fix":
         workspace = _workspace(args.workspace)
