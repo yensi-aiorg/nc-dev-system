@@ -247,12 +247,35 @@ def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
 3. Verify ALL screenshots show working UI (no errors, no blank pages)
 4. Commit all changes
 
+## DATA FLOW METHODOLOGY — Build understanding as you build code
+
+As you implement each feature, create a data flow document at `.ncdev/flows/<flow-name>.json`.
+
+WHY: These data flows become the basis for comprehensive multi-actor end-to-end tests. When you later fix a bug, the flows tell you what else might break. They are NOT documentation for humans — they are machine-readable context that you (and future AI sessions) will query to understand the system.
+
+Each flow document must capture:
+- **flow_id**: unique name (e.g., "task_creation", "user_login")
+- **actor**: which user role triggers this flow
+- **input**: what data enters and from where
+- **steps**: each boundary the data crosses (frontend→API, API→DB, system→email)
+- **output**: what the user sees, what's stored, what side effects happen
+- **related_flows**: which other flows share data entities with this one
+- **test_scenario**: setup, action, and assertions to verify this flow works
+
+After building all features, generate end-to-end tests that:
+- Create multiple user accounts with different roles
+- Each role executes their permitted flows
+- Verify that one role's actions correctly appear to other roles
+- Test the COMPLETE data path (UI → API → DB → back to UI)
+- Use real inputs (not mocks) — real PDFs, real form data, real API calls
+
 ## CRITICAL RULES
 - Execute immediately. No questions. No options. Just build.
 - Backend MUST have tests. Run them. They MUST pass.
 - Frontend MUST follow the design archetype. No generic UIs.
 - Screenshots MUST show working features. If they show errors, FIX and re-capture.
 - The API proxy MUST work — frontend calls /api/* which proxies to the backend.
+- Data flows MUST be documented as you build. They drive your test strategy.
 """
 
     # Save the full context to a file so Claude can read it (avoids ARG_MAX limits)
