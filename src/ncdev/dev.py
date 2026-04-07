@@ -146,12 +146,62 @@ GUARDRAILS = """
 If you cannot satisfy ALL 5 guardrails, the task is NOT done. Go back and fix it.
 """
 
+FRONTEND_METHODOLOGY = """
+## Frontend Development Methodology — MANDATORY for any project with a UI
+
+### Design-First Approach
+NEVER write generic frontend code. Every UI must have a clear design identity.
+
+### Step 1: Choose a Design Archetype
+Pick ONE and commit. Every design decision must pass: "Would [reference brand] do this?"
+
+1. **Cinematic Minimalism** (Apple) — massive whitespace, product-as-hero, typography-driven. Fonts: SF Pro, Playfair Display. Colors: near-monochrome + one accent.
+2. **Technical Elegance** (Stripe) — gradient meshes, deep purples/blues, geometric illustrations. Fonts: GT Walsheim, Sohne, Satoshi. Colors: jewel tones, luminous gradients.
+3. **Opinionated Darkness** (Linear) — dark mode default (#0A0A0A), ultra-tight typography, razor edges, glassmorphism. Fonts: Manrope, General Sans, Geist (NOT Inter). Single luminous accent.
+4. **Warm Playfulness** (Notion) — hand-drawn illustrations, warm pastels, friendly. Fonts: Nunito, Quicksand, Plus Jakarta Sans. Colors: peach, soft yellow, cream, sage.
+5. **Developer Brutalism** (Vercel) — black/white, monospace, code-as-design. Fonts: JetBrains Mono, Fira Code. Colors: pure black + white, maybe one neon accent.
+6. **Bold Brand Photography** (Brex) — real people, strong signature color, 3D renders. Fonts: Clash Display, Cabinet Grotesk. One dominant brand color everywhere.
+
+### ANTI-PATTERNS — NEVER do these:
+- Inter font + purple gradient + white bg + rounded cards = "AI Average" (FORGETTABLE)
+- Standard Tailwind UI/shadcn defaults without customization = "Template Look"
+- Default blue (#3B82F6), default purple (#8B5CF6), default green (#22C55E) = AI defaults
+- Mixing archetypes = chaos
+
+### Step 2: Create Design System
+Before writing components, create `docs/design-system/` with:
+- Color palette (primary, secondary, surface, text, accent, error colors)
+- Typography (font families, sizes, weights, line heights)
+- Spacing scale
+- Component patterns (buttons, cards, inputs, navigation)
+- Implement in tailwind.config.ts
+
+### Step 3: Build Components from Design System
+- Every component MUST reference the design system
+- Use the chosen font (install via Google Fonts or local)
+- Use the chosen color palette — NO generic grays
+- Buttons, cards, inputs must follow the archetype's style
+- Sidebar + content layouts: independent scroll, sticky headers
+
+### Step 4: Verify Visually
+- Boot the frontend dev server
+- Take Playwright screenshots of each page
+- Verify the design matches the chosen archetype
+- Check: does this look like [reference brand]? If not, fix it.
+
+### Key UX Principles
+- Sidebars with lists MUST have their own scroll bar (no full-page scroll)
+- Clicking a list item shows detail immediately (no scrolling to find content)
+- Section titles stay visible (sticky headers in scrollable containers)
+- Dark mode: use actual dark backgrounds, not just gray (#0A0A0A or #080F1E, not #374151)
+"""
+
 
 # ── AI Invocation ───────────────────────────────────────────────────────
 
 def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
     """Invoke Claude CLI + Codex CLI together to plan the approach."""
-    planning_prompt = f"""You are working on the project at {project_path}.
+    planning_prompt = f"""You are an autonomous senior software engineer working on {project_path}.
 
 ## Task
 {task}
@@ -161,30 +211,61 @@ def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
 
 {GUARDRAILS}
 
-## Your Job Right Now
-1. Analyze the project and the task.
-2. Plan your approach — what will you build, in what order?
-3. Plan your test strategy — how will you prove each piece works?
-4. Consider how this fits with the existing system (if any).
-5. Start implementing. Build incrementally — one small piece at a time.
-6. After EACH piece: run tests, check for errors, take screenshots with Playwright if there's a UI.
-7. When done: verify ALL existing tests still pass, take final screenshots, produce evidence.
+{FRONTEND_METHODOLOGY}
 
-IMPORTANT: You have Bash, Read, Write, Edit, Glob, Grep tools. USE Bash to:
+## How to Work
+Think like a senior developer. Plan before coding. Test everything.
+
+1. READ the project first — understand what exists before changing anything.
+2. PLAN your approach and your test strategy BEFORE writing code.
+3. Build ONE feature at a time — get it working, tested, and verified before moving on.
+4. For the backend: write the API, write tests, run tests, verify they pass.
+5. For the frontend: choose a design archetype, create a design system, build beautiful components.
+6. After EACH feature: run ALL tests, boot the app, take Playwright screenshots.
+7. When done: verify the FULL integration works end-to-end.
+
+## Tools Available
+You have Bash, Read, Write, Edit, Glob, Grep. USE Bash to:
+- Install dependencies (pip install, npm install)
 - Run tests (pytest, vitest, npm test)
-- Boot the app and check it works
-- Run Playwright for screenshots
-- Check for import errors
-- Verify the full integration
+- Boot the app (uvicorn, npm run dev)
+- Install and run Playwright for screenshots
+- Check for errors (import checks, lint)
 
-Do NOT just write code and claim it works. PROVE it works by running it.
+## Build Order for Full-Stack Projects
+1. Backend scaffold: FastAPI app, health endpoint, config, database connection
+2. Backend models + routes: one feature at a time with tests
+3. Frontend scaffold: Vite + React + Tailwind + design system from chosen archetype
+4. Frontend pages: build from design system, connect to API
+5. Docker Compose: tie it all together
+6. Integration test: boot everything, verify end-to-end
+7. Screenshots: capture every page with Playwright
+
+## CRITICAL
+- Do NOT write generic gray UIs. Follow the design archetype.
+- Do NOT skip tests. Every API endpoint needs a test.
+- Do NOT claim done without running the app and seeing it work.
+- PROVE everything with Playwright screenshots in .ncdev/evidence/screenshots/
 """
+
+    # Save the full context to a file so Claude can read it (avoids ARG_MAX limits)
+    context_dir = project_path / ".ncdev"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    context_file = context_dir / "build-instructions.md"
+    context_file.write_text(planning_prompt, encoding="utf-8")
+
+    # Give Claude a short prompt that tells it to read the instructions file
+    short_prompt = (
+        f"Read the file .ncdev/build-instructions.md in this directory for your complete task instructions. "
+        f"Follow every instruction in that file precisely. Build the project, run tests, take screenshots. "
+        f"The task is: {task}"
+    )
 
     # Run Claude CLI as the primary builder
     console.print("[cyan]Invoking Claude CLI...[/cyan]")
     result = subprocess.run(
         [
-            "claude", "-p", planning_prompt,
+            "claude", "-p", short_prompt,
             "--output-format", "text",
             "--model", "claude-sonnet-4-6",
             "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep",
@@ -200,30 +281,31 @@ Do NOT just write code and claim it works. PROVE it works by running it.
 
 def invoke_codex_parallel(context: str, task: str, project_path: Path) -> str:
     """Invoke Codex CLI for parallel/supporting work."""
-    codex_prompt = f"""You are working on the project at {project_path}.
+    # Save context to file for Codex too
+    context_file = project_path / ".ncdev" / "build-instructions.md"
+    if not context_file.exists():
+        context_dir = project_path / ".ncdev"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        codex_prompt_full = f"## Task\n{task}\n\n## Project Context\n{context}\n\n{GUARDRAILS}\n\n{FRONTEND_METHODOLOGY}"
+        context_file.write_text(codex_prompt_full, encoding="utf-8")
 
-## Task
-{task}
-
-## Project Context
-{context}
-
-{GUARDRAILS}
-
-Implement the task. Run tests after implementation. Fix any failures.
-"""
+    short_prompt = (
+        f"Read the file .ncdev/build-instructions.md for your complete task instructions. "
+        f"Follow every instruction precisely. Build the project, run tests, take screenshots. "
+        f"The task is: {task}"
+    )
 
     console.print("[yellow]Invoking Codex CLI...[/yellow]")
     try:
         result = subprocess.run(
             [
                 "codex", "exec", "--full-auto",
-                codex_prompt,
+                short_prompt,
             ],
             cwd=str(project_path),
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=900,  # 15 min
         )
         return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
     except Exception as e:
@@ -276,7 +358,7 @@ Focus on SHOWING the working product, not explaining code.
         cwd=str(project_path),
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=600,  # 10 min for video generation
     )
 
     video_path = evidence_dir / "report.webm"
