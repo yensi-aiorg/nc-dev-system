@@ -196,6 +196,100 @@ Before writing components, create `docs/design-system/` with:
 - Dark mode: use actual dark backgrounds, not just gray (#0A0A0A or #080F1E, not #374151)
 """
 
+QUALITY_STANDARDS = """
+## Quality Standards — Build software that is TRULY done
+
+### 1. State Management Testing
+Test state transitions, not just happy paths:
+- What happens when two users edit the same resource simultaneously?
+- What happens when the user clicks submit twice?
+- What happens when a session expires mid-operation?
+Test the transitions between states — that's where bugs hide.
+
+### 2. Error Path Coverage
+For EVERY data flow, test the error paths:
+- Missing required fields (validation)
+- Oversized inputs (limits)
+- Database unavailable (resilience)
+- XSS/injection attempts in text fields (security)
+- Unauthenticated requests (auth)
+- Unauthorized requests (wrong role)
+For every happy path test, write at least 2 error path tests.
+
+### 3. Performance Baselines
+Measure and flag slow operations:
+- API endpoints should respond in <500ms
+- Pages should render in <2s
+- Database queries should use indexes, not collection scans
+Use `time` in Bash to measure. Flag anything slow.
+
+### 4. Dependency Verification
+- Lock exact versions (pip freeze > requirements.lock, package-lock.json)
+- Run `npm audit` and `pip-audit` if available
+- Document all dependencies in requirements.txt / package.json
+- Verify clean install: `pip install -r requirements.txt` must work from scratch
+
+### 5. Docker Verification
+- The project MUST build and run in Docker
+- `docker compose build` must succeed
+- `docker compose up` must produce a healthy system
+- Run the same tests inside Docker to catch environment issues
+- No hardcoded paths or localhost assumptions that break in containers
+
+### 6. Documentation Verification
+- OpenAPI spec (FastAPI auto-generates this) — verify it's accessible at /docs
+- .env.example MUST list ALL required environment variables with descriptions
+- Every MongoDB collection has a corresponding Pydantic model
+- README.md explains how to run the project locally and in Docker
+
+### 7. Graceful Degradation
+- Health endpoint should check dependencies (DB, Redis) and report status
+- App should boot even if non-critical services are unavailable
+- Missing API keys should produce clear error messages, not crashes
+- Test: start with broken configs, verify graceful error handling
+
+### 8. Seed Data Quality
+- Seed data MUST cover all statuses/states in the system
+- Include edge cases: long text, unicode, empty optional fields
+- Represent multiple user roles
+- Make seed data realistic — names, descriptions, dates that look real
+- Screenshots should show the product with good seed data
+
+### 9. Idempotency
+- Running the build again should not break what exists
+- Database seeds should check before inserting (no duplicate data)
+- File creation should not overwrite without reason
+- Support incremental work — adding features to existing code
+
+### 10. Observability from Day One
+- Use structured logging (Python: `logging` module, not `print()`)
+- Add request/response logging middleware to FastAPI
+- Log unhandled exceptions with full stack traces
+- Health endpoint MUST check all dependencies:
+  GET /api/health → {"status": "ok", "database": "connected", "version": "0.1.0"}
+"""
+
+INFRASTRUCTURE_STANDARDS = """
+## Infrastructure Integration
+
+### Keystone Integration
+Every project built by NC Dev System should be designed to integrate with Keystone infrastructure:
+- Auth: Keycloak (Keystone provides this on port 15703)
+- Logging: structured logs compatible with Grafana/Loki
+- Monitoring: health endpoints compatible with Prometheus
+- Analytics: events compatible with PostHog
+- Reverse proxy: Traefik labels for routing
+
+For now, include Keystone integration POINTS (health endpoint, structured logging, auth middleware) but don't require Keystone to be running. The app should work standalone AND with Keystone.
+
+### Git & GitHub Standards
+- Use `gh` CLI to create GitHub repos for new projects: `gh repo create yensi-solutions/{name} --private`
+- NEVER make merge commits — always rebase: `git config pull.rebase true`
+- Every commit must be atomic and descriptive: "feat(tasks): add CRUD endpoints with validation"
+- Use conventional commits: feat, fix, docs, test, refactor, chore
+- Commit after each verified feature — not one giant commit at the end
+- Label commits with NC Dev System: include "Built by NC Dev System" in commit body
+"""
 
 # ── AI Invocation ───────────────────────────────────────────────────────
 
@@ -245,7 +339,11 @@ def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
 1. Run ALL backend tests
 2. Run ALL frontend tests
 3. Verify ALL screenshots show working UI (no errors, no blank pages)
-4. Commit all changes
+4. Commit all changes with conventional commit messages (feat, fix, test, etc.)
+
+{QUALITY_STANDARDS}
+
+{INFRASTRUCTURE_STANDARDS}
 
 ## DATA FLOW METHODOLOGY — Build understanding as you build code
 
@@ -441,7 +539,23 @@ def verify_guardrails(project_path: Path) -> tuple[bool, list[str]]:
         else:
             console.print(f"  [green]✓[/green] Backend boots OK")
 
-    # 4. Check for screenshots (evidence) — check all subdirs
+    # 4. Check Docker Compose builds (if exists)
+    compose_path = project_path / "docker-compose.yml"
+    if compose_path.exists():
+        result = subprocess.run(
+            ["docker", "compose", "config", "--quiet"],
+            cwd=str(project_path), capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            console.print(f"  [green]✓[/green] Docker Compose config valid")
+        else:
+            issues.append(f"Docker Compose config invalid: {result.stderr[:200]}")
+
+    # 5. Check .env.example exists
+    if not (project_path / ".env.example").exists() and not (project_path / "backend" / ".env.example").exists():
+        issues.append("Missing .env.example — all environment variables must be documented")
+
+    # 6. Check for screenshots (evidence) — check all subdirs
     evidence_dir = project_path / ".ncdev" / "evidence"
     screenshots = list(evidence_dir.rglob("*.png")) if evidence_dir.exists() else []
     # Also check frontend/e2e and other common screenshot locations
@@ -452,6 +566,49 @@ def verify_guardrails(project_path: Path) -> tuple[bool, list[str]]:
         issues.append("No screenshots captured — take Playwright screenshots of the running app")
 
     return len(issues) == 0, issues
+
+
+# ── Git & GitHub ────────────────────────────────────────────────────────
+
+def _ensure_git_repo(project_path: Path, mode: str) -> None:
+    """Ensure project has git initialized and a GitHub remote."""
+    project_name = project_path.name
+
+    # Initialize git if needed
+    if not (project_path / ".git").exists():
+        console.print(f"  [yellow]Initializing git repo...[/yellow]")
+        subprocess.run(["git", "init"], cwd=str(project_path), capture_output=True, timeout=10)
+        subprocess.run(["git", "add", "-A"], cwd=str(project_path), capture_output=True, timeout=10)
+        subprocess.run(
+            ["git", "-c", "user.name=NC Dev System", "-c", "user.email=ncdev@yensi.dev",
+             "commit", "-m", "chore: initial commit\n\nBuilt by NC Dev System", "--allow-empty"],
+            cwd=str(project_path), capture_output=True, timeout=10,
+        )
+
+    # Set rebase-only pull
+    subprocess.run(["git", "config", "pull.rebase", "true"], cwd=str(project_path), capture_output=True, timeout=5)
+
+    # Create GitHub repo for greenfield projects if no remote exists
+    if mode in ("greenfield", "auto"):
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(project_path), capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            console.print(f"  [yellow]Creating GitHub repo: yensi-solutions/{project_name}...[/yellow]")
+            gh_result = subprocess.run(
+                ["gh", "repo", "create", f"yensi-solutions/{project_name}",
+                 "--private", "--source", str(project_path), "--push"],
+                cwd=str(project_path), capture_output=True, text=True, timeout=30,
+            )
+            if gh_result.returncode == 0:
+                console.print(f"  [green]✓[/green] GitHub repo created: yensi-solutions/{project_name}")
+            else:
+                # Repo might already exist — try adding remote
+                subprocess.run(
+                    ["git", "remote", "add", "origin", f"git@github.com:yensi-solutions/{project_name}.git"],
+                    cwd=str(project_path), capture_output=True, timeout=5,
+                )
 
 
 # ── Main Entry Point ────────────────────────────────────────────────────
@@ -482,6 +639,9 @@ def run_dev(
         f"Run: {run_id}",
         border_style="cyan",
     ))
+
+    # 0. Ensure project has git + GitHub repo
+    _ensure_git_repo(project_path, mode)
 
     # 1. Gather context
     console.print("\n[bold]1. Gathering project context...[/bold]")
