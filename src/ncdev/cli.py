@@ -231,6 +231,12 @@ def build_parser() -> argparse.ArgumentParser:
     full_v3.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full_v3.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
 
+    # --- Dev Mode: The Autonomous Senior Engineer ---
+    dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
+    dev_parser.add_argument("--project", required=True, help="Path to the project directory")
+    dev_parser.add_argument("--task", required=True, help="What to build, fix, or enhance")
+    dev_parser.add_argument("--mode", default="auto", choices=["auto", "greenfield", "enhance", "bugfix"], help="Development mode")
+
     # --- Sentinel Fix Mode ---
     fix_parser = sub.add_parser("fix", help="Fix a production error from a Sentinel report")
     fix_parser.add_argument("--report", help="Path to SentinelFailureReport JSON file")
@@ -461,6 +467,16 @@ def main() -> int:
         console.print(f"features: {state.completed_features}/{state.total_features} passed")
         console.print(f"run_dir={state.run_dir}")
         return 0 if state.status == "passed" else 1
+
+    if args.command == "dev":
+        from ncdev.dev import run_dev
+        project_path = Path(args.project).resolve()
+        result = run_dev(
+            project_path=project_path,
+            task=args.task,
+            mode=args.mode,
+        )
+        return 0 if result.get("status") == "passed" else 1
 
     if args.command == "fix":
         workspace = _workspace(args.workspace)
