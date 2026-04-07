@@ -118,11 +118,11 @@ def run_v3_full(
 
     if not dry_run:
         scaffold_manifest, verification_contract = prepare_target_project(
-            run_dir=run_dir,
+            output_root=run_dir / "outputs",
+            feature_map=feature_map,
             target_contract=target_contract,
             scaffold_plan=scaffold_plan,
-            design_brief=design_brief,
-            target_repo_path=target_repo_path,
+            target_root=target_repo_path,
         )
         persist_v2_artifact(run_dir, "scaffold-manifest.json", scaffold_manifest.model_dump(mode="json"))
         persist_v2_artifact(run_dir, "verification-contract.json", verification_contract.model_dump(mode="json"))
