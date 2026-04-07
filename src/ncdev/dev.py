@@ -201,7 +201,7 @@ Before writing components, create `docs/design-system/` with:
 
 def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
     """Invoke Claude CLI + Codex CLI together to plan the approach."""
-    planning_prompt = f"""You are an autonomous senior software engineer working on {project_path}.
+    planning_prompt = f"""You are an autonomous senior software engineer. Execute immediately. Do NOT ask questions. Do NOT present options. Do NOT wait for confirmation. START BUILDING NOW.
 
 ## Task
 {task}
@@ -213,39 +213,46 @@ def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
 
 {FRONTEND_METHODOLOGY}
 
-## How to Work
-Think like a senior developer. Plan before coding. Test everything.
+## EXECUTION ORDER — Follow this exactly:
 
-1. READ the project first — understand what exists before changing anything.
-2. PLAN your approach and your test strategy BEFORE writing code.
-3. Build ONE feature at a time — get it working, tested, and verified before moving on.
-4. For the backend: write the API, write tests, run tests, verify they pass.
-5. For the frontend: choose a design archetype, create a design system, build beautiful components.
-6. After EACH feature: run ALL tests, boot the app, take Playwright screenshots.
-7. When done: verify the FULL integration works end-to-end.
+### Phase 1: Backend (do this first)
+1. Create backend/ directory with FastAPI app
+2. Add health endpoint: GET /api/health returning {{"status": "ok"}}
+3. Add all API routes from the spec, one at a time
+4. Write tests for EACH route (use pytest + httpx TestClient)
+5. Run tests: `cd backend && pip install -e ".[dev]" && python -m pytest -v`
+6. Fix any failures before moving to frontend
 
-## Tools Available
-You have Bash, Read, Write, Edit, Glob, Grep. USE Bash to:
-- Install dependencies (pip install, npm install)
-- Run tests (pytest, vitest, npm test)
-- Boot the app (uvicorn, npm run dev)
-- Install and run Playwright for screenshots
-- Check for errors (import checks, lint)
+### Phase 2: Frontend (after backend tests pass)
+1. Create frontend/ with Vite + React + TypeScript
+2. Install Tailwind CSS and configure the design system from the chosen archetype
+3. Create `docs/design-system/` with colors, fonts, spacing
+4. Build components from the design system — NOT generic gray
+5. Connect frontend to backend API (use Vite proxy: /api -> http://localhost:PORT)
+6. Run `cd frontend && npm run build` to verify it compiles
 
-## Build Order for Full-Stack Projects
-1. Backend scaffold: FastAPI app, health endpoint, config, database connection
-2. Backend models + routes: one feature at a time with tests
-3. Frontend scaffold: Vite + React + Tailwind + design system from chosen archetype
-4. Frontend pages: build from design system, connect to API
-5. Docker Compose: tie it all together
-6. Integration test: boot everything, verify end-to-end
-7. Screenshots: capture every page with Playwright
+### Phase 3: Integration
+1. Create docker-compose.yml connecting all services
+2. Mount frontend static build in FastAPI (or serve via separate container)
+3. Boot the backend: `cd backend && uvicorn app.main:app --port PORT &`
+4. Boot the frontend: `cd frontend && npx vite --port PORT &`
+5. Verify: `curl http://localhost:PORT/api/health`
+6. Install Playwright: `cd frontend && npx playwright install chromium`
+7. Take screenshots of EVERY page, save to .ncdev/evidence/screenshots/
+8. If screenshots show errors (e.g. "Failed to fetch"), FIX the issue and re-screenshot
 
-## CRITICAL
-- Do NOT write generic gray UIs. Follow the design archetype.
-- Do NOT skip tests. Every API endpoint needs a test.
-- Do NOT claim done without running the app and seeing it work.
-- PROVE everything with Playwright screenshots in .ncdev/evidence/screenshots/
+### Phase 4: Final Verification
+1. Run ALL backend tests
+2. Run ALL frontend tests
+3. Verify ALL screenshots show working UI (no errors, no blank pages)
+4. Commit all changes
+
+## CRITICAL RULES
+- Execute immediately. No questions. No options. Just build.
+- Backend MUST have tests. Run them. They MUST pass.
+- Frontend MUST follow the design archetype. No generic UIs.
+- Screenshots MUST show working features. If they show errors, FIX and re-capture.
+- The API proxy MUST work — frontend calls /api/* which proxies to the backend.
 """
 
     # Save the full context to a file so Claude can read it (avoids ARG_MAX limits)
@@ -411,11 +418,15 @@ def verify_guardrails(project_path: Path) -> tuple[bool, list[str]]:
         else:
             console.print(f"  [green]✓[/green] Backend boots OK")
 
-    # 4. Check for screenshots (evidence)
+    # 4. Check for screenshots (evidence) — check all subdirs
     evidence_dir = project_path / ".ncdev" / "evidence"
-    screenshots = list(evidence_dir.glob("*.png")) if evidence_dir.exists() else []
+    screenshots = list(evidence_dir.rglob("*.png")) if evidence_dir.exists() else []
+    # Also check frontend/e2e and other common screenshot locations
+    for alt_dir in [project_path / "frontend" / "e2e" / "screenshots", project_path / "screenshots"]:
+        if alt_dir.exists():
+            screenshots.extend(alt_dir.rglob("*.png"))
     if not screenshots:
-        issues.append("No screenshots captured — evidence requirement not met")
+        issues.append("No screenshots captured — take Playwright screenshots of the running app")
 
     return len(issues) == 0, issues
 
@@ -454,40 +465,60 @@ def run_dev(
     context = gather_project_context(project_path, task)
     console.print(f"  Context: {len(context)} chars from filesystem + Citex")
 
-    # 2. Invoke AI peers
-    console.print("\n[bold]2. Invoking AI peers (Claude + Codex)...[/bold]")
+    # 2. Claude builds the project
+    console.print("\n[bold]2. Claude CLI building project...[/bold]")
     claude_output = invoke_ai_planning(context, task, project_path)
     console.print(f"  Claude: {len(claude_output)} chars output")
 
-    # 3. Verify guardrails
-    console.print("\n[bold]3. Verifying guardrails...[/bold]")
-    passed, issues = verify_guardrails(project_path)
+    # 3. Fix loop — verify and fix until guardrails pass (max 3 attempts)
+    max_fix_attempts = 3
+    passed = False
+    issues = []
 
-    if not passed:
+    for attempt in range(1, max_fix_attempts + 1):
+        console.print(f"\n[bold]3. Verification pass {attempt}/{max_fix_attempts}...[/bold]")
+        passed, issues = verify_guardrails(project_path)
+
+        if passed:
+            console.print(f"  [green]All guardrails PASSED on attempt {attempt}[/green]")
+            break
+
         console.print(f"  [red]Guardrails FAILED — {len(issues)} issues[/red]")
         for issue in issues:
             console.print(f"    [red]✗[/red] {issue[:200]}")
 
-        # Let Codex try to fix guardrail failures
-        console.print("\n[bold]3b. Codex attempting guardrail fixes...[/bold]")
-        fix_context = f"The following guardrail checks FAILED:\n" + "\n".join(issues)
-        codex_output = invoke_codex_parallel(
-            context + "\n\n" + fix_context,
-            "Fix the guardrail failures listed above. Run tests, fix all failures.",
-            project_path,
-        )
+        if attempt < max_fix_attempts:
+            # Alternate between Claude and Codex for fixes
+            if attempt % 2 == 1:
+                console.print(f"\n  [yellow]Codex fixing (attempt {attempt})...[/yellow]")
+                fix_context = f"The following checks FAILED. Fix them ALL:\n" + "\n".join(issues)
+                fix_context += "\n\nRead .ncdev/build-instructions.md for the full project requirements."
+                invoke_codex_parallel(
+                    context + "\n\n" + fix_context,
+                    f"Fix these failures: {'; '.join(i[:100] for i in issues)}",
+                    project_path,
+                )
+            else:
+                console.print(f"\n  [cyan]Claude fixing (attempt {attempt})...[/cyan]")
+                fix_prompt = (
+                    f"Read .ncdev/build-instructions.md. The following guardrail checks FAILED:\n"
+                    + "\n".join(issues)
+                    + "\n\nFix ALL issues. Run tests. Take screenshots. Do NOT ask questions."
+                )
+                subprocess.run(
+                    ["claude", "-p", fix_prompt, "--output-format", "text",
+                     "--model", "claude-sonnet-4-6",
+                     "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep"],
+                    cwd=str(project_path), capture_output=True, text=True, timeout=600,
+                )
 
-        # Re-verify
-        passed, issues = verify_guardrails(project_path)
-        if not passed:
-            console.print(f"  [red]Guardrails still failing after Codex fix attempt[/red]")
-
+    # 4. Video report — ONLY if guardrails passed
+    video_path = None
     if passed:
-        console.print(f"  [green]All guardrails PASSED[/green]")
-
-    # 4. Generate video report
-    console.print("\n[bold]4. Generating video report...[/bold]")
-    video_path = generate_video_report(project_path, task, claude_output)
+        console.print("\n[bold]4. All checks passed — generating video report...[/bold]")
+        video_path = generate_video_report(project_path, task, claude_output)
+    else:
+        console.print("\n[bold]4. Skipping video — guardrails not passed after all attempts[/bold]")
 
     # 5. Store in Citex
     console.print("\n[bold]5. Storing context in Citex...[/bold]")
