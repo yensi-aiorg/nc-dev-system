@@ -417,7 +417,7 @@ After building all features, generate end-to-end tests that:
             cwd=str(project_path),
             capture_output=True,
             text=True,
-            timeout=300,  # 5 min — planning is fast
+            timeout=900,  # 15 min — brownfield projects need more time to read existing code
         )
         return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
     except subprocess.TimeoutExpired:
@@ -497,26 +497,36 @@ def generate_video_report(project_path: Path, task: str, results: str) -> Path |
 Focus on SHOWING the working product, not explaining code.
 """
 
-    # Codex does the actual recording work
-    result = subprocess.run(
-        [
-            "codex", "exec", "--full-auto",
-            video_prompt,
-        ],
-        cwd=str(project_path),
-        capture_output=True,
-        text=True,
-        timeout=600,  # 10 min for video generation
-    )
+    # Codex does the actual recording work — timeout is non-fatal
+    try:
+        result = subprocess.run(
+            [
+                "codex", "exec", "--full-auto",
+                video_prompt,
+            ],
+            cwd=str(project_path),
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 min for video generation
+        )
+    except subprocess.TimeoutExpired:
+        console.print("  [yellow]Video recording timed out — checking for partial evidence[/yellow]")
 
     video_path = evidence_dir / "report.webm"
-    if video_path.exists():
+    if video_path.exists() and video_path.stat().st_size > 0:
+        console.print(f"  [green]✓[/green] Video saved: {video_path}")
         return video_path
 
-    # Fallback: check for screenshots
-    screenshots = list(evidence_dir.glob("*.png"))
+    # Fallback: check for screenshots and videos in subdirs
+    screenshots = list(evidence_dir.rglob("*.png"))
+    videos = list(evidence_dir.rglob("*.webm"))
+    if videos:
+        largest = max(videos, key=lambda p: p.stat().st_size)
+        if largest.stat().st_size > 0:
+            console.print(f"  [green]✓[/green] Video found: {largest}")
+            return largest
     if screenshots:
-        console.print(f"  [yellow]Video not generated but {len(screenshots)} screenshots captured[/yellow]")
+        console.print(f"  [yellow]No video but {len(screenshots)} screenshots captured[/yellow]")
 
     return None
 
@@ -722,13 +732,17 @@ def run_dev(
                 project_path,
             )
 
-    # 4. Video report — ONLY if guardrails passed
+    # 5. Video report — ONLY if guardrails passed, and non-fatal if it fails
     video_path = None
     if passed:
-        console.print("\n[bold]4. All checks passed — generating video report...[/bold]")
-        video_path = generate_video_report(project_path, task, claude_output)
+        console.print("\n[bold]5. Generating video report (non-blocking)...[/bold]")
+        try:
+            video_path = generate_video_report(project_path, task, claude_output)
+        except Exception as exc:
+            console.print(f"  [yellow]Video generation failed: {exc} — build still counts as PASSED[/yellow]")
+            video_path = None
     else:
-        console.print("\n[bold]4. Skipping video — guardrails not passed after all attempts[/bold]")
+        console.print("\n[bold]5. Skipping video — guardrails not passed[/bold]")
 
     # 5. Store in Citex
     console.print("\n[bold]5. Storing context in Citex...[/bold]")

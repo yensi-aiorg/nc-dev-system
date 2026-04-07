@@ -237,6 +237,11 @@ def build_parser() -> argparse.ArgumentParser:
     dev_parser.add_argument("--task", required=True, help="What to build, fix, or enhance")
     dev_parser.add_argument("--mode", default="auto", choices=["auto", "greenfield", "enhance", "bugfix"], help="Development mode")
 
+    # --- Report: generate video report for an already-built project ---
+    report_parser = sub.add_parser("report", help="Generate video report for a completed project (separate from build)")
+    report_parser.add_argument("--project", required=True, help="Path to the project directory")
+    report_parser.add_argument("--task", default="", help="Description of what was built (for narration)")
+
     # --- Sentinel Fix Mode ---
     fix_parser = sub.add_parser("fix", help="Fix a production error from a Sentinel report")
     fix_parser.add_argument("--report", help="Path to SentinelFailureReport JSON file")
@@ -477,6 +482,18 @@ def main() -> int:
             mode=args.mode,
         )
         return 0 if result.get("status") == "passed" else 1
+
+    if args.command == "report":
+        from ncdev.dev import generate_video_report
+        project_path = Path(args.project).resolve()
+        task = args.task or "Project build"
+        console.print(f"[cyan]Generating video report for {project_path.name}...[/cyan]")
+        video_path = generate_video_report(project_path, task, "")
+        if video_path:
+            console.print(f"[green]Video: {video_path}[/green]")
+            return 0
+        console.print("[yellow]No video generated — check screenshots in .ncdev/evidence/[/yellow]")
+        return 0  # Non-fatal
 
     if args.command == "fix":
         workspace = _workspace(args.workspace)
