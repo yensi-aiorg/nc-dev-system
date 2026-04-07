@@ -501,7 +501,12 @@ def main() -> int:
         return 0
 
     if args.command == "serve":
-        print(f"Starting intake API on port {args.port} with {args.workers} worker(s)...")
+        from ncdev.intake_api import create_app
+        import uvicorn
+        workspace = _workspace(args.workspace)
+        app = create_app(workspace=workspace, api_key=args.api_key or "")
+        console.print(f"[cyan]Starting NC Dev intake API on port {args.port}...[/cyan]")
+        uvicorn.run(app, host="0.0.0.0", port=args.port, workers=args.workers)
         return 0
 
     parser.print_help()
