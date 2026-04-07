@@ -280,7 +280,7 @@ def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
         cwd=str(project_path),
         capture_output=True,
         text=True,
-        timeout=900,  # 15 min
+        timeout=1800,  # 30 min — full-stack builds take time
     )
 
     return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
