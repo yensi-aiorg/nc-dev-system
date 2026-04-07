@@ -406,20 +406,26 @@ After building all features, generate end-to-end tests that:
 
     # Claude PLANS only — writes the build instructions file
     console.print("[cyan]Claude planning...[/cyan]")
-    result = subprocess.run(
-        [
-            "claude", "-p", short_prompt,
-            "--output-format", "text",
-            "--model", "claude-sonnet-4-6",
-            "--allowedTools", "Read,Write,Glob,Grep",  # Read project, Write instructions only
-        ],
-        cwd=str(project_path),
-        capture_output=True,
-        text=True,
-        timeout=300,  # 5 min — planning is fast
-    )
-
-    return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
+    try:
+        result = subprocess.run(
+            [
+                "claude", "-p", short_prompt,
+                "--output-format", "text",
+                "--model", "claude-sonnet-4-6",
+                "--allowedTools", "Read,Write,Glob,Grep",  # Read project, Write instructions only
+            ],
+            cwd=str(project_path),
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 min — planning is fast
+        )
+        return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
+    except subprocess.TimeoutExpired:
+        # Claude may have written the instructions file before timing out — that's OK
+        if context_file.exists() and context_file.stat().st_size > 1000:
+            console.print("[yellow]  Claude timed out but instructions file was written — proceeding[/yellow]")
+            return "Planning completed (timeout but instructions written)"
+        return "ERROR: Claude planning timed out and no instructions were written"
 
 
 def invoke_codex_parallel(context: str, task: str, project_path: Path) -> str:
