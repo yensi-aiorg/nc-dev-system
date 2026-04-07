@@ -294,8 +294,23 @@ For now, include Keystone integration POINTS (health endpoint, structured loggin
 # ── AI Invocation ───────────────────────────────────────────────────────
 
 def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
-    """Invoke Claude CLI + Codex CLI together to plan the approach."""
-    planning_prompt = f"""You are an autonomous senior software engineer. Execute immediately. Do NOT ask questions. Do NOT present options. Do NOT wait for confirmation. START BUILDING NOW.
+    """Claude CLI PLANS the approach — writes detailed build instructions for Codex to execute."""
+    planning_prompt = f"""You are a senior software architect. Your job is to PLAN, not build.
+
+Write a detailed, actionable build plan to the file .ncdev/build-instructions.md that another developer (Codex) will follow to build the entire project. The plan must be specific enough that Codex can execute it without asking questions.
+
+DO NOT write any application code. DO NOT create project files. ONLY write the build instructions file.
+
+The instructions file must include:
+- Exact file structure to create
+- Exact API routes with request/response shapes
+- Exact data models with field types
+- Exact frontend components with layout descriptions
+- Which design archetype to follow and specific colors/fonts
+- Test strategy — what to test and how
+- Data flow descriptions
+- Docker Compose service layout
+- Environment variables needed
 
 ## Task
 {task}
@@ -389,19 +404,19 @@ After building all features, generate end-to-end tests that:
         f"The task is: {task}"
     )
 
-    # Run Claude CLI as the primary builder
-    console.print("[cyan]Invoking Claude CLI...[/cyan]")
+    # Claude PLANS only — writes the build instructions file
+    console.print("[cyan]Claude planning...[/cyan]")
     result = subprocess.run(
         [
             "claude", "-p", short_prompt,
             "--output-format", "text",
             "--model", "claude-sonnet-4-6",
-            "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep",
+            "--allowedTools", "Read,Write,Glob,Grep",  # Read project, Write instructions only
         ],
         cwd=str(project_path),
         capture_output=True,
         text=True,
-        timeout=1800,  # 30 min — full-stack builds take time
+        timeout=300,  # 5 min — planning is fast
     )
 
     return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
@@ -476,12 +491,11 @@ def generate_video_report(project_path: Path, task: str, results: str) -> Path |
 Focus on SHOWING the working product, not explaining code.
 """
 
+    # Codex does the actual recording work
     result = subprocess.run(
         [
-            "claude", "-p", video_prompt,
-            "--output-format", "text",
-            "--model", "claude-sonnet-4-6",
-            "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep",
+            "codex", "exec", "--full-auto",
+            video_prompt,
         ],
         cwd=str(project_path),
         capture_output=True,
@@ -648,37 +662,39 @@ def run_dev(
     context = gather_project_context(project_path, task)
     console.print(f"  Context: {len(context)} chars from filesystem + Citex")
 
-    # 2. Claude builds the project
-    console.print("\n[bold]2. Claude CLI building project...[/bold]")
+    # 2. Claude PLANS — writes the build instructions
+    console.print("\n[bold]2. Claude CLI planning...[/bold]")
     claude_output = invoke_ai_planning(context, task, project_path)
-    console.print(f"  Claude: {len(claude_output)} chars output")
+    console.print(f"  Claude plan: {len(claude_output)} chars")
 
-    # 2b. Codex reviews and hardens — writes additional tests, checks integration
-    console.print("\n[bold]2b. Codex CLI reviewing and hardening...[/bold]")
-    codex_review_output = invoke_codex_parallel(
-        gather_project_context(project_path, task),
+    # 3. Codex BUILDS — executes all the development work
+    console.print("\n[bold]3. Codex CLI building project...[/bold]")
+    codex_output = invoke_codex_parallel(
+        context,
         (
-            "Read .ncdev/build-instructions.md for full context. "
-            "Another developer just built this project. Your job is to REVIEW and HARDEN it:\n"
-            "1. Read all existing code and tests\n"
-            "2. Write ADDITIONAL tests for untested paths — error cases, edge cases, validation\n"
-            "3. Run ALL tests (existing + new) and fix any failures\n"
-            "4. Verify the API boots and all endpoints respond correctly\n"
-            "5. Check for missing .env.example entries, missing error handling, security issues\n"
-            "6. Take Playwright screenshots if not already captured\n"
-            "Do NOT rewrite existing code that works. ADD tests and FIX issues only."
+            "Read the file .ncdev/build-instructions.md for your complete task instructions. "
+            "Follow every instruction precisely. You are the developer — build everything:\n"
+            "- Create all backend code, models, routes, tests\n"
+            "- Create all frontend code, components, pages, styles\n"
+            "- Create Docker Compose, .env.example, documentation\n"
+            "- Create data flow documents in .ncdev/flows/\n"
+            "- Run ALL tests and fix any failures\n"
+            "- Boot the app and verify it works\n"
+            "- Take Playwright screenshots of every page\n"
+            "- Commit each feature with conventional commit messages\n\n"
+            f"The task is: {task}"
         ),
         project_path,
     )
-    console.print(f"  Codex review: {len(codex_review_output)} chars output")
+    console.print(f"  Codex build: {len(codex_output)} chars")
 
-    # 3. Fix loop — verify and fix until guardrails pass (max 3 attempts)
+    # 4. Fix loop — verify and fix until guardrails pass (max 3 attempts)
     max_fix_attempts = 3
     passed = False
     issues = []
 
     for attempt in range(1, max_fix_attempts + 1):
-        console.print(f"\n[bold]3. Verification pass {attempt}/{max_fix_attempts}...[/bold]")
+        console.print(f"\n[bold]4. Verification pass {attempt}/{max_fix_attempts}...[/bold]")
         passed, issues = verify_guardrails(project_path)
 
         if passed:
@@ -690,29 +706,15 @@ def run_dev(
             console.print(f"    [red]✗[/red] {issue[:200]}")
 
         if attempt < max_fix_attempts:
-            # Alternate between Claude and Codex for fixes
-            if attempt % 2 == 1:
-                console.print(f"\n  [yellow]Codex fixing (attempt {attempt})...[/yellow]")
-                fix_context = f"The following checks FAILED. Fix them ALL:\n" + "\n".join(issues)
-                fix_context += "\n\nRead .ncdev/build-instructions.md for the full project requirements."
-                invoke_codex_parallel(
-                    context + "\n\n" + fix_context,
-                    f"Fix these failures: {'; '.join(i[:100] for i in issues)}",
-                    project_path,
-                )
-            else:
-                console.print(f"\n  [cyan]Claude fixing (attempt {attempt})...[/cyan]")
-                fix_prompt = (
-                    f"Read .ncdev/build-instructions.md. The following guardrail checks FAILED:\n"
-                    + "\n".join(issues)
-                    + "\n\nFix ALL issues. Run tests. Take screenshots. Do NOT ask questions."
-                )
-                subprocess.run(
-                    ["claude", "-p", fix_prompt, "--output-format", "text",
-                     "--model", "claude-sonnet-4-6",
-                     "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep"],
-                    cwd=str(project_path), capture_output=True, text=True, timeout=600,
-                )
+            # Codex fixes all issues (it's the developer)
+            console.print(f"\n  [yellow]Codex fixing (attempt {attempt})...[/yellow]")
+            fix_context = f"The following checks FAILED. Fix them ALL:\n" + "\n".join(issues)
+            fix_context += "\n\nRead .ncdev/build-instructions.md for the full project requirements."
+            invoke_codex_parallel(
+                context + "\n\n" + fix_context,
+                f"Fix these failures: {'; '.join(i[:100] for i in issues)}",
+                project_path,
+            )
 
     # 4. Video report — ONLY if guardrails passed
     video_path = None
