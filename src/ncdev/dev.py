@@ -653,6 +653,25 @@ def run_dev(
     claude_output = invoke_ai_planning(context, task, project_path)
     console.print(f"  Claude: {len(claude_output)} chars output")
 
+    # 2b. Codex reviews and hardens — writes additional tests, checks integration
+    console.print("\n[bold]2b. Codex CLI reviewing and hardening...[/bold]")
+    codex_review_output = invoke_codex_parallel(
+        gather_project_context(project_path, task),
+        (
+            "Read .ncdev/build-instructions.md for full context. "
+            "Another developer just built this project. Your job is to REVIEW and HARDEN it:\n"
+            "1. Read all existing code and tests\n"
+            "2. Write ADDITIONAL tests for untested paths — error cases, edge cases, validation\n"
+            "3. Run ALL tests (existing + new) and fix any failures\n"
+            "4. Verify the API boots and all endpoints respond correctly\n"
+            "5. Check for missing .env.example entries, missing error handling, security issues\n"
+            "6. Take Playwright screenshots if not already captured\n"
+            "Do NOT rewrite existing code that works. ADD tests and FIX issues only."
+        ),
+        project_path,
+    )
+    console.print(f"  Codex review: {len(codex_review_output)} chars output")
+
     # 3. Fix loop — verify and fix until guardrails pass (max 3 attempts)
     max_fix_attempts = 3
     passed = False
