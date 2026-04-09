@@ -1,50 +1,29 @@
-# NC Dev System — Agent Topology
+# nc-dev-system
 
-## Cloud Agents (Claude Code)
+**Autonomous senior software engineer — builds, tests, deploys products**
 
-| Agent | Model | Role | Instances |
-|-------|-------|------|-----------|
-| **Team Lead** | Opus 4.6 | Orchestrator, planner, reviewer | 1 |
-| **Tester** | Sonnet 4.5 | Playwright E2E, visual verification, fallback builder | 1 |
-| **Reporter** | Sonnet 4.5 | Docs, screenshots, build report | 1 |
-| **Mock Generator** | Sonnet 4.5 | MSW handlers, pytest fixtures, factory functions | 1 |
+**Deployed:** Local (ncdev CLI)
+**Ports:** intake_api: 16650
+**Tests:** 1310 passing
+**Commands:** ncdev dev (build), ncdev report (video), ncdev serve (Sentinel intake), ncdev full-v3 (sequential sprints)
+**Strategy:** Claude plans, Codex builds. Context-driven, not pipeline-driven. 5 non-negotiable guardrails.
 
-## External Builders (OpenAI Codex)
+Recent commits:
+16784e1 fix(dev): harden pipeline — brownfield timeouts, non-fatal video, separate report cmd
+d98458a fix(dev): treat Claude planning timeout as non-fatal if instructions file exists
+010a7e8 feat(serve): wire intake API to uvicorn for Sentinel integration
+47dd45e refactor(dev): Claude plans, Codex builds — clear role separation
+c044175 feat(dev): Codex CLI as peer reviewer — writes additional tests after Claude builds
+Branch: main
 
-| Agent | Model | Role | Instances |
-|-------|-------|------|-----------|
-| **Builder** | Codex GPT 5.3 | Feature implementation in isolated worktrees | 3 parallel |
+## Related YENSI Projects
+- **sentinel**: Production monitoring & auto-fix dispatch system
+- **citebot**: AI document Q&A with visual citations — deployed as SiteBot — https://sitebot.yensi.solutions
+- **yensi-booking**: Virtual appointment scheduling SaaS for therapy/coaching — https://booking.yensi.solutions
+- **vigil**: AI operations engine — daily digest, WhatsApp bridge, CEO mode
+- **keystone**: Shared infrastructure — auth, logging, monitoring, analytics
+- **citex**: RAG engine — vector search + graph nodes + document ingestion
+- **ignition**: Autonomous co-founder pipeline — spec gen, product registry, deploy
+- **helyx**: Command center — project management, MongoDB collections, canvas
 
-Builders are Codex CLI processes spawned by the Team Lead via `codex exec --full-auto`.
-They use Codex tokens, NOT Claude tokens.
-
-## Local Agents (Ollama)
-
-| Agent | Model | VRAM | Role |
-|-------|-------|------|------|
-| **Mock Gen** | Qwen 2.5 Coder 32B | ~20GB | Structured mock API responses |
-| **Test Data** | Qwen 2.5 Coder 14B | ~9GB | Lighter coding tasks, parallel work |
-| **Vision QA** | Qwen2.5-VL 7B | ~5GB | Screenshot pre-screening |
-| **Fixture Factory** | Llama 3.1 8B | ~5GB | Bulk test data generation |
-
-## Integration Agents (MCP Servers)
-
-| Service | Port | Role |
-|---------|------|------|
-| **Playwright** | npx | Browser automation, screenshots |
-| **GitHub** | npx | Repository management |
-| **Test Crafter** | 16630 | Autonomous QA sweeps |
-| **Visual Designer** | 12101 | Reference UI mockups |
-
-## Communication Flow
-
-```
-User → Team Lead (Opus)
-         ├── Codex Builder 1 (GPT 5.3, worktree-1)
-         ├── Codex Builder 2 (GPT 5.3, worktree-2)
-         ├── Codex Builder 3 (GPT 5.3, worktree-3)
-         ├── Tester (Sonnet, Playwright + Ollama Vision)
-         ├── Mock Generator (Sonnet + Ollama)
-         └── Reporter (Sonnet)
-              └── Delivery → User
-```
+_Context synced: 2026-04-09 10:33 UTC_
