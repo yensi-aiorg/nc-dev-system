@@ -39,6 +39,7 @@ def execute_feature_step(
     max_repair_attempts: int = 2,
     builder_timeout: int = 600,
     builder_model: str = "opus",
+    project_id: str = "",
 ) -> StepResult:
     """Execute one feature step: build → verify → repair if needed → commit.
 
@@ -58,11 +59,11 @@ def execute_feature_step(
         border_style="blue",
     ))
 
-    # Build the prompt with REAL current state
+    # Build the prompt with Citex query instructions
     prompt = build_feature_prompt(
         feature=feature,
         target_path=target_path,
-        spec_content=spec_content,
+        project_id=project_id,
         prior_results=prior_results,
         stack=stack,
         design_brief=design_brief,
@@ -221,14 +222,16 @@ def _run_builder(
     _kill_orphan_processes()
 
     if use_codex and shutil.which("codex"):
-        # Primary builder: OpenAI Codex
+        # Primary builder: OpenAI Codex (GPT 5.4 Codex, medium reasoning effort)
         cmd = [
             "codex", "exec",
             "--full-auto",
             "--sandbox", "danger-full-access",
+            "-m", "gpt-5.4-codex",
+            "-c", 'reasoning_effort="medium"',
             prompt,
         ]
-        runner_label = "Codex"
+        runner_label = "Codex (gpt-5.4-codex, medium)"
     else:
         # Fallback / repair: Claude CLI
         cmd = [

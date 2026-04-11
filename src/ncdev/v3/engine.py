@@ -132,6 +132,25 @@ def run_v3_full(
     state.target_path = str(target_path)
     console.print(f"  [green]✓[/green] Target prepared at {target_path}")
 
+    # ── Phase 2.5: Context Ingestion into Citex ──────────────
+    state.phase = "ingestion"
+    console.print("\n[bold]Phase 2.5: Context Ingestion into Citex[/bold]")
+
+    from ncdev.v3.citex_client import CitexClient
+    from ncdev.v3.context_ingestion import ingest_project_context, ingest_feature_result
+
+    project_id = build_plan.project_name or target_path.name
+    citex = CitexClient(project_id=project_id)
+
+    ingestion_report = None
+    if not citex.health_check():
+        console.print("[red]ERROR: Citex RAG (localhost:20160) is required but unreachable.[/red]")
+        console.print("[red]Start Citex before running ncdev full.[/red]")
+        state.phase = "failed"
+        state.status = "failed"
+        _persist_state(state, run_dir)
+        return state
+
     # ── Phase 4: Feature Queue ────────────────────────────────
     state.phase = "queue"
     console.print("\n[bold]Phase 4: Feature Queue[/bold]")
@@ -147,6 +166,14 @@ def run_v3_full(
     console.print(f"  [green]✓[/green] {len(feature_queue.features)} features queued:")
     for f in feature_queue.features:
         console.print(f"    {f.feature_id}: {f.title}")
+
+    ingestion_report = ingest_project_context(
+        run_dir=run_dir,
+        target_path=target_path,
+        feature_queue=feature_queue,
+        project_id=project_id,
+    )
+    console.print(f"  [green]✓[/green] Ingested {ingestion_report.successful}/{ingestion_report.total_documents} documents into Citex")
 
     # ── Phase 5: Sequential Feature Execution ─────────────────
     state.phase = "building"
@@ -184,8 +211,10 @@ def run_v3_full(
                 max_repair_attempts=max_repair_attempts,
                 builder_timeout=builder_timeout,
                 builder_model=builder_model,
+                project_id=project_id,
             )
 
+            ingest_feature_result(feature, result, target_path, project_id=project_id)
             completed.append(result)
             state.completed_steps = completed
             state.completed_features = len([r for r in completed if r.status == StepStatus.PASSED])
@@ -221,6 +250,31 @@ def run_v3_full(
         f"[bold]Status:[/bold] {state.status}",
         title="V3 Complete",
         border_style="green" if state.status == "passed" else "yellow",
+    ))
+
+    # ── Metrics ───────────────────────────────────────────────
+    from ncdev.v3.metrics import compute_run_metrics
+
+    metrics = compute_run_metrics(state, ingestion_doc_count=ingestion_report.successful if ingestion_report else 0)
+    write_json(run_dir / "outputs" / "metrics.json", metrics.model_dump(mode="json"))
+
+    # Store metrics in Citex
+    citex.ingest(
+        content=metrics.model_dump_json(indent=2),
+        category="metrics",
+        metadata={"run_id": run_id},
+    )
+
+    # Display metrics panel
+    console.print(Panel(
+        f"[bold]First-Pass Success Rate:[/bold] {metrics.first_pass_success_rate:.0%} ({len([f for f in metrics.features if f.first_pass])}/{metrics.total_features})\n"
+        f"[bold]Repair Rate:[/bold]             {metrics.repair_rate:.0%}\n"
+        f"[bold]Mean Repair Attempts:[/bold]    {metrics.mean_repair_attempts:.1f}\n"
+        f"[bold]Build Efficiency:[/bold]        {metrics.build_efficiency:.0%}\n"
+        f"[bold]Feature Throughput:[/bold]      {metrics.feature_throughput_per_hour:.1f}/hr\n"
+        f"[bold]Citex Docs Ingested:[/bold]     {metrics.citex_documents_ingested}",
+        title="Build Metrics",
+        border_style="cyan",
     ))
 
     _persist_state(state, run_dir)

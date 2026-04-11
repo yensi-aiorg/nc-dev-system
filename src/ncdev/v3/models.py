@@ -120,3 +120,19 @@ class V3RunState(BaseModel):
     total_features: int = 0
     completed_features: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IngestionRecord(BaseModel):
+    """One document ingested into Citex."""
+    category: str
+    char_count: int
+    success: bool
+
+
+class IngestionReport(BaseModel):
+    """Summary of context ingestion into Citex."""
+    project_id: str
+    total_documents: int = 0
+    successful: int = 0
+    failed: int = 0
+    records: list[IngestionRecord] = Field(default_factory=list)

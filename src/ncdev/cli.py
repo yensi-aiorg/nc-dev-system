@@ -72,8 +72,11 @@ def _doctor_report(workspace: Path) -> tuple[bool, str]:
         status = "ok" if cmd not in core.missing else "missing"
         lines.append(f"- {cmd}: {status}")
     lines.append("")
+    from ncdev.preflight import check_citex
+    citex_ok = check_citex()
     lines.append("Optional:")
     lines.append(f"- docker: {'ok' if docker_path else 'missing'}")
+    lines.append(f"- citex (localhost:20160): {'ok' if citex_ok else 'not running'}")
     lines.append("")
     if core.ok:
         lines.append("Result: ready")

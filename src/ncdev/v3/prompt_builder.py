@@ -16,120 +16,76 @@ from ncdev.v3.models import FeatureStep, StepResult
 def build_feature_prompt(
     feature: FeatureStep,
     target_path: Path,
-    spec_content: str,
-    prior_results: list[StepResult],
+    project_id: str = "",
+    citex_api: str = "http://localhost:20160",
+    spec_content: str = "",
+    prior_results: list[StepResult] | None = None,
     stack: dict | None = None,
     design_brief: dict | None = None,
 ) -> str:
-    """Build a complete, context-aware prompt for implementing one feature.
+    """Build a lean prompt with Citex query instructions.
 
-    This reads the ACTUAL current state of the project — not cached manifests.
+    Codex gets told WHAT to build and WHERE to find context.
+    It pulls what it needs from Citex during its build session.
     """
-    # Read the real file tree
-    file_tree = _get_file_tree(target_path)
-    recent_changes = _get_recent_changes(target_path)
+    citex_curl = (
+        f'curl -s -X POST {citex_api}/api/v1/retrieval/query '
+        f'-H "Content-Type: application/json" '
+        f'-d \'{{"project_id": "{project_id}", "query": "YOUR_QUERY", "limit": 5}}\' '
+        f'| python3 -c "import sys,json; [print(d.get(\'content\',\'\')) for d in json.load(sys.stdin).get(\'results\',[])]"'
+    )
+
+    prior_summary = ""
+    if prior_results:
+        passed = [r for r in prior_results if r.status.value == "passed"]
+        if passed:
+            last = passed[-1]
+            prior_summary = f"\nThe last completed feature was **{last.feature_id}** ({len(last.files_created)} files created). Query Citex for 'prior feature {last.feature_id}' to see integration points.\n"
 
     parts = [
-        f"# Implement: {feature.title}",
-        f"**Feature ID:** {feature.feature_id}",
+        f"# Build: {feature.title}",
         "",
-        "## What You Must Do",
+        "## Your Task",
         feature.description,
         "",
-        "### Acceptance Criteria",
+        "## Acceptance Criteria",
         *[f"- {c}" for c in feature.acceptance_criteria],
         "",
-        "### Test Requirements",
-        *[f"- {t}" for t in feature.test_requirements],
+        "## Context Retrieval",
+        f"You have access to a project knowledge base. Query it for any context you need.",
         "",
+        "### How to query",
+        "```bash",
+        citex_curl,
+        "```",
+        "",
+        "### What to query for",
+        '- "design tokens colors typography" — before writing any UI',
+        '- "existing API routes and schemas" — before adding endpoints',
+        '- "data models and MongoDB schemas" — before creating models',
+        '- "frontend store patterns" — before adding Zustand stores',
+        '- "service layer patterns" — before adding backend services',
+        '- "test patterns and fixtures" — before writing tests',
+        '- "architectural constraints and conventions" — before structural decisions',
     ]
 
-    # Include the original spec (capped but generous)
-    if spec_content:
-        parts.extend([
-            "## Product Specification",
-            "```markdown",
-            spec_content[:20000],
-            "```",
-            "",
-        ])
+    if prior_summary:
+        parts.append(prior_summary)
 
-    # Include the ACTUAL current project state
-    if file_tree:
-        parts.extend([
-            "## Current Project State",
-            "These files already exist in the project. READ them before writing new code.",
-            "Build ON TOP of what exists — do not rewrite working code.",
-            "```",
-            file_tree[:5000],
-            "```",
-            "",
-        ])
-
-    # Include what was built in prior steps
-    if prior_results:
-        parts.extend([
-            "## Previously Completed Features",
-        ])
-        for pr in prior_results:
-            if pr.status.value == "passed":
-                parts.append(f"- **{pr.feature_id}**: {len(pr.files_created)} files created, {len(pr.files_modified)} modified")
-        parts.append("")
-
-    # Include recent git changes for context
-    if recent_changes:
-        parts.extend([
-            "## Recent Changes (git log)",
-            "```",
-            recent_changes[:2000],
-            "```",
-            "",
-        ])
-
-    # Stack info
-    if stack:
-        parts.extend([
-            "## Tech Stack",
-            f"```json\n{json.dumps(stack, indent=2)}\n```",
-            "",
-        ])
-
-    # Design brief (condensed)
-    if design_brief:
-        traits = design_brief.get("design_traits", [])
-        if traits:
-            parts.extend([
-                "## Design Traits",
-                *[f"- {t}" for t in traits[:10]],
-                "",
-            ])
-
-    # Conventions
     parts.extend([
-        "## Conventions",
-        "- Backend: Python/FastAPI, Pydantic v2 models, MongoDB via motor/pymongo",
-        "- Frontend: React 19 + TypeScript + Vite + Tailwind CSS",
-        "- Auth: JWT tokens from Keycloak (support dev: prefix tokens for development)",
-        "- All API routes under /api/ prefix",
-        "- Health endpoint: GET /api/health returning {\"status\": \"ok\"}",
-        "- Error responses: {\"detail\": \"message\"} with appropriate HTTP status",
         "",
-        "## CRITICAL: Verification Protocol",
-        "After implementing the feature, you MUST do the following:",
-        "1. Run backend tests: `cd backend && python -m pytest -q` (fix any failures)",
-        "2. Run frontend tests: `cd frontend && npx vitest run` (fix any failures)",
-        "3. Verify the backend boots: `cd backend && timeout 10 python -c \"from app.main import app; print('OK')\"` ",
-        "4. If you created new test files, run them individually to confirm they pass.",
-        "5. Fix ALL test failures and import errors before finishing.",
+        "## Verification Protocol",
+        "After implementing:",
+        "1. Run backend tests: `cd backend && python -m pytest -q`",
+        "2. Run frontend tests: `cd frontend && npx vitest run`",
+        "3. Verify backend boots: `cd backend && python -c \"from app.main import app; print('OK')\"`",
+        "4. Fix ALL failures before finishing.",
         "",
-        "## Execution Instructions",
-        "1. You are running inside the project root directory.",
-        "2. READ existing files first to understand what's already built.",
-        "3. BUILD on top of existing code — do NOT rewrite things that work.",
-        "4. Write tests alongside your code — not as an afterthought.",
-        "5. Run tests and fix failures before finishing.",
-        "6. Every file you create must be importable and functional.",
-        "7. No placeholder stubs, no TODO comments, no \"coming soon\" text.",
+        "## Rules",
+        "- READ existing code before writing new code",
+        "- Build ON TOP of what exists — do not rewrite working code",
+        "- Every file must be importable and functional",
+        "- No placeholder stubs, no TODO comments",
     ])
 
     return "\n".join(parts)

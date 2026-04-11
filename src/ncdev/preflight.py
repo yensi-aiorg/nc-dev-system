@@ -16,6 +16,16 @@ def run_preflight(required: list[str]) -> PreflightResult:
     return PreflightResult(ok=len(missing) == 0, required=required, missing=missing)
 
 
+def check_citex(url: str = "http://localhost:20160") -> bool:
+    """Check if Citex RAG is reachable."""
+    try:
+        import httpx
+        resp = httpx.get(f"{url}/api/v1/health", timeout=5)
+        return resp.status_code < 400
+    except Exception:
+        return False
+
+
 def required_commands(mode: str, full: bool) -> list[str]:
     base = ["git", "claude"]
     if full:
