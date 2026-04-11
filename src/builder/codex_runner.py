@@ -21,6 +21,8 @@ from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.table import Table
 
+from src.memory import MemoryPressure, check_memory_pressure
+
 console = Console()
 
 
@@ -358,6 +360,14 @@ class CodexRunner:
         start_time = time.monotonic()
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
+
+        # Memory safety check before spawning builder
+        pressure = check_memory_pressure()
+        if pressure == MemoryPressure.CRITICAL:
+            raise CodexRunnerError(
+                "Cannot start builder: memory pressure critical "
+                "(>90% used). Free memory before retrying."
+            )
 
         try:
             process = await asyncio.create_subprocess_exec(
