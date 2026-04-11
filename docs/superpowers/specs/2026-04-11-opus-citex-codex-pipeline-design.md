@@ -272,8 +272,8 @@ class RunMetrics(BaseModel):
     features: list[FeatureMetric]
     builder_primary: str  # "codex" or "claude"
     builder_model: str
-    citex_enabled: bool
     citex_documents_ingested: int
+    citex_queries_by_codex: int  # how many times Codex hit Citex during builds
 ```
 
 ### 5.3 Metrics Collection
@@ -351,10 +351,12 @@ Full rewrite — replace string concatenation with the lean prompt template from
 
 ### 6.4 Citex Dependency
 
-Citex is **optional**. If localhost:20160 is unreachable:
-- Context ingestion is skipped (logged as warning)
-- Prompt builder falls back to current behavior (file tree + spec dump)
-- Metrics still collected, `citex_enabled: false`
+Citex is **required**. It is the shared context layer between all CLI agent instances (Opus, Codex, Claude repair). Without it, agents start blind and build quality degrades.
+
+- The pipeline checks Citex availability at startup (health check to `GET {citex_api}/api/v1/health`)
+- If Citex is unreachable, the pipeline **fails fast** with a clear error: `"Citex RAG (localhost:20160) is required but unreachable. Start Citex before running ncdev full."`
+- `ncdev doctor` checks Citex alongside Claude/Codex/git/node
+- Citex is added to the required tools list in preflight checks
 
 ## 7. New Files
 
@@ -379,8 +381,9 @@ Citex is **optional**. If localhost:20160 is unreachable:
 ## 9. Success Criteria
 
 The system is working when:
-1. Codex receives prompts under 3k chars (down from ~25k)
-2. Codex successfully queries Citex during builds (visible in build logs)
-3. First-pass success rate is tracked and displayed after every run
-4. Cross-run metrics are queryable from Citex
-5. The pipeline still works when Citex is offline (graceful fallback)
+1. Pipeline requires Citex at startup — fails fast if unreachable
+2. Codex receives prompts under 3k chars (down from ~25k)
+3. Codex successfully queries Citex during builds (visible in build logs)
+4. First-pass success rate is tracked and displayed after every run
+5. Cross-run metrics are queryable from Citex
+6. `ncdev doctor` checks Citex availability
