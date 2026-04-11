@@ -21,7 +21,7 @@ def test_cli_full_defaults() -> None:
     assert args.base_url == "http://localhost:23000"
     assert args.dry_run is False
     assert args.target_repo is None
-    assert args.model == "sonnet"
+    assert args.model == "opus"
     assert args.timeout == 600
     assert args.max_repairs == 2
 

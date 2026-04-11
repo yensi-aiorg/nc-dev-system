@@ -100,7 +100,7 @@ class NCDevV2Config(BaseModel):
         default_factory=lambda: {
             "anthropic_claude_code": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={"planning": "opus", "review": "sonnet", "implementation": "sonnet", "test_implementation": "sonnet"},
+                preferred_models={"planning": "opus", "review": "opus", "implementation": "opus", "test_implementation": "opus"},
                 features={"use_subagents": True, "use_hooks": True, "use_mcp": True},
             ),
             "openai_codex": ProviderPreferenceConfig(

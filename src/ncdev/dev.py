@@ -411,7 +411,7 @@ After building all features, generate end-to-end tests that:
             [
                 "claude", "-p", short_prompt,
                 "--output-format", "text",
-                "--model", "claude-sonnet-4-6",
+                "--model", "claude-opus-4-6",
                 "--allowedTools", "Read,Write,Glob,Grep",  # Read project, Write instructions only
             ],
             cwd=str(project_path),

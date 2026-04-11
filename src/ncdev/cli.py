@@ -98,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--workspace", default=None)
     full.add_argument("--base-url", default="http://localhost:23000")
     full.add_argument("--dry-run", action="store_true", help="Do not invoke builders")
-    full.add_argument("--model", default="sonnet", choices=["opus", "sonnet", "haiku"], help="Builder model")
+    full.add_argument("--model", default="opus", choices=["opus", "sonnet", "haiku"], help="Claude model for fallback/repair")
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
 

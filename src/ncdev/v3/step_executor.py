@@ -38,7 +38,7 @@ def execute_feature_step(
     design_brief: dict | None = None,
     max_repair_attempts: int = 2,
     builder_timeout: int = 600,
-    builder_model: str = "sonnet",
+    builder_model: str = "opus",
 ) -> StepResult:
     """Execute one feature step: build → verify → repair if needed → commit.
 
