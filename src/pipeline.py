@@ -46,6 +46,11 @@ from src.utils import (
     run_command,
     save_json,
 )
+from src.memory import (
+    MemoryPressure,
+    cleanup_resources,
+    log_memory_checkpoint,
+)
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -224,6 +229,18 @@ class Pipeline:
                 print_success(
                     f"Phase {phase_num} ({phase_name}) completed in {format_duration(elapsed)}"
                 )
+
+                # Memory cleanup between phases
+                await cleanup_resources(self.config.output_dir)
+                _, pressure = log_memory_checkpoint(f"post-phase-{phase_num}")
+                if pressure == MemoryPressure.CRITICAL:
+                    print_error(
+                        f"  MEMORY CRITICAL after Phase {phase_num} — halting pipeline. "
+                        "Free memory and run `ncdev resume`."
+                    )
+                    self.state["phases_failed"].append(phase_num + 1)
+                    self.state[f"phase{phase_num + 1}_error"] = "Memory pressure critical"
+                    break
 
             except PipelineError as exc:
                 elapsed = time.monotonic() - phase_start
@@ -545,15 +562,33 @@ class Pipeline:
                 return await self._build_single_feature(feature)
 
         tasks = [_build_feature(f) for f in features_list]
-        build_results = await asyncio.gather(*tasks, return_exceptions=False)
+        build_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        succeeded = sum(1 for r in build_results if r.get("success"))
-        failed = sum(1 for r in build_results if not r.get("success"))
+        # Handle exceptions from return_exceptions=True
+        processed_results: list[dict[str, Any]] = []
+        for i, r in enumerate(build_results):
+            if isinstance(r, BaseException):
+                feat_name = features_list[i].get("name", f"feature-{i}")
+                console.print(f"  [red]Builder for {feat_name} crashed: {r}[/red]")
+                processed_results.append({
+                    "success": False,
+                    "feature": feat_name,
+                    "error": str(r),
+                })
+                await cleanup_resources(self.config.output_dir)
+            else:
+                processed_results.append(r)
+
+        # Memory checkpoint after parallel build
+        log_memory_checkpoint("post-phase3a-build")
+
+        succeeded = sum(1 for r in processed_results if r.get("success"))
+        failed = sum(1 for r in processed_results if not r.get("success"))
 
         phase_result = {
             "features_built": succeeded,
             "features_failed": failed,
-            "results": build_results,
+            "results": processed_results,
         }
 
         await save_json(phase_result, self.config.nc_dev_path / "build-results.json")
