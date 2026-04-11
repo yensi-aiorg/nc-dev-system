@@ -5,7 +5,11 @@ import json
 import subprocess
 from pathlib import Path
 
-from scaffolder.generator import ProjectConfig, ProjectGenerator
+try:
+    from scaffolder.generator import ProjectConfig, ProjectGenerator
+except ImportError:
+    ProjectConfig = None  # type: ignore[assignment,misc]
+    ProjectGenerator = None  # type: ignore[assignment,misc]
 
 from ncdev.utils import write_text
 from ncdev.v2.models import (
@@ -253,6 +257,11 @@ def prepare_target_project(
         existing_repo = (project_root / ".git").exists() or _has_non_git_content(project_root)
         scaffold_applied = False
     else:
+        if ProjectGenerator is None:
+            raise RuntimeError(
+                "Scaffold generation requires the 'scaffolder' package. "
+                "Use --target-repo to point at an existing repository instead."
+            )
         project_config = _to_project_config(feature_map, target_contract)
         generator = ProjectGenerator(project_config)
         project_root = asyncio.run(generator.generate(output_root))

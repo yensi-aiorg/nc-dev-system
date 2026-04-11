@@ -7,7 +7,7 @@ name = "nc-dev-system"
 version = "0.1.0"
 description = "Autonomous development agent that takes requirements and delivers tested, production-ready codebases"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
   "pydantic>=2.8,<3",
   "pyyaml>=6.0.1,<7",

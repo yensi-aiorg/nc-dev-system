@@ -9,11 +9,11 @@
 **Strategy:** Claude plans, Codex builds. Context-driven, not pipeline-driven. 5 non-negotiable guardrails.
 
 Recent commits:
+4d87450 feat: sync-project-context — auto-populates CLAUDE.md + AGENTS.md for all projects
 16784e1 fix(dev): harden pipeline — brownfield timeouts, non-fatal video, separate report cmd
 d98458a fix(dev): treat Claude planning timeout as non-fatal if instructions file exists
 010a7e8 feat(serve): wire intake API to uvicorn for Sentinel integration
 47dd45e refactor(dev): Claude plans, Codex builds — clear role separation
-c044175 feat(dev): Codex CLI as peer reviewer — writes additional tests after Claude builds
 Branch: main
 
 ## Related YENSI Projects
@@ -26,4 +26,4 @@ Branch: main
 - **ignition**: Autonomous co-founder pipeline — spec gen, product registry, deploy
 - **helyx**: Command center — project management, MongoDB collections, canvas
 
-_Context synced: 2026-04-09 10:33 UTC_
+_Context synced: 2026-04-11 05:00 UTC_

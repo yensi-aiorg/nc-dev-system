@@ -10,7 +10,7 @@ def test_cli_fix_parses_report() -> None:
     assert args.dry_run is False
     assert args.auto_deploy is False
     assert args.max_attempts == 3
-    assert args.ui == "headless"
+    assert args.run_id is None
 
 
 def test_cli_fix_parses_report_dir() -> None:

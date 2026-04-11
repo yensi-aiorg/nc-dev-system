@@ -106,7 +106,7 @@ class V3RunState(BaseModel):
     """Overall state of a V3 pipeline run."""
 
     run_id: str
-    command: str = "full-v3"
+    command: str = "full"
     workspace: str = ""
     run_dir: str = ""
     target_path: str = ""

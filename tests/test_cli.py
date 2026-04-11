@@ -3,12 +3,6 @@ from pathlib import Path
 from ncdev.cli import _doctor_report, _quickstart_text, _resolve_target_repo, build_parser
 
 
-def test_cli_build_analysis_only_flag() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["build", "--requirements", "/tmp/x.md", "--analysis-only"])
-    assert args.analysis_only is True
-
-
 def test_cli_quickstart_parses() -> None:
     parser = build_parser()
     args = parser.parse_args(["quickstart"])
@@ -21,68 +15,54 @@ def test_cli_doctor_parses() -> None:
     assert args.command == "doctor"
 
 
-def test_cli_analyze_defaults() -> None:
+def test_cli_full_defaults() -> None:
     parser = build_parser()
-    args = parser.parse_args(["analyze", "--repo", "/tmp/repo"])
-    assert args.mode == "brownfield"
-    assert args.analysis_only is False
-
-
-def test_cli_discover_v2_defaults() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["discover-v2", "--source", "/tmp/requirements.md"])
-    assert args.dry_run is False
-    assert args.target_repo is None
-    assert args.ui == "headless"
-
-
-def test_cli_status_v2_parses_run_id() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["status-v2", "--run-id", "v2-123"])
-    assert args.run_id == "v2-123"
-
-
-def test_cli_prepare_v2_defaults() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["prepare-v2", "--source", "/tmp/requirements.md"])
-    assert args.dry_run is False
-    assert args.target_repo is None
-    assert args.ui == "headless"
-
-
-def test_cli_execute_v2_defaults() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["execute-v2", "--run-id", "v2-123"])
-    assert args.run_id == "v2-123"
-    assert args.dry_run is False
-    assert args.ui == "headless"
-
-
-def test_cli_verify_v2_defaults() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["verify-v2", "--run-id", "v2-123"])
-    assert args.run_id == "v2-123"
+    args = parser.parse_args(["full", "--source", "/tmp/requirements.md"])
     assert args.base_url == "http://localhost:23000"
     assert args.dry_run is False
-    assert args.ui == "headless"
-
-
-def test_cli_repair_v2_defaults() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["repair-v2", "--run-id", "v2-123"])
-    assert args.run_id == "v2-123"
-    assert args.dry_run is False
-    assert args.ui == "headless"
-
-
-def test_cli_full_v2_defaults() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["full-v2", "--source", "/tmp/requirements.md"])
-    assert args.base_url == "http://localhost:23000"
-    assert args.repair_cycles == 1
-    assert args.dry_run is False
     assert args.target_repo is None
-    assert args.ui == "headless"
+    assert args.model == "sonnet"
+    assert args.timeout == 600
+    assert args.max_repairs == 2
+
+
+def test_cli_full_custom_options() -> None:
+    parser = build_parser()
+    args = parser.parse_args([
+        "full", "--source", "/tmp/requirements.md",
+        "--model", "opus", "--timeout", "900", "--max-repairs", "3",
+        "--dry-run", "--target-repo", "/tmp/repo",
+    ])
+    assert args.model == "opus"
+    assert args.timeout == 900
+    assert args.max_repairs == 3
+    assert args.dry_run is True
+    assert args.target_repo == "/tmp/repo"
+
+
+def test_cli_dev_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["dev", "--project", "/tmp/proj", "--task", "Build feature"])
+    assert args.command == "dev"
+    assert args.project == "/tmp/proj"
+    assert args.task == "Build feature"
+    assert args.mode == "auto"
+
+
+def test_cli_fix_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["fix", "--report", "/tmp/rpt.json", "--target", "/tmp/repo"])
+    assert args.command == "fix"
+    assert args.report == "/tmp/rpt.json"
+    assert args.target == "/tmp/repo"
+    assert args.dry_run is False
+
+
+def test_cli_serve_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["serve", "--port", "8080"])
+    assert args.command == "serve"
+    assert args.port == 8080
 
 
 def test_resolve_target_repo_uses_workspace_git_repo(tmp_path: Path) -> None:
@@ -96,11 +76,11 @@ def test_resolve_target_repo_prefers_explicit_value(tmp_path: Path) -> None:
     assert _resolve_target_repo(str(explicit), tmp_path) == explicit
 
 
-def test_quickstart_text_mentions_discover_and_full() -> None:
+def test_quickstart_text_mentions_full() -> None:
     text = _quickstart_text()
-    assert "discover-v2" in text
-    assert "full-v2" in text
-    assert "--ui headed" in text
+    assert "ncdev full" in text
+    assert "ncdev dev" in text
+    assert "ncdev fix" in text
 
 
 def test_doctor_report_detects_git_repo(tmp_path: Path) -> None:

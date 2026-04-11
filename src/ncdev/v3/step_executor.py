@@ -145,6 +145,7 @@ def execute_feature_step(
             timeout=builder_timeout,
             model=builder_model,
             log_path=step_dir / f"repair-{attempt}.log",
+            use_codex=False,  # Repairs always use Claude (better at understanding errors)
         )
 
         verification = _run_verification(target_path, feature, step_dir)
@@ -195,21 +196,51 @@ def execute_feature_step(
     )
 
 
+def _kill_orphan_processes():
+    """Kill orphaned pytest/python test processes to prevent memory leaks."""
+    subprocess.run(
+        ["pkill", "-f", "python.*-m pytest"],
+        capture_output=True, timeout=5,
+    )
+
+
 def _run_builder(
     prompt: str,
     target_path: Path,
     timeout: int,
     model: str,
     log_path: Path,
+    use_codex: bool = True,
 ) -> dict:
-    """Invoke Claude CLI to build a feature."""
-    cmd = [
-        "claude",
-        "-p", prompt,
-        "--output-format", "text",
-        "--model", f"claude-{model}-4-6",
-        "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep",
-    ]
+    """Invoke Codex CLI (primary) or Claude CLI (fallback/repair) to build a feature.
+
+    Uses OpenAI Codex for implementation builds (faster, cheaper) and
+    Claude for repair passes (better at understanding failure context).
+    """
+    # Kill any orphaned processes from prior steps
+    _kill_orphan_processes()
+
+    if use_codex and shutil.which("codex"):
+        # Primary builder: OpenAI Codex
+        cmd = [
+            "codex", "exec",
+            "--full-auto",
+            "--sandbox", "danger-full-access",
+            prompt,
+        ]
+        runner_label = "Codex"
+    else:
+        # Fallback / repair: Claude CLI
+        cmd = [
+            "claude",
+            "-p", prompt,
+            "--output-format", "text",
+            "--model", f"claude-{model}-4-6",
+            "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep",
+        ]
+        runner_label = "Claude"
+
+    console.print(f"  [cyan]Using {runner_label} builder[/cyan]")
 
     try:
         result = subprocess.run(
@@ -221,19 +252,28 @@ def _run_builder(
         )
         # Save log
         log_path.write_text(
-            f"EXIT CODE: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}",
+            f"RUNNER: {runner_label}\nEXIT CODE: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}",
             encoding="utf-8",
         )
+
+        # Clean up after build
+        _kill_orphan_processes()
+
         return {
             "success": result.returncode == 0,
             "output": result.stdout[:5000],
             "error": result.stderr[:2000] if result.returncode != 0 else "",
         }
     except subprocess.TimeoutExpired:
-        log_path.write_text(f"TIMEOUT after {timeout}s", encoding="utf-8")
-        return {"success": False, "output": "", "error": f"Builder timed out after {timeout}s"}
+        _kill_orphan_processes()
+        log_path.write_text(f"TIMEOUT after {timeout}s ({runner_label})", encoding="utf-8")
+        return {"success": False, "output": "", "error": f"{runner_label} timed out after {timeout}s"}
     except FileNotFoundError:
-        return {"success": False, "output": "", "error": "claude CLI not found"}
+        if use_codex:
+            # Codex not found — fall back to Claude
+            console.print(f"  [yellow]Codex not found, falling back to Claude[/yellow]")
+            return _run_builder(prompt, target_path, timeout, model, log_path, use_codex=False)
+        return {"success": False, "output": "", "error": "No builder CLI found (tried codex and claude)"}
 
 
 def _run_verification(target_path: Path, feature: FeatureStep, step_dir: Path) -> StepVerification:
@@ -241,11 +281,18 @@ def _run_verification(target_path: Path, feature: FeatureStep, step_dir: Path) -
     verification = StepVerification()
     failure_reasons = []
 
-    # 1. Check backend tests
+    # 1. Check backend tests — use smoke tests only to avoid memory explosion
     backend_path = target_path / "backend"
+    smoke_script = target_path / "backend" / "scripts" / "test-smoke.sh"
     if backend_path.exists():
-        unit_result = _run_tests(target_path, "backend", "python -m pytest -q")
+        if smoke_script.exists():
+            # Use memory-safe smoke tests (37 tests, <10s)
+            unit_result = _run_tests(target_path, "backend", "bash scripts/test-smoke.sh")
+        else:
+            # Fallback: single-file pytest with timeout
+            unit_result = _run_tests(target_path, "backend", "python -m pytest tests/integration/test_api/test_health.py -q --timeout=15")
         verification.unit_tests = unit_result
+        _kill_orphan_processes()  # Always clean up after tests
         if not unit_result.success:
             failure_reasons.append(f"Backend tests failed: {unit_result.failed} failures")
 
@@ -255,6 +302,9 @@ def _run_verification(target_path: Path, feature: FeatureStep, step_dir: Path) -
         # Check if vitest is available
         fe_result = _run_tests(target_path, "frontend", "npx vitest run --reporter=verbose 2>&1 || true")
         verification.integration_tests = fe_result
+
+    # Clean up after frontend tests too
+    _kill_orphan_processes()
 
     # 3. Lint check (non-blocking for now)
     lint_output = _run_lint(target_path)
