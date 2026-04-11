@@ -18,21 +18,23 @@ def test_health_check_returns_false_on_error() -> None:
         assert client.health_check() is False
 
 
-def test_ingest_posts_project_category_and_metadata() -> None:
-    response = Mock(status_code=202)
+def test_ingest_posts_content_with_category() -> None:
+    response = Mock(status_code=201)
     with patch("ncdev.v3.citex_client.httpx.post", return_value=response) as mock_post:
         client = CitexClient(project_id="demo")
-        assert client.ingest("body", "architecture", {"source": "x"}) is True
+        assert client.ingest("body", "code", {"source": "x"}) is True
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["project_id"] == "demo"
+    assert payload["projectId"] == "demo"
     assert payload["content"] == "body"
-    assert payload["metadata"] == {"category": "architecture", "source": "x"}
+    assert payload["category"] == "code"
+    assert payload["metadata"]["ncdev_category"] == "code"
+    assert payload["metadata"]["source"] == "x"
 
 
 def test_ingest_returns_false_on_error() -> None:
     with patch("ncdev.v3.citex_client.httpx.post", side_effect=httpx.ConnectError("refused")):
         client = CitexClient(project_id="demo")
-        assert client.ingest("content", "design") is False
+        assert client.ingest("content", "code") is False
 
 
 def test_query_returns_content_strings() -> None:
@@ -57,13 +59,13 @@ def test_query_returns_empty_on_error() -> None:
         assert client.query("anything") == []
 
 
-def test_query_sends_category_in_payload() -> None:
+def test_query_sends_top_k_in_payload() -> None:
     response = Mock(status_code=200)
     response.json.return_value = {"results": [{"content": "color primary: #0f172a"}]}
     response.raise_for_status = Mock()
     with patch("ncdev.v3.citex_client.httpx.post", return_value=response) as mock_post:
         client = CitexClient(project_id="demo")
-        client.query("design tokens", category="design", limit=3)
+        client.query("design tokens", limit=3)
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["category"] == "design"
-    assert payload["limit"] == 3
+    assert payload["top_k"] == 3
+    assert payload["project_id"] == "demo"

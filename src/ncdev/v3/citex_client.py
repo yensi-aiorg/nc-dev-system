@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-CITEX_DEFAULT_URL = "http://localhost:20160"
+CITEX_DEFAULT_URL = "http://localhost:20161"
 
 
 class CitexClient:
@@ -24,7 +24,7 @@ class CitexClient:
     def health_check(self) -> bool:
         """Return True when Citex responds on its health endpoint."""
         try:
-            resp = httpx.get(f"{self.base_url}/api/v1/health", timeout=self.timeout)
+            resp = httpx.get(f"{self.base_url}/health", timeout=self.timeout)
             return resp.status_code < 400
         except httpx.HTTPError:
             return False
@@ -34,19 +34,27 @@ class CitexClient:
         content: str,
         category: str,
         metadata: dict[str, Any] | None = None,
+        title: str = "",
     ) -> bool:
-        """Store one context document in Citex."""
-        payload = {
-            "project_id": self.project_id,
+        """Store one context document in Citex via POST /api/content."""
+        payload: dict[str, Any] = {
             "content": content,
+            "contentType": "text",
+            "category": category if category in _VALID_CATEGORIES else "document",
+            "projectId": self.project_id,
+            "createdBy": "ncdev",
+            "accessScope": "project",
+            "tags": [category],
             "metadata": {
-                "category": category,
+                "ncdev_category": category,
                 **(metadata or {}),
             },
         }
+        if title:
+            payload["title"] = title
         try:
             resp = httpx.post(
-                f"{self.base_url}/api/v1/documents/ingest",
+                f"{self.base_url}/api/content",
                 json=payload,
                 timeout=self.timeout,
             )
@@ -64,13 +72,11 @@ class CitexClient:
         payload: dict[str, Any] = {
             "project_id": self.project_id,
             "query": query,
-            "limit": limit,
+            "top_k": limit,
         }
-        if category:
-            payload["category"] = category
         try:
             resp = httpx.post(
-                f"{self.base_url}/api/v1/retrieval/query",
+                f"{self.base_url}/api/retrieval/query",
                 json=payload,
                 timeout=self.timeout,
             )
@@ -80,6 +86,13 @@ class CitexClient:
         data = resp.json()
         return [
             r.get("content", r.get("text", ""))
-            for r in data.get("results", data.get("documents", []))
+            for r in data.get("results", [])
             if r.get("content") or r.get("text")
         ]
+
+
+# Citex content categories (from the API schema)
+_VALID_CATEGORIES = {
+    "projects", "code", "decisions", "agents", "artifacts",
+    "signals", "conversations", "external", "document",
+}

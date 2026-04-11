@@ -25,7 +25,7 @@ def ingest_project_context(
     target_path: Path,
     feature_queue: FeatureQueueDoc,
     project_id: str = "",
-    citex_api: str = CITEX_DEFAULT_URL,
+    citex_api: str = "http://localhost:20161",
 ) -> IngestionReport:
     """Read discovery artifacts + actual project code, ingest into Citex."""
     project_id = project_id or target_path.name
@@ -102,7 +102,7 @@ def ingest_feature_result(
     result: StepResult,
     target_path: Path,
     project_id: str = "",
-    citex_api: str = CITEX_DEFAULT_URL,
+    citex_api: str = "http://localhost:20161",
 ) -> bool:
     """Ingest a completed feature result into Citex for the next feature to query."""
     project_id = project_id or target_path.name

@@ -11,11 +11,11 @@ def test_prompt_contains_citex_instructions() -> None:
         acceptance_criteria=["Login returns JWT", "Protected routes require token"],
     )
     prompt = build_feature_prompt(feature=feature, target_path=Path("/tmp/project"), project_id="test-proj")
-    assert "localhost:20160" in prompt
+    assert "localhost:20161" in prompt
     assert "test-proj" in prompt
     assert "User Authentication" in prompt
     assert "Login returns JWT" in prompt
-    assert "/api/v1/retrieval/query" in prompt
+    assert "/api/retrieval/query" in prompt
 
 
 def test_prompt_under_5k_chars() -> None:
