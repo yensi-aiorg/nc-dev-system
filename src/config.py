@@ -86,6 +86,24 @@ class BuildConfig(BaseModel):
         default=3, ge=1, description="Maximum fix-retest cycles in Phase 4"
     )
 
+    # Memory safety (6th guardrail)
+    memory_high_threshold: float = Field(
+        default=80.0, ge=50.0, le=95.0,
+        description="Memory usage % that triggers sequential downgrade",
+    )
+    memory_critical_threshold: float = Field(
+        default=90.0, ge=60.0, le=99.0,
+        description="Memory usage % that triggers emergency halt",
+    )
+    e2e_serial: bool = Field(
+        default=True,
+        description="Run E2E tests sequentially (one feature at a time)",
+    )
+    memory_audit_enabled: bool = Field(
+        default=True,
+        description="Run memory safety audit before verification",
+    )
+
     model_config = {"populate_by_name": True}
 
     @property
