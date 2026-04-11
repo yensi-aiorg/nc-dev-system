@@ -175,9 +175,28 @@ def run_v3_full(
     )
     console.print(f"  [green]✓[/green] Ingested {ingestion_report.successful}/{ingestion_report.total_documents} documents into Citex")
 
+    # ── Phase 4.5: Scan Existing State ──────────────────────────
+    state.phase = "scanning"
+    console.print("\n[bold]Phase 4.5: Scanning Project State[/bold]")
+
+    from ncdev.v3.state_scanner import scan_completed_features, build_skip_results
+
+    completed_ids = scan_completed_features(target_path, feature_queue.features)
+    completed_set = set(completed_ids)
+    skip_results = build_skip_results(feature_queue.features, completed_set)
+    remaining_features = [f for f in feature_queue.features if f.feature_id not in completed_set]
+
+    if completed_ids:
+        console.print(f"  [green]✓[/green] {len(completed_ids)} features already implemented — skipping:")
+        for fid in completed_ids:
+            console.print(f"    [dim]SKIP[/dim] {fid}")
+        console.print(f"  [cyan]→[/cyan] {len(remaining_features)} features to build")
+    else:
+        console.print("  [dim]No prior work detected — building all features[/dim]")
+
     # ── Phase 5: Sequential Feature Execution ─────────────────
     state.phase = "building"
-    console.print("\n[bold]Phase 5: Building Features Sequentially[/bold]")
+    console.print(f"\n[bold]Phase 5: Building {len(remaining_features)} Features Sequentially[/bold]")
 
     # Load spec content for prompts
     spec_content = ""
@@ -191,12 +210,12 @@ def run_v3_full(
     stack = target_contract.stack if hasattr(target_contract, "stack") else {}
     design_brief_dict = design_brief.model_dump(mode="json") if hasattr(design_brief, "model_dump") else {}
 
-    completed: list[StepResult] = []
+    completed: list[StepResult] = list(skip_results)
 
     if dry_run:
         console.print("  [dim]Dry run — skipping execution[/dim]")
     else:
-        for feature in feature_queue.features:
+        for feature in remaining_features:
             state.current_step = feature.feature_id
             _persist_state(state, run_dir)
 
