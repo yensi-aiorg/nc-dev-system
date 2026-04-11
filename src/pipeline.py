@@ -242,6 +242,15 @@ class Pipeline:
                     self.state[f"phase{phase_num + 1}_error"] = "Memory pressure critical"
                     break
 
+                # Run memory audit after Phase 3 (before Phase 4)
+                if phase_num == 3 and result is not None:
+                    console.print()
+                    console.print(
+                        "  [bold bright_magenta]Phase 3.5: MEMORY AUDIT[/bold bright_magenta]"
+                    )
+                    audit_result = await self.phase3_5_audit()
+                    self.state["phase3_5"] = audit_result
+
             except PipelineError as exc:
                 elapsed = time.monotonic() - phase_start
                 all_success = False
@@ -678,6 +687,54 @@ class Pipeline:
             "success": False,
             "feature": feature_name,
             "error": f"Builder failed after {self.config.build.max_codex_attempts} attempts",
+        }
+
+    # ------------------------------------------------------------------
+    # Phase 3.5: MEMORY AUDIT
+    # ------------------------------------------------------------------
+
+    async def phase3_5_audit(self) -> dict[str, Any]:
+        """Scan the target project for memory-leak patterns.
+
+        If findings are detected, the pipeline downgrades E2E concurrency
+        and generates a MEMORY-SAFETY-REPORT.md in the project's .nc-dev/.
+        """
+        if not self.config.build.memory_audit_enabled:
+            console.print("  [yellow]Memory audit disabled — skipping.[/yellow]")
+            return {"skipped": True, "findings": 0}
+
+        console.print("  Scanning project for memory-leak patterns...")
+
+        from src.auditor import generate_report, scan_project
+
+        result = scan_project(self.config.output_dir)
+
+        if not result.is_clean:
+            console.print(
+                f"  [yellow]Found {len(result.findings)} memory-safety issue(s) "
+                f"({result.high_count} high, {result.medium_count} medium)[/yellow]"
+            )
+
+            # Generate report
+            report_path = self.config.nc_dev_path / "MEMORY-SAFETY-REPORT.md"
+            generate_report(result, report_path)
+            console.print(f"  Report saved to {report_path}")
+
+            # Downgrade E2E to sequential
+            self.config.build.e2e_serial = True
+            console.print("  [yellow]E2E tests downgraded to sequential mode.[/yellow]")
+        else:
+            console.print(
+                f"  [green]Memory audit clean — {result.scanned_files} files scanned, no issues.[/green]"
+            )
+
+        return {
+            "skipped": False,
+            "findings": len(result.findings),
+            "high": result.high_count,
+            "medium": result.medium_count,
+            "is_clean": result.is_clean,
+            "scanned_files": result.scanned_files,
         }
 
     # ------------------------------------------------------------------
