@@ -222,16 +222,14 @@ def _run_builder(
     _kill_orphan_processes()
 
     if use_codex and shutil.which("codex"):
-        # Primary builder: OpenAI Codex (GPT 5.4 Codex, medium reasoning effort)
+        # Primary builder: OpenAI Codex (GPT 5.4, medium reasoning effort)
         cmd = [
             "codex", "exec",
             "--full-auto",
             "--sandbox", "danger-full-access",
-            "-m", "gpt-5.4-codex",
-            "-c", 'reasoning_effort="medium"',
             prompt,
         ]
-        runner_label = "Codex (gpt-5.4-codex, medium)"
+        runner_label = "Codex (gpt-5.4)"
     else:
         # Fallback / repair: Claude CLI
         cmd = [

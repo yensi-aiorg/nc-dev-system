@@ -12,6 +12,6 @@ def test_routing_plan_uses_configured_defaults() -> None:
     by_task = {decision.task_type: decision for decision in plan.decisions}
     # Codex is primary for implementation tasks, Claude is fallback
     assert by_task[TaskType.BUILD_BATCH].provider == "openai_codex"
-    assert by_task[TaskType.BUILD_BATCH].model == "gpt-5.4-codex"
+    assert by_task[TaskType.BUILD_BATCH].model == "gpt-5.4"
     assert by_task[TaskType.MARKET_RESEARCH].provider == "anthropic_claude_code"
     assert by_task[TaskType.MARKET_RESEARCH].model == "opus"

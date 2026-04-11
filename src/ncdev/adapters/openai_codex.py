@@ -50,7 +50,7 @@ class OpenAICodexAdapter(ProviderAdapter):
         return ProviderVersionInfo(provider=self.name(), cli=self.cli_name, version=version)
 
     def available_models(self) -> list[str]:
-        return ["gpt-5.4-codex"]
+        return ["gpt-5.4"]
 
     def capabilities(self, model: str) -> CapabilityDescriptor:
         _ = model

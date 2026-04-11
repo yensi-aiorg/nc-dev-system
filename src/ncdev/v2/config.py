@@ -105,7 +105,7 @@ class NCDevV2Config(BaseModel):
             ),
             "openai_codex": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={"implementation": "gpt-5.4-codex", "test_implementation": "gpt-5.4-codex"},
+                preferred_models={"implementation": "gpt-5.4", "test_implementation": "gpt-5.4"},
                 defaults={"reasoning_effort": "high"},
             ),
             "gemini_cli": ProviderPreferenceConfig(enabled=False),
