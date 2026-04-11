@@ -1,9 +1,4 @@
-"""Context-aware prompt builder — reads ACTUAL project state, not stale manifests.
-
-The critical difference from V2's prompt_assembler: this module reads the REAL
-current file tree and builds prompts based on what actually exists in the repo.
-"""
-
+"""Lean Citex-backed prompt builder for V3 feature execution."""
 from __future__ import annotations
 
 import json
@@ -28,20 +23,10 @@ def build_feature_prompt(
     Codex gets told WHAT to build and WHERE to find context.
     It pulls what it needs from Citex during its build session.
     """
-    citex_curl = (
-        f'curl -s -X POST {citex_api}/api/v1/retrieval/query '
-        f'-H "Content-Type: application/json" '
-        f'-d \'{{"project_id": "{project_id}", "query": "YOUR_QUERY", "limit": 5}}\' '
-        f'| python3 -c "import sys,json; [print(d.get(\'content\',\'\')) for d in json.load(sys.stdin).get(\'results\',[])]"'
+    payload = json.dumps(
+        {"project_id": project_id, "query": "your question", "limit": 5},
+        separators=(", ", ": "),
     )
-
-    prior_summary = ""
-    if prior_results:
-        passed = [r for r in prior_results if r.status.value == "passed"]
-        if passed:
-            last = passed[-1]
-            prior_summary = f"\nThe last completed feature was **{last.feature_id}** ({len(last.files_created)} files created). Query Citex for 'prior feature {last.feature_id}' to see integration points.\n"
-
     parts = [
         f"# Build: {feature.title}",
         "",
@@ -50,29 +35,35 @@ def build_feature_prompt(
         "",
         "## Acceptance Criteria",
         *[f"- {c}" for c in feature.acceptance_criteria],
+    ]
+    if feature.test_requirements:
+        parts.extend([
+            "",
+            "## Test Requirements",
+            *[f"- {t}" for t in feature.test_requirements],
+        ])
+    parts.extend([
         "",
         "## Context Retrieval",
-        f"You have access to a project knowledge base. Query it for any context you need.",
+        f"You have access to a project knowledge base at {citex_api}.",
+        f"Use project_id `{project_id}` for every query during implementation.",
         "",
         "### How to query",
         "```bash",
-        citex_curl,
+        f"curl -s -X POST {citex_api}/api/v1/retrieval/query \\",
+        '  -H "Content-Type: application/json" \\',
+        f"  -d '{payload}' \\",
+        '  | python3 -c "import sys,json; [print(d.get(\'content\', \'\')) for d in json.load(sys.stdin).get(\'results\',[])]"',
         "```",
         "",
         "### What to query for",
-        '- "design tokens colors typography" — before writing any UI',
-        '- "existing API routes and schemas" — before adding endpoints',
-        '- "data models and MongoDB schemas" — before creating models',
-        '- "frontend store patterns" — before adding Zustand stores',
-        '- "service layer patterns" — before adding backend services',
-        '- "test patterns and fixtures" — before writing tests',
-        '- "architectural constraints and conventions" — before structural decisions',
-    ]
-
-    if prior_summary:
-        parts.append(prior_summary)
-
-    parts.extend([
+        '- "design tokens colors typography" before writing any UI',
+        '- "existing API routes and schemas" before adding endpoints',
+        '- "data models and MongoDB schemas" before creating models',
+        '- "frontend store patterns" before adding Zustand stores or client state',
+        '- "prior feature integration points" to see what earlier steps built',
+        '- "test patterns and fixtures" before writing tests',
+        '- "architectural constraints and conventions" before making structural changes',
         "",
         "## Verification Protocol",
         "After implementing:",
@@ -83,11 +74,10 @@ def build_feature_prompt(
         "",
         "## Rules",
         "- READ existing code before writing new code",
-        "- Build ON TOP of what exists — do not rewrite working code",
+        "- Build ON TOP of what exists; do not rewrite working code",
         "- Every file must be importable and functional",
-        "- No placeholder stubs, no TODO comments",
+        "- No placeholder stubs, TODO comments, or fake implementations",
     ])
-
     return "\n".join(parts)
 
 

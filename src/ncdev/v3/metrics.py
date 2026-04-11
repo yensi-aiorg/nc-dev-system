@@ -1,7 +1,7 @@
-"""Build metrics — tracks feature effectiveness and first-pass success rate."""
+"""Run-level build metrics for the V3 pipeline."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -9,23 +9,25 @@ from ncdev.v3.models import StepStatus, V3RunState
 
 
 class FeatureMetric(BaseModel):
+    """Per-feature effectiveness metrics."""
+
     feature_id: str
-    title: str = ""
     status: str
-    first_pass: bool
-    repair_attempts: int
-    build_duration_seconds: float
-    verify_duration_seconds: float
-    total_duration_seconds: float
-    files_created: int
-    files_modified: int
+    passed_first_try: bool
+    repair_attempts: int = 0
+    build_duration_seconds: float = 0.0
+    verify_duration_seconds: float = 0.0
+    files_created: int = 0
+    files_modified: int = 0
 
 
 class RunMetrics(BaseModel):
+    """Aggregate metrics for one V3 run."""
+
     run_id: str
     project_name: str = ""
     started_at: str = ""
-    completed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    completed_at: str = ""
     total_duration_seconds: float = 0.0
     total_features: int = 0
     passed_features: int = 0
@@ -46,7 +48,7 @@ def compute_run_metrics(
     state: V3RunState,
     ingestion_doc_count: int = 0,
 ) -> RunMetrics:
-    """Compute metrics from completed step results."""
+    """Compute aggregate run metrics from the current V3 run state."""
     steps = state.completed_steps
     total = len(steps)
 
@@ -55,34 +57,38 @@ def compute_run_metrics(
 
     passed = [s for s in steps if s.status == StepStatus.PASSED]
     failed = [s for s in steps if s.status == StepStatus.FAILED]
-    first_pass = [s for s in steps if s.status == StepStatus.PASSED and s.repair_attempts == 0]
+    first_pass = [s for s in passed if s.repair_attempts == 0]
     repaired = [s for s in steps if s.repair_attempts > 0]
 
-    total_build = sum(s.build_duration_seconds for s in steps)
-    total_verify = sum(s.verify_duration_seconds for s in steps)
-    total_time = total_build + total_verify
+    build_sum = sum(s.build_duration_seconds for s in steps)
+    verify_sum = sum(s.verify_duration_seconds for s in steps)
+    total_active_time = build_sum + verify_sum
+
+    started = _parse_iso(state.started_at)
+    completed_at = state.updated_at or state.started_at
+    completed = _parse_iso(completed_at)
+    total_duration_seconds = max((completed - started).total_seconds(), 0.0)
 
     feature_metrics = [
         FeatureMetric(
             feature_id=s.feature_id,
             status=s.status.value,
-            first_pass=(s.status == StepStatus.PASSED and s.repair_attempts == 0),
+            passed_first_try=(s.status == StepStatus.PASSED and s.repair_attempts == 0),
             repair_attempts=s.repair_attempts,
             build_duration_seconds=s.build_duration_seconds,
             verify_duration_seconds=s.verify_duration_seconds,
-            total_duration_seconds=s.build_duration_seconds + s.verify_duration_seconds,
             files_created=len(s.files_created),
             files_modified=len(s.files_modified),
         )
         for s in steps
     ]
 
-    hours = total_time / 3600 if total_time > 0 else 1
-
     return RunMetrics(
         run_id=state.run_id,
+        project_name=_resolve_project_name(state),
         started_at=state.started_at,
-        total_duration_seconds=total_time,
+        completed_at=completed_at,
+        total_duration_seconds=total_duration_seconds,
         total_features=total,
         passed_features=len(passed),
         failed_features=len(failed),
@@ -92,8 +98,21 @@ def compute_run_metrics(
             sum(s.repair_attempts for s in repaired) / len(repaired)
             if repaired else 0.0
         ),
-        build_efficiency=total_build / total_time if total_time > 0 else 0.0,
-        feature_throughput_per_hour=total / hours,
+        build_efficiency=build_sum / total_active_time if total_active_time > 0 else 0.0,
+        feature_throughput_per_hour=(
+            len(passed) / (total_duration_seconds / 3600.0) if total_duration_seconds > 0 else 0.0
+        ),
         features=feature_metrics,
         citex_documents_ingested=ingestion_doc_count,
+        citex_queries_by_codex=int(state.metadata.get("citex_queries_by_codex", 0)),
     )
+
+
+def _parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _resolve_project_name(state: V3RunState) -> str:
+    if state.feature_queue and state.feature_queue.project_name:
+        return state.feature_queue.project_name
+    return str(state.metadata.get("project_id", "")) or "unknown"
