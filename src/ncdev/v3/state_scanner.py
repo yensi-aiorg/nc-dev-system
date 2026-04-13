@@ -44,7 +44,7 @@ def scan_completed_features(
         # Check 2: Do files related to this feature exist?
         has_files = _feature_has_files(feature, file_tree)
 
-        if in_git or (has_files and tests_pass):
+        if in_git and has_files and tests_pass:
             completed.append(feature.feature_id)
 
     return completed
