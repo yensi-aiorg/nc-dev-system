@@ -189,6 +189,36 @@ class TestRunLoop:
         assert state.current_cycle == 3
         assert len(state.cycles) == 3
 
+    async def test_stops_when_test_run_fails(self, orch: QualityGateOrchestrator):
+        """If Test Craftr run fails, pipeline should stop immediately."""
+        orch.trigger_test_run = AsyncMock(return_value="run-fail")
+        orch.wait_for_results = AsyncMock(return_value={
+            "status": "failed",
+            "status_message": "App did not boot within timeout",
+        })
+        # fetch_issues should never be called
+        orch.fetch_issues = AsyncMock(return_value=[])
+
+        state = await orch.run("proj", "http://localhost:3000", "/tmp/proj", "prd")
+        assert state.phase == "failed"
+        assert state.current_cycle == 1
+        assert len(state.cycles) == 0  # no cycle recorded — broke before scoring
+        orch.fetch_issues.assert_not_called()
+
+    async def test_stops_when_test_run_stopped(self, orch: QualityGateOrchestrator):
+        """If Test Craftr run is stopped, pipeline should stop immediately."""
+        orch.trigger_test_run = AsyncMock(return_value="run-stop")
+        orch.wait_for_results = AsyncMock(return_value={
+            "status": "stopped",
+            "status_message": "Cancelled by user",
+        })
+        orch.fetch_issues = AsyncMock(return_value=[])
+
+        state = await orch.run("proj", "http://localhost:3000", "/tmp/proj", "prd")
+        assert state.phase == "failed"
+        assert state.current_cycle == 1
+        orch.fetch_issues.assert_not_called()
+
     async def test_stops_on_regression(self, orch: QualityGateOrchestrator):
         """Scores decrease on cycle 2 -> regression detected -> state.phase = 'failed'."""
         call_count = 0

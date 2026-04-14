@@ -181,14 +181,14 @@ def main() -> int:
             async def _run_fixes(manifest: FixManifest) -> int:
                 """Apply fixes from the quality gate manifest.
 
-                Currently logs the issues and returns the count.
-                Full ncdev fix integration pending.
+                TODO: Wire to actual ncdev fix with manifest format.
+                Currently logs issues but does not apply fixes.
                 """
-                console.print(f"[yellow]Fixing {len(manifest.issues)} issues from Test Craftr[/yellow]")
+                console.print(f"[yellow]Quality Gate found {len(manifest.issues)} issues:[/yellow]")
                 for issue in manifest.issues:
                     console.print(f"  [{issue.priority}] {issue.title}")
-                # TODO: Wire to actual ncdev fix with manifest format
-                return len(manifest.issues)
+                console.print("[yellow]Fix integration pending — returning 0 fixes applied[/yellow]")
+                return 0
 
             qg_config = QualityGateConfig(enabled=True, max_cycles=3)
             orchestrator = QualityGateOrchestrator(qg_config)

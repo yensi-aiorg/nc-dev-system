@@ -174,6 +174,17 @@ class QualityGateOrchestrator:
             # 2. Wait for results
             result_data = await self.wait_for_results(run_id)
 
+            # Check for infrastructure failures
+            if result_data.get("status") in ("failed", "stopped"):
+                state.phase = "failed"
+                logger.error(
+                    "Test Craftr run %s %s: %s",
+                    run_id,
+                    result_data["status"],
+                    result_data.get("status_message", "unknown error"),
+                )
+                break
+
             # 3. Fetch issues
             issues = await self.fetch_issues(run_id)
 
