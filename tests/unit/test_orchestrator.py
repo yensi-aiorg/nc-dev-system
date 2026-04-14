@@ -66,9 +66,15 @@ class TestShouldContinue:
 
     def test_false_when_max_cycles_reached(self, orch: QualityGateOrchestrator):
         state = orch.init_state("proj", "http://localhost:3000")
-        state.current_cycle = 3  # equals max_cycles
+        state.current_cycle = 3  # equals max_cycles — budget exhausted
         scores = QualityScores(core_flow=80, resilience=60, polish=50)
         assert orch.should_continue(state, scores) is False
+
+    def test_true_when_cycles_remaining(self, orch: QualityGateOrchestrator):
+        state = orch.init_state("proj", "http://localhost:3000")
+        state.current_cycle = 2  # still have cycle 3 left
+        scores = QualityScores(core_flow=80, resilience=60, polish=50)
+        assert orch.should_continue(state, scores) is True
 
     def test_false_on_regression(self, orch: QualityGateOrchestrator):
         from ncdev.quality_gate.models import CycleResult

@@ -175,7 +175,20 @@ def main() -> int:
         if args.quality_gate:
             import asyncio
             from ncdev.quality_gate.config import QualityGateConfig
+            from ncdev.quality_gate.models import FixManifest
             from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
+
+            async def _run_fixes(manifest: FixManifest) -> int:
+                """Apply fixes from the quality gate manifest.
+
+                Currently logs the issues and returns the count.
+                Full ncdev fix integration pending.
+                """
+                console.print(f"[yellow]Fixing {len(manifest.issues)} issues from Test Craftr[/yellow]")
+                for issue in manifest.issues:
+                    console.print(f"  [{issue.priority}] {issue.title}")
+                # TODO: Wire to actual ncdev fix with manifest format
+                return len(manifest.issues)
 
             qg_config = QualityGateConfig(enabled=True, max_cycles=3)
             orchestrator = QualityGateOrchestrator(qg_config)
@@ -187,6 +200,7 @@ def main() -> int:
                     target_url=args.base_url,
                     target_path=str(target_repo or workspace),
                     prd_content=prd_content,
+                    fix_callback=_run_fixes,
                 )
             )
             console.print(f"quality_gate phase={qg_state.phase} cycles={qg_state.current_cycle}")

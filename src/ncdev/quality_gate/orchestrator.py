@@ -208,14 +208,14 @@ class QualityGateOrchestrator:
                 regression=regression,
             )
 
-            # 7. Should we continue?
-            if not self.should_continue(state, scores):
+            # 7. If thresholds met or regression detected, stop without fixing.
+            if cycle_passed or regression:
                 state.cycles.append(cycle_result)
                 state.final_scores = scores
                 state.phase = "passed" if cycle_passed else "failed"
                 break
 
-            # 8. Generate manifest and run fix callback
+            # 8. Generate manifest and run fix callback.
             if issues and fix_callback is not None:
                 manifest = self.generate_manifest(run_id, target_path, issues, scores_dict)
                 state.phase = "fixing"
@@ -223,6 +223,13 @@ class QualityGateOrchestrator:
                 cycle_result.issues_fixed = issues_fixed
 
             state.cycles.append(cycle_result)
+
+            # 9. Check cycle budget AFTER fixes so every cycle gets its fixes.
+            if not self.should_continue(state, scores):
+                state.final_scores = scores
+                state.phase = "failed"
+                break
+
             state.phase = "testing"
 
         return state
