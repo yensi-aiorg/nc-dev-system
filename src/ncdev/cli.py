@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import shutil
+import tempfile
 from pathlib import Path
 
 from rich.console import Console
@@ -54,6 +57,129 @@ Other commands:
    ncdev serve --port 16650
    ncdev doctor
 """
+
+
+def _check_app_boots(target_path: Path) -> bool:
+    """Check whether the backend app still imports cleanly after a fix."""
+    backend_path = target_path / "backend"
+    if not backend_path.exists():
+        return True
+
+    try:
+        result = subprocess.run(
+            ["python", "-c", "from app.main import app; print('BOOT_OK')"],
+            cwd=str(backend_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return "BOOT_OK" in result.stdout
+    except Exception:
+        return False
+
+
+async def _run_quality_gate_fixes(manifest) -> int:
+    """Apply quality gate fixes using Claude Code CLI."""
+    from ncdev.quality_gate.models import FixManifest
+
+    manifest = FixManifest.model_validate(manifest)
+    target = Path(manifest.target_path).resolve()
+    fixed = 0
+
+    critical_issues = [issue for issue in manifest.issues if issue.priority in ("P0", "P1")]
+    console.print(
+        f"[yellow]Fixing {len(critical_issues)} critical issues "
+        f"(of {len(manifest.issues)} total)[/yellow]"
+    )
+
+    if not critical_issues:
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="ncdev-qg-fixes-") as temp_dir:
+        manifest_path = Path(temp_dir) / "fix-manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest.model_dump(mode="json"), indent=2),
+            encoding="utf-8",
+        )
+
+        for issue in critical_issues:
+            console.print(f"  Fixing [{issue.priority}] {issue.title}...")
+
+            reproduction = "\n".join(
+                f"  {index + 1}. {step}" for index, step in enumerate(issue.reproduction)
+            ) or "  1. Reproduction steps were not provided."
+            affected_files = (
+                ", ".join(path for path in issue.affected_files_hint if path)
+                or "unknown"
+            )
+
+            prompt = f"""Fix this bug in the application.
+
+Manifest file: {manifest_path}
+Issue ID: {issue.id}
+Title: {issue.title}
+Priority: {issue.priority}
+Category: {issue.category}
+Flow: {issue.flow}
+
+What should happen: {issue.expected}
+What actually happens: {issue.actual}
+
+Root cause hint: {issue.root_cause_hint or "None provided"}
+
+Reproduction steps:
+{reproduction}
+
+Likely affected files: {affected_files}
+
+Requirements:
+- Make the minimal change necessary to fix this issue.
+- Do not refactor unrelated code.
+- Run the most relevant tests for this issue.
+- Leave the repository with your code changes unstaged and uncommitted.
+- Print a short summary of what you changed and which tests you ran.
+"""
+
+            try:
+                result = subprocess.run(
+                    [
+                        "claude",
+                        "-p",
+                        prompt,
+                        "--output-format",
+                        "text",
+                        "--allowedTools",
+                        "Edit,Write,Bash,Read,Glob,Grep",
+                    ],
+                    cwd=str(target),
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+            except subprocess.TimeoutExpired:
+                console.print("    [red]Timed out after 5 minutes[/red]")
+                continue
+            except FileNotFoundError:
+                console.print("    [red]Claude CLI not found[/red]")
+                break
+
+            if result.returncode != 0:
+                error = (result.stderr or result.stdout or "").strip()
+                console.print(f"    [red]Failed: {error[:200]}[/red]")
+                continue
+
+            if not _check_app_boots(target):
+                console.print("    [red]Fix applied but app no longer boots[/red]")
+                continue
+
+            fixed += 1
+            console.print("    [green]Fixed[/green]")
+
+    tone = "green" if fixed == len(critical_issues) else "yellow"
+    console.print(
+        f"[{tone}]Fixed {fixed}/{len(critical_issues)} critical issues[/{tone}]"
+    )
+    return fixed
 
 
 def _doctor_report(workspace: Path) -> tuple[bool, str]:
@@ -172,23 +298,10 @@ def main() -> int:
         if state.status != "passed":
             return 1
 
-        if args.quality_gate:
+        if args.quality_gate and not args.dry_run:
             import asyncio
             from ncdev.quality_gate.config import QualityGateConfig
-            from ncdev.quality_gate.models import FixManifest
             from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
-
-            async def _run_fixes(manifest: FixManifest) -> int:
-                """Apply fixes from the quality gate manifest.
-
-                TODO: Wire to actual ncdev fix with manifest format.
-                Currently logs issues but does not apply fixes.
-                """
-                console.print(f"[yellow]Quality Gate found {len(manifest.issues)} issues:[/yellow]")
-                for issue in manifest.issues:
-                    console.print(f"  [{issue.priority}] {issue.title}")
-                console.print("[yellow]Fix integration pending — returning 0 fixes applied[/yellow]")
-                return 0
 
             qg_config = QualityGateConfig(enabled=True, max_cycles=3)
             orchestrator = QualityGateOrchestrator(qg_config)
@@ -200,7 +313,7 @@ def main() -> int:
                     target_url=args.base_url,
                     target_path=str(target_repo or workspace),
                     prd_content=prd_content,
-                    fix_callback=_run_fixes,
+                    fix_callback=_run_quality_gate_fixes,
                 )
             )
             console.print(f"quality_gate phase={qg_state.phase} cycles={qg_state.current_cycle}")
