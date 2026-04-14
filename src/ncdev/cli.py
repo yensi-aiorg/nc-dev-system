@@ -86,13 +86,17 @@ async def _run_quality_gate_fixes(manifest) -> int:
     target = Path(manifest.target_path).resolve()
     fixed = 0
 
-    critical_issues = [issue for issue in manifest.issues if issue.priority in ("P0", "P1")]
+    # Process all issues, not just P0/P1. Already sorted by priority.
+    all_issues = manifest.issues
+    timeout_by_priority = {"P0": 300, "P1": 300, "P2": 180, "P3": 120}
     console.print(
-        f"[yellow]Fixing {len(critical_issues)} critical issues "
-        f"(of {len(manifest.issues)} total)[/yellow]"
+        f"[yellow]Fixing {len(all_issues)} issues "
+        f"(P0/P1: {sum(1 for i in all_issues if i.priority in ('P0', 'P1'))}, "
+        f"P2: {sum(1 for i in all_issues if i.priority == 'P2')}, "
+        f"P3: {sum(1 for i in all_issues if i.priority == 'P3')})[/yellow]"
     )
 
-    if not critical_issues:
+    if not all_issues:
         return 0
 
     with tempfile.TemporaryDirectory(prefix="ncdev-qg-fixes-") as temp_dir:
@@ -102,8 +106,18 @@ async def _run_quality_gate_fixes(manifest) -> int:
             encoding="utf-8",
         )
 
-        for issue in critical_issues:
-            console.print(f"  Fixing [{issue.priority}] {issue.title}...")
+        for issue in all_issues:
+            timeout = timeout_by_priority.get(issue.priority, 120)
+            console.print(f"  Fixing [{issue.priority}] {issue.title} (timeout {timeout}s)...")
+
+            # Checkpoint before fix attempt — snapshot working tree
+            snapshot = subprocess.run(
+                ["git", "stash", "create"],
+                cwd=str(target),
+                capture_output=True,
+                text=True,
+            )
+            stash_sha = snapshot.stdout.strip()
 
             reproduction = "\n".join(
                 f"  {index + 1}. {step}" for index, step in enumerate(issue.reproduction)
@@ -154,10 +168,13 @@ Requirements:
                     cwd=str(target),
                     capture_output=True,
                     text=True,
-                    timeout=300,
+                    timeout=timeout,
                 )
             except subprocess.TimeoutExpired:
-                console.print("    [red]Timed out after 5 minutes[/red]")
+                console.print(f"    [red]Timed out after {timeout}s — reverting[/red]")
+                subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+                if stash_sha:
+                    subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
                 continue
             except FileNotFoundError:
                 console.print("    [red]Claude CLI not found[/red]")
@@ -165,19 +182,32 @@ Requirements:
 
             if result.returncode != 0:
                 error = (result.stderr or result.stdout or "").strip()
-                console.print(f"    [red]Failed: {error[:200]}[/red]")
+                console.print(f"    [red]Failed: {error[:200]} — reverting[/red]")
+                subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+                if stash_sha:
+                    subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
                 continue
 
             if not _check_app_boots(target):
-                console.print("    [red]Fix applied but app no longer boots[/red]")
+                console.print("    [red]Fix broke app — reverting[/red]")
+                subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+                if stash_sha:
+                    subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
                 continue
 
+            # Success — commit the fix
+            subprocess.run(["git", "add", "-A"], cwd=str(target), capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", f"fix: {issue.title} [{issue.id}]"],
+                cwd=str(target),
+                capture_output=True,
+            )
             fixed += 1
             console.print("    [green]Fixed[/green]")
 
-    tone = "green" if fixed == len(critical_issues) else "yellow"
+    tone = "green" if fixed == len(all_issues) else "yellow"
     console.print(
-        f"[{tone}]Fixed {fixed}/{len(critical_issues)} critical issues[/{tone}]"
+        f"[{tone}]Fixed {fixed}/{len(all_issues)} issues[/{tone}]"
     )
     return fixed
 
