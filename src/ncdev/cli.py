@@ -104,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--model", default="opus", choices=["opus", "sonnet", "haiku"], help="Claude model for fallback/repair")
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
+    full.add_argument("--quality-gate", action="store_true", default=False, help="Run quality gate loop after build completes")
 
     # --- Dev Mode: The Autonomous Senior Engineer ---
     dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
@@ -168,7 +169,33 @@ def main() -> int:
         console.print(f"run_id={state.run_id} status={state.status}")
         console.print(f"features: {state.completed_features}/{state.total_features} passed")
         console.print(f"run_dir={state.run_dir}")
-        return 0 if state.status == "passed" else 1
+        if state.status != "passed":
+            return 1
+
+        if args.quality_gate:
+            import asyncio
+            from ncdev.quality_gate.config import QualityGateConfig
+            from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
+
+            qg_config = QualityGateConfig(enabled=True, max_cycles=3)
+            orchestrator = QualityGateOrchestrator(qg_config)
+            prd_content = Path(args.source).resolve().read_text()
+            console.print("[cyan]Starting quality gate loop...[/cyan]")
+            qg_state = asyncio.run(
+                orchestrator.run(
+                    project_name=workspace.name,
+                    target_url=args.base_url,
+                    target_path=str(target_repo or workspace),
+                    prd_content=prd_content,
+                )
+            )
+            console.print(f"quality_gate phase={qg_state.phase} cycles={qg_state.current_cycle}")
+            if qg_state.final_scores:
+                s = qg_state.final_scores
+                console.print(f"scores: core_flow={s.core_flow} resilience={s.resilience} polish={s.polish}")
+            return 0 if qg_state.phase == "passed" else 1
+
+        return 0
 
     if args.command == "dev":
         from ncdev.dev import run_dev
