@@ -100,6 +100,18 @@ async def _run_quality_gate_fixes(manifest) -> int:
     if not all_issues:
         return 0
 
+    # Query Citex for Test Craftr's findings (enriches repair prompts)
+    citex = None
+    try:
+        from ncdev.v3.citex_client import CitexClient
+        project_id = Path(manifest.target_path).name
+        citex = CitexClient(project_id=project_id)
+        if not citex.health_check():
+            citex = None
+            console.print("[dim]Citex not available, fixing without RAG context[/dim]")
+    except Exception:
+        console.print("[dim]Citex client not available, fixing without RAG context[/dim]")
+
     with tempfile.TemporaryDirectory(prefix="ncdev-qg-fixes-") as temp_dir:
         manifest_path = Path(temp_dir) / "fix-manifest.json"
         manifest_path.write_text(
@@ -128,6 +140,24 @@ async def _run_quality_gate_fixes(manifest) -> int:
                 or "unknown"
             )
 
+            # Enrich with Citex context (if available)
+            citex_context = ""
+            if citex:
+                tc_findings = citex.query(f"Test findings for {issue.title}", category="signals", limit=2)
+                code_context = citex.query(f"Component handling {issue.flow}", category="code", limit=2)
+                if tc_findings or code_context:
+                    findings_text = chr(10).join(tc_findings) if tc_findings else "None available"
+                    code_text = chr(10).join(code_context) if code_context else "None available"
+                    citex_context = f"""
+
+## Additional Context from Citex RAG
+### Test Craftr Findings
+{findings_text}
+
+### Relevant Code Context
+{code_text}
+"""
+
             prompt = f"""Fix this bug in the application.
 
 Manifest file: {manifest_path}
@@ -153,7 +183,7 @@ Requirements:
 - Run the most relevant tests for this issue.
 - Leave the repository with your code changes unstaged and uncommitted.
 - Print a short summary of what you changed and which tests you ran.
-"""
+{citex_context}"""
 
             try:
                 result = subprocess.run(
