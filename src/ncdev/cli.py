@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -67,7 +68,7 @@ def _check_app_boots(target_path: Path) -> bool:
 
     try:
         result = subprocess.run(
-            ["python", "-c", "from app.main import app; print('BOOT_OK')"],
+            [sys.executable, "-c", "from app.main import app; print('BOOT_OK')"],
             cwd=str(backend_path),
             capture_output=True,
             text=True,
@@ -173,6 +174,7 @@ Requirements:
             except subprocess.TimeoutExpired:
                 console.print(f"    [red]Timed out after {timeout}s — reverting[/red]")
                 subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+                subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
                 if stash_sha:
                     subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
                 continue
@@ -184,6 +186,7 @@ Requirements:
                 error = (result.stderr or result.stdout or "").strip()
                 console.print(f"    [red]Failed: {error[:200]} — reverting[/red]")
                 subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+                subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
                 if stash_sha:
                     subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
                 continue
@@ -191,19 +194,23 @@ Requirements:
             if not _check_app_boots(target):
                 console.print("    [red]Fix broke app — reverting[/red]")
                 subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+                subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
                 if stash_sha:
                     subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
                 continue
 
             # Success — commit the fix
             subprocess.run(["git", "add", "-A"], cwd=str(target), capture_output=True)
-            subprocess.run(
+            commit_result = subprocess.run(
                 ["git", "commit", "-m", f"fix: {issue.title} [{issue.id}]"],
                 cwd=str(target),
                 capture_output=True,
             )
-            fixed += 1
-            console.print("    [green]Fixed[/green]")
+            if commit_result.returncode == 0:
+                fixed += 1
+                console.print("    [green]Fixed and committed[/green]")
+            else:
+                console.print("    [yellow]Fix applied but commit failed[/yellow]")
 
     tone = "green" if fixed == len(all_issues) else "yellow"
     console.print(
