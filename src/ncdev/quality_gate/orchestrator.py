@@ -78,7 +78,7 @@ class QualityGateOrchestrator:
     # ------------------------------------------------------------------
 
     async def trigger_test_run(
-        self, target_url: str, prd_content: str, cycle: int
+        self, target_url: str, prd_content: str, cycle: int, project_id: str = ""
     ) -> str:
         """POST to Test Craftr /api/pipeline/runs, returns run_id."""
         async with httpx.AsyncClient() as client:
@@ -88,6 +88,7 @@ class QualityGateOrchestrator:
                     "target_url": target_url,
                     "prd_content": prd_content,
                     "cycle": cycle,
+                    "project_id": project_id,
                 },
                 timeout=30.0,
             )
@@ -164,12 +165,14 @@ class QualityGateOrchestrator:
         state = self.init_state(project_name, target_url)
         state.phase = "testing"
 
+        project_id = project_name.lower().replace(" ", "-")
+
         while True:
             state.current_cycle += 1
             logger.info("Quality gate cycle %d started", state.current_cycle)
 
             # 1. Trigger test run
-            run_id = await self.trigger_test_run(target_url, prd_content, state.current_cycle)
+            run_id = await self.trigger_test_run(target_url, prd_content, state.current_cycle, project_id=project_id)
 
             # 2. Wait for results
             result_data = await self.wait_for_results(run_id)
