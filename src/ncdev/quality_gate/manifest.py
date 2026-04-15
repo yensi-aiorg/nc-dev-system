@@ -30,6 +30,18 @@ _TYPE_PERSONA_MAP: dict[str, str] = {
 # Priority sort order (lower index = higher priority).
 _PRIORITY_ORDER: dict[str, int] = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
+# Type sort order — functionality first (most fixable), visual last (least fixable by code).
+_TYPE_ORDER: dict[str, int] = {
+    "functionality": 0,
+    "network": 1,
+    "console": 2,
+    "ux": 3,
+    "visual": 4,
+    "accessibility": 5,
+    "performance": 6,
+    "security": 7,
+}
+
 
 class ManifestGenerator:
     """Converts Test Craftr issue lists into FixManifest objects for ncdev fix."""
@@ -73,8 +85,11 @@ class ManifestGenerator:
                 )
             )
 
-        # Sort by priority — P0 first.
-        fix_issues.sort(key=lambda i: _PRIORITY_ORDER.get(i.priority, 99))
+        # Sort by priority first, then by type (functionality before visual).
+        fix_issues.sort(key=lambda i: (
+            _PRIORITY_ORDER.get(i.priority, 99),
+            _TYPE_ORDER.get(i.category, 50),
+        ))
 
         return FixManifest(
             run_id=run_id,
