@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 from rich.console import Console
@@ -79,13 +77,31 @@ def _check_app_boots(target_path: Path) -> bool:
         return False
 
 
-async def _run_quality_gate_fixes(manifest) -> int:
-    """Apply quality gate fixes using Claude Code CLI."""
+async def _run_quality_gate_fixes(manifest, config=None) -> int:
+    """Apply quality gate fixes using the AI provider adapter.
+
+    Uses the configured AI provider (default: Codex CLI) with automatic
+    fallback (default: Claude CLI).  All AI CLI calls go through
+    :mod:`ncdev.ai_provider` -- no direct subprocess calls to ``claude``
+    or ``codex`` remain in this module.
+    """
+    from ncdev.ai_provider import get_provider_with_fallback
+    from ncdev.quality_gate.config import QualityGateConfig
     from ncdev.quality_gate.models import FixManifest
+
+    if config is None:
+        config = QualityGateConfig()
 
     manifest = FixManifest.model_validate(manifest)
     target = Path(manifest.target_path).resolve()
     fixed = 0
+
+    # Resolve the AI provider from config
+    provider = get_provider_with_fallback(config.ai_provider, config.ai_fallback)
+    console.print(
+        f"[dim]AI provider: {type(provider).__name__} "
+        f"(primary={config.ai_provider}, fallback={config.ai_fallback})[/dim]"
+    )
 
     # Process all issues, not just P0/P1. Already sorted by priority.
     all_issues = manifest.issues
@@ -121,62 +137,57 @@ async def _run_quality_gate_fixes(manifest) -> int:
     except Exception:
         console.print("[dim]Citex client not available, fixing without RAG context[/dim]")
 
-    with tempfile.TemporaryDirectory(prefix="ncdev-qg-fixes-") as temp_dir:
-        manifest_path = Path(temp_dir) / "fix-manifest.json"
-        manifest_path.write_text(
-            json.dumps(manifest.model_dump(mode="json"), indent=2),
-            encoding="utf-8",
+    fix_tools = ["Edit", "Write", "Bash", "Read", "Glob", "Grep"]
+
+    for url, group_issues in url_groups.items():
+        if not group_issues:
+            continue
+
+        # Use the highest priority timeout for the group
+        timeout = min(
+            timeout_by_priority.get(i.priority, 120) for i in group_issues
         )
+        # Give grouped fixes more time (multiple issues)
+        if len(group_issues) > 1:
+            timeout = min(timeout * 2, config.ai_fix_timeout)
 
-        for url, group_issues in url_groups.items():
-            if not group_issues:
-                continue
+        console.print(
+            f"\n[cyan]Fixing {len(group_issues)} issue(s) at {url} "
+            f"(timeout {timeout}s)[/cyan]"
+        )
+        for gi in group_issues:
+            console.print(f"  [{gi.priority}] {gi.title}")
 
-            # Use the highest priority timeout for the group
-            timeout = min(
-                timeout_by_priority.get(i.priority, 120) for i in group_issues
-            )
-            # Give grouped fixes more time (multiple issues)
-            if len(group_issues) > 1:
-                timeout = min(timeout * 2, 600)
+        # Checkpoint before fix attempt -- snapshot working tree
+        snapshot = subprocess.run(
+            ["git", "stash", "create"],
+            cwd=str(target),
+            capture_output=True,
+            text=True,
+        )
+        stash_sha = snapshot.stdout.strip()
 
-            console.print(
-                f"\n[cyan]Fixing {len(group_issues)} issue(s) at {url} "
-                f"(timeout {timeout}s)[/cyan]"
-            )
-            for gi in group_issues:
-                console.print(f"  [{gi.priority}] {gi.title}")
+        # Build a combined prompt for all issues at this URL
+        issues_description = "\n\n".join([
+            f"Issue {idx+1}: [{i.priority}] {i.title}\n"
+            f"  Category: {i.category}\n"
+            f"  Flow: {i.flow}\n"
+            f"  Expected: {i.expected}\n"
+            f"  Actual: {i.actual}\n"
+            f"  Hint: {i.root_cause_hint or 'None provided'}\n"
+            f"  Affected files: {', '.join(p for p in i.affected_files_hint if p) or 'unknown'}"
+            for idx, i in enumerate(group_issues)
+        ])
 
-            # Checkpoint before fix attempt — snapshot working tree
-            snapshot = subprocess.run(
-                ["git", "stash", "create"],
-                cwd=str(target),
-                capture_output=True,
-                text=True,
-            )
-            stash_sha = snapshot.stdout.strip()
-
-            # Build a combined prompt for all issues at this URL
-            issues_description = "\n\n".join([
-                f"Issue {idx+1}: [{i.priority}] {i.title}\n"
-                f"  Category: {i.category}\n"
-                f"  Flow: {i.flow}\n"
-                f"  Expected: {i.expected}\n"
-                f"  Actual: {i.actual}\n"
-                f"  Hint: {i.root_cause_hint or 'None provided'}\n"
-                f"  Affected files: {', '.join(p for p in i.affected_files_hint if p) or 'unknown'}"
-                for idx, i in enumerate(group_issues)
-            ])
-
-            # Enrich with Citex context (if available)
-            citex_context = ""
-            if citex:
-                tc_findings = citex.query(f"Test findings for {url}", category="signals", limit=2)
-                code_context = citex.query(f"Component handling {url}", category="code", limit=2)
-                if tc_findings or code_context:
-                    findings_text = chr(10).join(tc_findings) if tc_findings else "None available"
-                    code_text = chr(10).join(code_context) if code_context else "None available"
-                    citex_context = f"""
+        # Enrich with Citex context (if available)
+        citex_context = ""
+        if citex:
+            tc_findings = citex.query(f"Test findings for {url}", category="signals", limit=2)
+            code_context = citex.query(f"Component handling {url}", category="code", limit=2)
+            if tc_findings or code_context:
+                findings_text = chr(10).join(tc_findings) if tc_findings else "None available"
+                code_text = chr(10).join(code_context) if code_context else "None available"
+                citex_context = f"""
 
 ## Additional Context from Citex RAG
 ### Test Craftr Findings
@@ -186,7 +197,7 @@ async def _run_quality_gate_fixes(manifest) -> int:
 {code_text}
 """
 
-            prompt = f"""Fix these {len(group_issues)} related issues at {url}:
+        prompt = f"""Fix these {len(group_issues)} related issues at {url}:
 
 {issues_description}
 
@@ -201,68 +212,47 @@ Requirements:
 - Print a short summary of what you changed and which tests you ran.
 {citex_context}"""
 
-            try:
-                result = subprocess.run(
-                    [
-                        "claude",
-                        "-p",
-                        prompt,
-                        "--output-format",
-                        "text",
-                        "--allowedTools",
-                        "Edit,Write,Bash,Read,Glob,Grep",
-                    ],
-                    cwd=str(target),
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                )
-            except subprocess.TimeoutExpired:
-                console.print(f"    [red]Timed out after {timeout}s — reverting[/red]")
-                subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
-                subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
-                if stash_sha:
-                    subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
-                continue
-            except FileNotFoundError:
-                console.print("    [red]Claude CLI not found[/red]")
-                break
+        result = await provider.complete(
+            prompt=prompt,
+            timeout=timeout,
+            cwd=str(target),
+            tools=fix_tools,
+        )
 
-            if result.returncode != 0:
-                error = (result.stderr or result.stdout or "").strip()
-                console.print(f"    [red]Failed: {error[:200]} — reverting[/red]")
-                subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
-                subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
-                if stash_sha:
-                    subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
-                continue
+        if result is None:
+            console.print(f"    [red]AI provider returned no result -- reverting[/red]")
+            subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+            subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
+            if stash_sha:
+                subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
+            continue
 
-            if not _check_app_boots(target):
-                console.print("    [red]Fix broke app — reverting[/red]")
-                subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
-                subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
-                if stash_sha:
-                    subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
-                continue
+        if not _check_app_boots(target):
+            console.print("    [red]Fix broke app -- reverting[/red]")
+            subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
+            subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
+            if stash_sha:
+                subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
+            continue
 
-            # Success — commit the fix for this URL group
-            issue_ids = ", ".join(i.id for i in group_issues)
-            commit_msg = (
-                f"fix: {len(group_issues)} issues at {url} [{issue_ids}]"
-                if len(group_issues) > 1
-                else f"fix: {group_issues[0].title} [{group_issues[0].id}]"
-            )
-            subprocess.run(["git", "add", "-A"], cwd=str(target), capture_output=True)
-            commit_result = subprocess.run(
-                ["git", "commit", "-m", commit_msg],
-                cwd=str(target),
-                capture_output=True,
-            )
-            if commit_result.returncode == 0:
-                fixed += len(group_issues)
-                console.print(f"    [green]Fixed and committed {len(group_issues)} issue(s)[/green]")
-            else:
-                console.print("    [yellow]Fix applied but commit failed[/yellow]")
+        # Success -- commit the fix for this URL group
+        issue_ids = ", ".join(i.id for i in group_issues)
+        commit_msg = (
+            f"fix: {len(group_issues)} issues at {url} [{issue_ids}]"
+            if len(group_issues) > 1
+            else f"fix: {group_issues[0].title} [{group_issues[0].id}]"
+        )
+        subprocess.run(["git", "add", "-A"], cwd=str(target), capture_output=True)
+        commit_result = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=str(target),
+            capture_output=True,
+        )
+        if commit_result.returncode == 0:
+            fixed += len(group_issues)
+            console.print(f"    [green]Fixed and committed {len(group_issues)} issue(s)[/green]")
+        else:
+            console.print("    [yellow]Fix applied but commit failed[/yellow]")
 
     tone = "green" if fixed == len(all_issues) else "yellow"
     console.print(

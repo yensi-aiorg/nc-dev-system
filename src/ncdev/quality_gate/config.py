@@ -13,3 +13,8 @@ class QualityGateConfig(BaseModel):
     core_flow_threshold: int = 100
     resilience_threshold: int = 70
     polish_threshold: int = 80
+
+    # AI provider settings
+    ai_provider: str = "codex"  # "codex" or "claude"
+    ai_fallback: str = "claude"
+    ai_fix_timeout: int = 600  # seconds per fix group
