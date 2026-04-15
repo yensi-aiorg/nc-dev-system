@@ -100,6 +100,15 @@ async def _run_quality_gate_fixes(manifest) -> int:
     if not all_issues:
         return 0
 
+    # Group issues by URL for smarter fixing
+    from collections import defaultdict
+    url_groups: dict[str, list] = defaultdict(list)
+    for issue in all_issues:
+        url = issue.flow.split(" → ")[0] if " → " in issue.flow else "/"
+        url_groups[url].append(issue)
+
+    console.print(f"[cyan]Grouped into {len(url_groups)} URL groups[/cyan]")
+
     # Query Citex for Test Craftr's findings (enriches repair prompts)
     citex = None
     try:
@@ -119,9 +128,24 @@ async def _run_quality_gate_fixes(manifest) -> int:
             encoding="utf-8",
         )
 
-        for issue in all_issues:
-            timeout = timeout_by_priority.get(issue.priority, 120)
-            console.print(f"  Fixing [{issue.priority}] {issue.title} (timeout {timeout}s)...")
+        for url, group_issues in url_groups.items():
+            if not group_issues:
+                continue
+
+            # Use the highest priority timeout for the group
+            timeout = min(
+                timeout_by_priority.get(i.priority, 120) for i in group_issues
+            )
+            # Give grouped fixes more time (multiple issues)
+            if len(group_issues) > 1:
+                timeout = min(timeout * 2, 600)
+
+            console.print(
+                f"\n[cyan]Fixing {len(group_issues)} issue(s) at {url} "
+                f"(timeout {timeout}s)[/cyan]"
+            )
+            for gi in group_issues:
+                console.print(f"  [{gi.priority}] {gi.title}")
 
             # Checkpoint before fix attempt — snapshot working tree
             snapshot = subprocess.run(
@@ -132,19 +156,23 @@ async def _run_quality_gate_fixes(manifest) -> int:
             )
             stash_sha = snapshot.stdout.strip()
 
-            reproduction = "\n".join(
-                f"  {index + 1}. {step}" for index, step in enumerate(issue.reproduction)
-            ) or "  1. Reproduction steps were not provided."
-            affected_files = (
-                ", ".join(path for path in issue.affected_files_hint if path)
-                or "unknown"
-            )
+            # Build a combined prompt for all issues at this URL
+            issues_description = "\n\n".join([
+                f"Issue {idx+1}: [{i.priority}] {i.title}\n"
+                f"  Category: {i.category}\n"
+                f"  Flow: {i.flow}\n"
+                f"  Expected: {i.expected}\n"
+                f"  Actual: {i.actual}\n"
+                f"  Hint: {i.root_cause_hint or 'None provided'}\n"
+                f"  Affected files: {', '.join(p for p in i.affected_files_hint if p) or 'unknown'}"
+                for idx, i in enumerate(group_issues)
+            ])
 
             # Enrich with Citex context (if available)
             citex_context = ""
             if citex:
-                tc_findings = citex.query(f"Test findings for {issue.title}", category="signals", limit=2)
-                code_context = citex.query(f"Component handling {issue.flow}", category="code", limit=2)
+                tc_findings = citex.query(f"Test findings for {url}", category="signals", limit=2)
+                code_context = citex.query(f"Component handling {url}", category="code", limit=2)
                 if tc_findings or code_context:
                     findings_text = chr(10).join(tc_findings) if tc_findings else "None available"
                     code_text = chr(10).join(code_context) if code_context else "None available"
@@ -158,29 +186,17 @@ async def _run_quality_gate_fixes(manifest) -> int:
 {code_text}
 """
 
-            prompt = f"""Fix this bug in the application.
+            prompt = f"""Fix these {len(group_issues)} related issues at {url}:
 
-Manifest file: {manifest_path}
-Issue ID: {issue.id}
-Title: {issue.title}
-Priority: {issue.priority}
-Category: {issue.category}
-Flow: {issue.flow}
+{issues_description}
 
-What should happen: {issue.expected}
-What actually happens: {issue.actual}
-
-Root cause hint: {issue.root_cause_hint or "None provided"}
-
-Reproduction steps:
-{reproduction}
-
-Likely affected files: {affected_files}
+These issues are at the same URL and likely share a common root cause.
+Analyze them together and make the minimal changes needed.
 
 Requirements:
-- Make the minimal change necessary to fix this issue.
+- Make the minimal change necessary to fix these issues.
 - Do not refactor unrelated code.
-- Run the most relevant tests for this issue.
+- Run the most relevant tests for these issues.
 - Leave the repository with your code changes unstaged and uncommitted.
 - Print a short summary of what you changed and which tests you ran.
 {citex_context}"""
@@ -229,16 +245,22 @@ Requirements:
                     subprocess.run(["git", "stash", "apply", stash_sha], cwd=str(target), capture_output=True)
                 continue
 
-            # Success — commit the fix
+            # Success — commit the fix for this URL group
+            issue_ids = ", ".join(i.id for i in group_issues)
+            commit_msg = (
+                f"fix: {len(group_issues)} issues at {url} [{issue_ids}]"
+                if len(group_issues) > 1
+                else f"fix: {group_issues[0].title} [{group_issues[0].id}]"
+            )
             subprocess.run(["git", "add", "-A"], cwd=str(target), capture_output=True)
             commit_result = subprocess.run(
-                ["git", "commit", "-m", f"fix: {issue.title} [{issue.id}]"],
+                ["git", "commit", "-m", commit_msg],
                 cwd=str(target),
                 capture_output=True,
             )
             if commit_result.returncode == 0:
-                fixed += 1
-                console.print("    [green]Fixed and committed[/green]")
+                fixed += len(group_issues)
+                console.print(f"    [green]Fixed and committed {len(group_issues)} issue(s)[/green]")
             else:
                 console.print("    [yellow]Fix applied but commit failed[/yellow]")
 
