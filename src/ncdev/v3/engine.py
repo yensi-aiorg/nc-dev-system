@@ -144,7 +144,7 @@ def run_v3_full(
 
     ingestion_report = None
     if not citex.health_check():
-        console.print("[red]ERROR: Citex RAG (localhost:20160) is required but unreachable.[/red]")
+        console.print("[red]ERROR: Citex RAG (localhost:20161) is required but unreachable.[/red]")
         console.print("[red]Start Citex before running ncdev full.[/red]")
         state.phase = "failed"
         state.status = "failed"

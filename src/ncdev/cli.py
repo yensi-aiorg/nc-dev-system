@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ncdev.preflight import run_preflight
+from ncdev.preflight import run_preflight, require_citex
 from ncdev.v2.engine import (
     load_v2_run_state,
     run_v2_fix,
@@ -125,17 +125,11 @@ async def _run_quality_gate_fixes(manifest, config=None) -> int:
 
     console.print(f"[cyan]Grouped into {len(url_groups)} URL groups[/cyan]")
 
-    # Query Citex for Test Craftr's findings (enriches repair prompts)
-    citex = None
-    try:
-        from ncdev.v3.citex_client import CitexClient
-        project_id = Path(manifest.target_path).name
-        citex = CitexClient(project_id=project_id)
-        if not citex.health_check():
-            citex = None
-            console.print("[dim]Citex not available, fixing without RAG context[/dim]")
-    except Exception:
-        console.print("[dim]Citex client not available, fixing without RAG context[/dim]")
+    # Query Citex for Test Craftr's findings (required for all fix flows)
+    require_citex()
+    from ncdev.v3.citex_client import CitexClient
+    project_id = Path(manifest.target_path).name
+    citex = CitexClient(project_id=project_id)
 
     fix_tools = ["Edit", "Write", "Bash", "Read", "Glob", "Grep"]
 

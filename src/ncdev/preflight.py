@@ -26,6 +26,14 @@ def check_citex(url: str = "http://localhost:20161") -> bool:
         return False
 
 
+def require_citex(url: str = "http://localhost:20161") -> None:
+    """Fail fast when Citex is unreachable."""
+    if not check_citex(url):
+        raise RuntimeError(
+            f"Citex RAG is required but unreachable at {url}. Start Citex before running NC Dev System."
+        )
+
+
 def required_commands(mode: str, full: bool) -> list[str]:
     base = ["git", "claude"]
     if full:

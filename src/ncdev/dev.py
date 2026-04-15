@@ -21,11 +21,12 @@ from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
+from ncdev.preflight import require_citex
 
 console = Console()
 
 # ── Citex Integration ───────────────────────────────────────────────────
-CITEX_API = "http://localhost:20160"
+CITEX_API = "http://localhost:20161"
 
 
 def citex_store(project_id: str, content: str, metadata: dict) -> bool:
@@ -42,8 +43,8 @@ def citex_store(project_id: str, content: str, metadata: dict) -> bool:
             timeout=30,
         )
         return resp.status_code < 400
-    except Exception:
-        return False
+    except Exception as exc:
+        raise RuntimeError(f"Failed to store context in Citex at {CITEX_API}") from exc
 
 
 def citex_query(project_id: str, query: str, limit: int = 10) -> str:
@@ -68,8 +69,8 @@ def citex_query(project_id: str, query: str, limit: int = 10) -> str:
                 if content:
                     parts.append(content[:2000])
             return "\n\n---\n\n".join(parts) if parts else ""
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError(f"Failed to query Citex at {CITEX_API}") from exc
     return ""
 
 
@@ -77,6 +78,7 @@ def citex_query(project_id: str, query: str, limit: int = 10) -> str:
 
 def gather_project_context(project_path: Path, task: str) -> str:
     """Gather context about the project from filesystem + Citex."""
+    require_citex(CITEX_API)
     parts = []
 
     # 1. Read README/spec if exists
@@ -660,6 +662,7 @@ def run_dev(
     start_time = time.time()
     project_id = project_path.name
     run_id = f"dev-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+    require_citex(CITEX_API)
 
     console.print(Panel(
         f"[bold cyan]NC Dev System — Autonomous Senior Engineer[/bold cyan]\n"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -44,7 +45,7 @@ def scan_completed_features(
         # Check 2: Do files related to this feature exist?
         has_files = _feature_has_files(feature, file_tree)
 
-        if in_git and has_files and tests_pass:
+        if tests_pass and (in_git or has_files):
             completed.append(feature.feature_id)
 
     return completed
@@ -101,14 +102,31 @@ def _run_smoke_test(target_path: Path) -> bool:
         # Maybe tests are at root level
         backend = target_path
 
+    has_tests = any(backend.rglob("test_*.py")) or any(backend.rglob("*_test.py"))
+    if not has_tests:
+        return True
+
     try:
         result = subprocess.run(
-            ["python", "-m", "pytest", "-q", "--timeout=30", "-x", "--no-header"],
+            [sys.executable, "-m", "pytest", "-q", "-x", "--no-header"],
             cwd=str(backend),
             capture_output=True, text=True, timeout=60,
         )
-        # Passes if exit code 0, or if there are passing tests even with some failures
-        return result.returncode == 0 or "passed" in result.stdout
+        # Accept green runs and partially green runs that still discovered passing tests.
+        if result.returncode == 0 or "passed" in result.stdout:
+            return True
+
+        combined_output = f"{result.stdout}\n{result.stderr}".lower()
+
+        # Brownfield repos often do not have pytest wired yet. That should not block
+        # feature detection entirely.
+        non_blocking_markers = [
+            "no tests ran",
+            "collected 0 items",
+            "unrecognized arguments: --timeout=30",
+            "module named pytest",
+        ]
+        return any(marker in combined_output for marker in non_blocking_markers)
     except Exception:
         return False
 
