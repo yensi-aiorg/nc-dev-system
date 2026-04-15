@@ -40,7 +40,7 @@ def test_ingest_returns_false_on_error() -> None:
 def test_query_returns_content_strings() -> None:
     response = Mock(status_code=200)
     response.json.return_value = {
-        "results": [
+        "items": [
             {"content": "User model has email, name fields"},
             {"content": "Project model has title, status fields"},
         ]
@@ -61,11 +61,11 @@ def test_query_returns_empty_on_error() -> None:
 
 def test_query_sends_top_k_in_payload() -> None:
     response = Mock(status_code=200)
-    response.json.return_value = {"results": [{"content": "color primary: #0f172a"}]}
+    response.json.return_value = {"items": [{"content": "color primary: #0f172a"}]}
     response.raise_for_status = Mock()
     with patch("ncdev.v3.citex_client.httpx.post", return_value=response) as mock_post:
         client = CitexClient(project_id="demo")
         client.query("design tokens", limit=3)
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["top_k"] == 3
-    assert payload["project_id"] == "demo"
+    assert payload["limit"] == 3
+    assert payload["projectId"] == "demo"

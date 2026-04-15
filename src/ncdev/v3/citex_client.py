@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any
-
 import httpx
 
 CITEX_DEFAULT_URL = "http://localhost:20161"
@@ -26,7 +25,7 @@ class CitexClient:
         try:
             resp = httpx.get(f"{self.base_url}/health", timeout=self.timeout)
             return resp.status_code < 400
-        except httpx.HTTPError:
+        except (httpx.HTTPError, Exception):
             return False
 
     def ingest(
@@ -59,7 +58,7 @@ class CitexClient:
                 timeout=self.timeout,
             )
             return resp.status_code < 400
-        except httpx.HTTPError:
+        except (httpx.HTTPError, Exception):
             return False
 
     def query(
@@ -70,24 +69,26 @@ class CitexClient:
     ) -> list[str]:
         """Query Citex for relevant context. Returns list of content strings."""
         payload: dict[str, Any] = {
-            "project_id": self.project_id,
+            "projectId": self.project_id,
             "query": query,
-            "top_k": limit,
+            "limit": limit,
         }
+        if category and category in _VALID_CATEGORIES:
+            payload["category"] = category
         try:
             resp = httpx.post(
-                f"{self.base_url}/api/retrieval/query",
+                f"{self.base_url}/api/content/query",
                 json=payload,
                 timeout=self.timeout,
             )
             resp.raise_for_status()
-        except httpx.HTTPError:
+        except (httpx.HTTPError, Exception):
             return []
         data = resp.json()
         return [
-            r.get("content", r.get("text", ""))
-            for r in data.get("results", [])
-            if r.get("content") or r.get("text")
+            item.get("content", "")
+            for item in data.get("items", [])
+            if item.get("content")
         ]
 
 
