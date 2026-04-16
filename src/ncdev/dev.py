@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """NC Dev System — The Autonomous Senior Software Engineer.
 
-Thin glue that connects Claude CLI + Codex CLI + Citex + Playwright + ElevenLabs.
+Thin glue that connects Codex CLI + Citex + Playwright + ElevenLabs.
 The AI decides how to work. This script provides context and enforces guardrails.
 
 Usage:
@@ -296,7 +296,7 @@ For now, include Keystone integration POINTS (health endpoint, structured loggin
 # ── AI Invocation ───────────────────────────────────────────────────────
 
 def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
-    """Claude CLI PLANS the approach — writes detailed build instructions for Codex to execute."""
+    """Codex plans the approach — writes detailed build instructions for the build pass."""
     planning_prompt = f"""You are a senior software architect. Your job is to PLAN, not build.
 
 Write a detailed, actionable build plan to the file .ncdev/build-instructions.md that another developer (Codex) will follow to build the entire project. The plan must be specific enough that Codex can execute it without asking questions.
@@ -393,28 +393,27 @@ After building all features, generate end-to-end tests that:
 - Data flows MUST be documented as you build. They drive your test strategy.
 """
 
-    # Save the full context to a file so Claude can read it (avoids ARG_MAX limits)
+    # Save the full planning prompt to a file so Codex can read it (avoids ARG_MAX limits)
     context_dir = project_path / ".ncdev"
     context_dir.mkdir(parents=True, exist_ok=True)
     context_file = context_dir / "build-instructions.md"
     context_file.write_text(planning_prompt, encoding="utf-8")
 
-    # Give Claude a short prompt that tells it to read the instructions file
+    # Give Codex a short prompt that constrains it to planning only.
     short_prompt = (
-        f"Read the file .ncdev/build-instructions.md in this directory for your complete task instructions. "
-        f"Follow every instruction in that file precisely. Build the project, run tests, take screenshots. "
+        "Read the file .ncdev/build-instructions.md in this directory. "
+        "Replace that file with a detailed executable build plan for the task. "
+        "Do not implement the project yet. Do not edit files outside .ncdev/build-instructions.md. "
         f"The task is: {task}"
     )
 
-    # Claude PLANS only — writes the build instructions file
-    console.print("[cyan]Claude planning...[/cyan]")
+    console.print("[cyan]Codex planning...[/cyan]")
     try:
         result = subprocess.run(
             [
-                "claude", "-p", short_prompt,
-                "--output-format", "text",
-                "--model", "claude-opus-4-6",
-                "--allowedTools", "Read,Write,Glob,Grep",  # Read project, Write instructions only
+                "codex", "exec", "--full-auto",
+                "--sandbox", "danger-full-access",
+                short_prompt,
             ],
             cwd=str(project_path),
             capture_output=True,
@@ -423,11 +422,11 @@ After building all features, generate end-to-end tests that:
         )
         return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
     except subprocess.TimeoutExpired:
-        # Claude may have written the instructions file before timing out — that's OK
+        # Codex may have written the instructions file before timing out — that's OK
         if context_file.exists() and context_file.stat().st_size > 1000:
-            console.print("[yellow]  Claude timed out but instructions file was written — proceeding[/yellow]")
+            console.print("[yellow]  Codex timed out but instructions file was written — proceeding[/yellow]")
             return "Planning completed (timeout but instructions written)"
-        return "ERROR: Claude planning timed out and no instructions were written"
+        return "ERROR: Codex planning timed out and no instructions were written"
 
 
 def invoke_codex_parallel(context: str, task: str, project_path: Path) -> str:
@@ -470,7 +469,7 @@ def generate_video_report(project_path: Path, task: str, results: str) -> Path |
     evidence_dir = project_path / ".ncdev" / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
-    # Ask Claude to create the Playwright script and narration
+    # Ask Codex to create the Playwright script and narration
     video_prompt = f"""Create a video report for this completed development task.
 
 ## Task Completed
@@ -654,7 +653,7 @@ def run_dev(
 
     This is the thin glue. It:
     1. Gathers context (filesystem + Citex)
-    2. Invokes Claude CLI + Codex CLI with full context
+    2. Invokes Codex CLI with full context
     3. Verifies guardrails
     4. Generates video report
     5. Stores results in Citex
@@ -681,10 +680,10 @@ def run_dev(
     context = gather_project_context(project_path, task)
     console.print(f"  Context: {len(context)} chars from filesystem + Citex")
 
-    # 2. Claude PLANS — writes the build instructions
-    console.print("\n[bold]2. Claude CLI planning...[/bold]")
-    claude_output = invoke_ai_planning(context, task, project_path)
-    console.print(f"  Claude plan: {len(claude_output)} chars")
+    # 2. Codex plans — writes the build instructions
+    console.print("\n[bold]2. Codex CLI planning...[/bold]")
+    plan_output = invoke_ai_planning(context, task, project_path)
+    console.print(f"  Codex plan: {len(plan_output)} chars")
 
     # 3. Codex BUILDS — executes all the development work
     console.print("\n[bold]3. Codex CLI building project...[/bold]")
@@ -740,7 +739,7 @@ def run_dev(
     if passed:
         console.print("\n[bold]5. Generating video report (non-blocking)...[/bold]")
         try:
-            video_path = generate_video_report(project_path, task, claude_output)
+            video_path = generate_video_report(project_path, task, plan_output)
         except Exception as exc:
             console.print(f"  [yellow]Video generation failed: {exc} — build still counts as PASSED[/yellow]")
             video_path = None
@@ -749,7 +748,7 @@ def run_dev(
 
     # 5. Store in Citex
     console.print("\n[bold]5. Storing context in Citex...[/bold]")
-    citex_store(project_id, f"Task: {task}\nResult: {'PASSED' if passed else 'FAILED'}\n{claude_output[:5000]}", {
+    citex_store(project_id, f"Task: {task}\nResult: {'PASSED' if passed else 'FAILED'}\n{plan_output[:5000]}", {
         "run_id": run_id,
         "task": task,
         "mode": mode,

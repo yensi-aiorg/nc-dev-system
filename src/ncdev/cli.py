@@ -80,12 +80,10 @@ def _check_app_boots(target_path: Path) -> bool:
 async def _run_quality_gate_fixes(manifest, config=None) -> int:
     """Apply quality gate fixes using the AI provider adapter.
 
-    Uses the configured AI provider (default: Codex CLI) with automatic
-    fallback (default: Claude CLI).  All AI CLI calls go through
-    :mod:`ncdev.ai_provider` -- no direct subprocess calls to ``claude``
-    or ``codex`` remain in this module.
+    Uses the configured AI provider (default: Codex CLI). All AI CLI calls
+    go through :mod:`ncdev.ai_provider`.
     """
-    from ncdev.ai_provider import get_provider_with_fallback
+    from ncdev.ai_provider import get_provider
     from ncdev.quality_gate.config import QualityGateConfig
     from ncdev.quality_gate.models import FixManifest
 
@@ -97,10 +95,10 @@ async def _run_quality_gate_fixes(manifest, config=None) -> int:
     fixed = 0
 
     # Resolve the AI provider from config
-    provider = get_provider_with_fallback(config.ai_provider, config.ai_fallback)
+    provider = get_provider(config.ai_provider)
     console.print(
         f"[dim]AI provider: {type(provider).__name__} "
-        f"(primary={config.ai_provider}, fallback={config.ai_fallback})[/dim]"
+        f"(primary={config.ai_provider})[/dim]"
     )
 
     # Process all issues, not just P0/P1. Already sorted by priority.
@@ -256,7 +254,7 @@ Requirements:
 
 
 def _doctor_report(workspace: Path) -> tuple[bool, str]:
-    required = ["git", "python3", "pytest", "claude", "codex", "node", "npm", "npx"]
+    required = ["git", "python3", "pytest", "codex", "node", "npm", "npx"]
     core = run_preflight(required)
     docker_path = shutil.which("docker")
 
@@ -300,13 +298,13 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--workspace", default=None)
     full.add_argument("--base-url", default="http://localhost:23000")
     full.add_argument("--dry-run", action="store_true", help="Do not invoke builders")
-    full.add_argument("--model", default="opus", choices=["opus", "sonnet", "haiku"], help="Claude model for fallback/repair")
+    full.add_argument("--model", default="gpt-5.4", choices=["gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"], help="Codex model label for build/repair")
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
     full.add_argument("--quality-gate", action="store_true", default=False, help="Run quality gate loop after build completes")
 
     # --- Dev Mode: The Autonomous Senior Engineer ---
-    dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
+    dev_parser = sub.add_parser("dev", help="Autonomous development — Codex + Citex + Playwright")
     dev_parser.add_argument("--project", required=True, help="Path to the project directory")
     dev_parser.add_argument("--task", required=True, help="What to build, fix, or enhance")
     dev_parser.add_argument("--mode", default="auto", choices=["auto", "greenfield", "enhance", "bugfix"], help="Development mode")

@@ -222,7 +222,7 @@ def _read_code_files(target_path: Path, patterns: Iterable[str], max_files: int 
 
 
 def _synthesize_with_opus(category: str, raw_content: str) -> str:
-    """Call Claude Opus to synthesize raw content into a structured summary."""
+    """Call Codex to synthesize raw content into a structured summary."""
     if not raw_content.strip():
         return ""
 
@@ -236,7 +236,7 @@ def _synthesize_with_opus(category: str, raw_content: str) -> str:
 
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "text", "--model", "claude-opus-4-6"],
+            ["codex", "exec", "--full-auto", "--sandbox", "danger-full-access", prompt],
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0 and result.stdout.strip():

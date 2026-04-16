@@ -21,7 +21,7 @@ def test_cli_full_defaults() -> None:
     assert args.base_url == "http://localhost:23000"
     assert args.dry_run is False
     assert args.target_repo is None
-    assert args.model == "opus"
+    assert args.model == "gpt-5.4"
     assert args.timeout == 600
     assert args.max_repairs == 2
 
@@ -30,10 +30,10 @@ def test_cli_full_custom_options() -> None:
     parser = build_parser()
     args = parser.parse_args([
         "full", "--source", "/tmp/requirements.md",
-        "--model", "opus", "--timeout", "900", "--max-repairs", "3",
+        "--model", "gpt-5.4-mini", "--timeout", "900", "--max-repairs", "3",
         "--dry-run", "--target-repo", "/tmp/repo",
     ])
-    assert args.model == "opus"
+    assert args.model == "gpt-5.4-mini"
     assert args.timeout == 900
     assert args.max_repairs == 3
     assert args.dry_run is True

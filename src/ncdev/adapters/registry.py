@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from ncdev.adapters.anthropic_claude_code import AnthropicClaudeCodeAdapter
 from ncdev.adapters.base import ProviderAdapter
 from ncdev.adapters.openai_codex import OpenAICodexAdapter
 from ncdev.v2.models import CapabilitySnapshotDoc, ProviderCapabilitySnapshot
@@ -8,7 +7,6 @@ from ncdev.v2.models import CapabilitySnapshotDoc, ProviderCapabilitySnapshot
 
 def build_provider_registry() -> dict[str, ProviderAdapter]:
     adapters: list[ProviderAdapter] = [
-        AnthropicClaudeCodeAdapter(),
         OpenAICodexAdapter(),
     ]
     return {adapter.name(): adapter for adapter in adapters}

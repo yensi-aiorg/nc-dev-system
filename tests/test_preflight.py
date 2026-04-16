@@ -5,8 +5,8 @@ from ncdev.preflight import required_commands, require_citex, run_preflight
 
 def test_required_commands_greenfield_full() -> None:
     cmds = required_commands(mode="greenfield", full=True)
-    assert "claude" in cmds
-    assert "codex" not in cmds  # codex no longer required by default
+    assert "codex" in cmds
+    assert "claude" not in cmds
     assert "npm" in cmds
 
 

@@ -15,6 +15,6 @@ class QualityGateConfig(BaseModel):
     polish_threshold: int = 80
 
     # AI provider settings
-    ai_provider: str = "codex"  # "codex" or "claude"
-    ai_fallback: str = "claude"
+    ai_provider: str = "codex"
+    ai_fallback: str = "codex"
     ai_fix_timeout: int = 600  # seconds per fix group

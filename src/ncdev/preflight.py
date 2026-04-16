@@ -35,7 +35,7 @@ def require_citex(url: str = "http://localhost:20161") -> None:
 
 
 def required_commands(mode: str, full: bool) -> list[str]:
-    base = ["git", "claude"]
+    base = ["git", "codex"]
     if full:
         base.extend(["pytest", "python3"])
         if mode == "greenfield":

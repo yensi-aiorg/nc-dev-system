@@ -29,7 +29,7 @@ def run_v3_full(
     dry_run: bool = False,
     target_repo_path: Path | None = None,
     run_id: str | None = None,
-    builder_model: str = "opus",
+    builder_model: str = "gpt-5.4",
     builder_timeout: int = 600,
     max_repair_attempts: int = 2,
 ) -> V3RunState:

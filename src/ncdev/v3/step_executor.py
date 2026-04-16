@@ -38,7 +38,7 @@ def execute_feature_step(
     design_brief: dict | None = None,
     max_repair_attempts: int = 2,
     builder_timeout: int = 600,
-    builder_model: str = "opus",
+    builder_model: str = "gpt-5.4",
     project_id: str = "",
 ) -> StepResult:
     """Execute one feature step: build → verify → repair if needed → commit.
@@ -146,7 +146,6 @@ def execute_feature_step(
             timeout=builder_timeout,
             model=builder_model,
             log_path=step_dir / f"repair-{attempt}.log",
-            use_codex=False,  # Repairs always use Claude (better at understanding errors)
         )
 
         verification = _run_verification(target_path, feature, step_dir)
@@ -211,35 +210,23 @@ def _run_builder(
     timeout: int,
     model: str,
     log_path: Path,
-    use_codex: bool = True,
 ) -> dict:
-    """Invoke Codex CLI (primary) or Claude CLI (fallback/repair) to build a feature.
-
-    Uses OpenAI Codex for implementation builds (faster, cheaper) and
-    Claude for repair passes (better at understanding failure context).
-    """
+    """Invoke Codex CLI to build or repair a feature."""
     # Kill any orphaned processes from prior steps
     _kill_orphan_processes()
 
-    if use_codex and shutil.which("codex"):
-        # Primary builder: OpenAI Codex (GPT 5.4, medium reasoning effort)
-        cmd = [
-            "codex", "exec",
-            "--full-auto",
-            "--sandbox", "danger-full-access",
-            prompt,
-        ]
-        runner_label = "Codex (gpt-5.4)"
-    else:
-        # Fallback / repair: Claude CLI
-        cmd = [
-            "claude",
-            "-p", prompt,
-            "--output-format", "text",
-            "--model", f"claude-{model}-4-6",
-            "--allowedTools", "Edit,Write,Bash,Read,Glob,Grep",
-        ]
-        runner_label = "Claude"
+    if not shutil.which("codex"):
+        error = "Codex CLI is required but not installed or not on PATH."
+        log_path.write_text(f"RUNNER: Codex\nERROR: {error}\n", encoding="utf-8")
+        return {"success": False, "output": "", "error": error}
+
+    cmd = [
+        "codex", "exec",
+        "--full-auto",
+        "--sandbox", "danger-full-access",
+        prompt,
+    ]
+    runner_label = f"Codex ({model})"
 
     console.print(f"  [cyan]Using {runner_label} builder[/cyan]")
 
@@ -270,11 +257,9 @@ def _run_builder(
         log_path.write_text(f"TIMEOUT after {timeout}s ({runner_label})", encoding="utf-8")
         return {"success": False, "output": "", "error": f"{runner_label} timed out after {timeout}s"}
     except FileNotFoundError:
-        if use_codex:
-            # Codex not found — fall back to Claude
-            console.print(f"  [yellow]Codex not found, falling back to Claude[/yellow]")
-            return _run_builder(prompt, target_path, timeout, model, log_path, use_codex=False)
-        return {"success": False, "output": "", "error": "No builder CLI found (tried codex and claude)"}
+        error = "Codex CLI is required but was not found."
+        log_path.write_text(f"RUNNER: Codex\nERROR: {error}\n", encoding="utf-8")
+        return {"success": False, "output": "", "error": error}
 
 
 def _run_verification(target_path: Path, feature: FeatureStep, step_dir: Path) -> StepVerification:
