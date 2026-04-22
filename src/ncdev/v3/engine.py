@@ -34,6 +34,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ncdev.utils import make_run_id, write_json
+from ncdev.v2.config import NCDevV2Config, ensure_default_v2_config, load_v2_config
 from ncdev.v3.charter import generate_charter, load_charter, write_charter
 from ncdev.v3.claude_executor import execute_feature_claude_driven
 from ncdev.v3.design_phase import run_design_phase
@@ -54,10 +55,14 @@ def run_v3_full(
     dry_run: bool = False,
     target_repo_path: Path | None = None,
     run_id: str | None = None,
-    builder_model: str = "claude-opus-4-6",
+    builder_model: str | None = None,
     builder_timeout: int = 3600,
-    max_repair_attempts: int = 2,   # retained for signature compat — unused now (Claude handles repair internally)
     max_budget_usd: float | None = None,
+    config: NCDevV2Config | None = None,
+    strict_deps: bool = False,
+    # Retained for CLI signature compat; Claude's systematic-debugging
+    # skill handles repair now, so this is a no-op.
+    max_repair_attempts: int | None = None,
 ) -> V3RunState:
     """Run the full V3 pipeline on a PRD.
 
@@ -69,6 +74,14 @@ def run_v3_full(
     outputs_dir = run_dir / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Mode-aware config: single source of truth for which CLI runs each
+    # session. Load once, pass through every phase.
+    if config is None:
+        try:
+            config = ensure_default_v2_config(workspace)
+        except Exception:  # noqa: BLE001
+            config = NCDevV2Config()
+
     state = V3RunState(
         run_id=run_id,
         workspace=str(workspace),
@@ -78,7 +91,7 @@ def run_v3_full(
     )
 
     console.print(Panel(
-        f"[bold cyan]NC Dev V3 — Claude-orchestrated sprint engine[/bold cyan]\n"
+        f"[bold cyan]NC Dev V3 — {config.mode} mode[/bold cyan]\n"
         f"Run ID: {run_id}\n"
         f"Source: {source_path}\n"
         f"Target: {target_repo_path or '(greenfield)'}",
@@ -100,6 +113,7 @@ def run_v3_full(
             model=builder_model,
             max_budget_usd=max_budget_usd,
             log_path=run_dir / "logs" / "charter.jsonl",
+            config=config,
         )
         if bundle is None:
             console.print(Panel(
@@ -137,6 +151,7 @@ def run_v3_full(
             model=builder_model,
             max_budget_usd=max_budget_usd,
             log_path=run_dir / "logs" / "design.jsonl",
+            config=config,
         )
         if design.skipped:
             console.print("  [dim]Non-UI project — design phase skipped[/dim]")
@@ -198,6 +213,31 @@ def run_v3_full(
             state.current_step = feature.feature_id
             _persist_state(state, run_dir)
 
+            # Dependency gate: a feature whose depends_on_features contains
+            # any non-PASSED id is skipped rather than built. In strict mode,
+            # halt the whole run at the first broken dep.
+            unmet = _unmet_dependencies(feature, completed)
+            if unmet:
+                reason = (
+                    f"dependency not satisfied: {', '.join(unmet)} "
+                    "(required feature(s) are not in PASSED state)"
+                )
+                console.print(Panel(
+                    f"[yellow]SKIP[/yellow] {feature.feature_id} — {reason}",
+                    border_style="yellow",
+                ))
+                completed.append(StepResult(
+                    feature_id=feature.feature_id,
+                    status=StepStatus.SKIPPED,
+                    error_message=reason,
+                ))
+                state.completed_steps = completed
+                _persist_state(state, run_dir)
+                if strict_deps:
+                    console.print("[red]--strict-deps set: halting run[/red]")
+                    break
+                continue
+
             console.print(Panel(
                 f"[cyan]{feature.feature_id}[/cyan] — {feature.title}",
                 border_style="blue",
@@ -213,6 +253,7 @@ def run_v3_full(
                 model=builder_model,
                 timeout=builder_timeout,
                 max_budget_usd=max_budget_usd,
+                config=config,
             )
             completed.append(result)
             state.completed_steps = completed
@@ -237,6 +278,21 @@ def run_v3_full(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _unmet_dependencies(feature, completed: list[StepResult]) -> list[str]:
+    """Return the ids in ``feature.depends_on_features`` that are not PASSED.
+
+    A feature id is "satisfied" when it appears in ``completed`` with
+    status PASSED or SKIPPED (state scanner can mark a brownfield
+    feature as already-implemented → SKIPPED, which counts as met).
+    Missing ids (not in the completed list at all) are unmet.
+    """
+    acceptable = {
+        r.feature_id for r in completed
+        if r.status in (StepStatus.PASSED, StepStatus.SKIPPED)
+    }
+    return [dep for dep in feature.depends_on_features if dep not in acceptable]
 
 
 def _filter_completed_features(target_path: Path, features, completed: list[StepResult]):

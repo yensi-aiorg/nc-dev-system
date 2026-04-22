@@ -15,12 +15,18 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import shutil
+import signal
 import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
+
+IS_POSIX = sys.platform != "win32"
 
 
 PROTOCOLS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts" / "protocols"
@@ -125,6 +131,7 @@ def run_claude_session(
     extra_args: list[str] | None = None,
     settings_path: Path | None = None,
     enable_ncdev_hooks: bool = True,
+    retain_events: bool = False,
 ) -> ClaudeSessionResult:
     """Spawn a Claude session and stream its events.
 
@@ -173,6 +180,12 @@ def run_claude_session(
         When True (default), NC Dev's built-in hook guards (commit
         hygiene + force-push protection) are wired in automatically
         unless ``settings_path`` is also set (caller wins).
+    retain_events:
+        When True, every stream event is appended to
+        :attr:`ClaudeSessionResult.events`. Default ``False`` because
+        long sessions can produce tens of thousands of events and we
+        log them to JSONL already (``log_path``). Turn on for tests /
+        debugging only.
     """
     if shutil.which("claude") is None:
         return ClaudeSessionResult(
@@ -227,16 +240,20 @@ def run_claude_session(
 
     subproc_env = os.environ.copy()
     subproc_env.update(env_overrides)
+    popen_kwargs: dict = dict(
+        cwd=str(cwd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        env=subproc_env,
+    )
+    if IS_POSIX:
+        # Own process group so we can SIGKILL the whole tree on timeout.
+        popen_kwargs["start_new_session"] = True
+
     try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(cwd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            env=subproc_env,
-        )
+        proc = subprocess.Popen(cmd, **popen_kwargs)
     except (FileNotFoundError, OSError) as exc:
         if log_fh:
             log_fh.close()
@@ -252,8 +269,44 @@ def run_claude_session(
     subagents: list[str] = []
     files_touched: set[str] = set()
     total_cost: float | None = None
+    stderr_chunks: list[str] = []
 
-    assert proc.stdout is not None
+    # Thread-based pipe readers prevent the two classes of hang Codex
+    # called out:
+    #   1. stderr pipe fills and backpressures the child — drain it.
+    #   2. stdout iteration blocks forever if Claude hangs without
+    #      closing stdout — watchdog sends SIGTERM/SIGKILL on timeout.
+    assert proc.stdout is not None and proc.stderr is not None
+
+    stderr_done = threading.Event()
+
+    def _drain_stderr() -> None:
+        try:
+            for line in proc.stderr:  # type: ignore[union-attr]
+                stderr_chunks.append(line)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            stderr_done.set()
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    # Watchdog — hard kill on wall-clock expiry.
+    timeout_fired = threading.Event()
+
+    def _watchdog() -> None:
+        if timeout <= 0:
+            return
+        if proc.poll() is None:
+            time.sleep(timeout)
+        if proc.poll() is None:
+            timeout_fired.set()
+            _kill_process_tree(proc)
+
+    watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
+    watchdog_thread.start()
+
     try:
         for line in proc.stdout:
             line = line.strip()
@@ -262,12 +315,17 @@ def run_claude_session(
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
-                # Tolerate non-JSON noise — log raw, skip parse
                 if log_fh:
                     log_fh.write(json.dumps({"_raw": line}) + "\n")
                 continue
 
-            events.append(event)
+            if retain_events:
+                events.append(event)
+            else:
+                # Keep a small ring buffer for the final_text fallback path.
+                events.append(event)
+                if len(events) > 20:
+                    events.pop(0)
             if log_fh:
                 log_fh.write(json.dumps(event) + "\n")
                 log_fh.flush()
@@ -289,34 +347,42 @@ def run_claude_session(
                 try:
                     on_event(event)
                 except Exception:  # noqa: BLE001
-                    # Never let a caller callback crash the session reader
                     pass
-
-        proc.wait(timeout=timeout)
-        stderr_text = proc.stderr.read() if proc.stderr else ""
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=5)
-        stderr_text = proc.stderr.read() if proc.stderr else ""
+    finally:
+        # Always wait for the process and join the stderr reader so we
+        # capture its output and don't leave zombies. The watchdog will
+        # have killed on timeout already.
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            _kill_process_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        stderr_done.wait(timeout=2.0)
+        stderr_thread.join(timeout=1.0)
         if log_fh:
             log_fh.close()
+
+    stderr_text = "".join(stderr_chunks)
+    exit_code = proc.returncode if proc.returncode is not None else -1
+    duration = time.time() - start
+
+    result_events = list(events) if retain_events else []
+
+    if timeout_fired.is_set():
         return ClaudeSessionResult(
-            success=False, final_text=final_text, exit_code=-1,
-            events=events, tool_calls=tool_calls,
+            success=False, final_text=final_text, exit_code=exit_code,
+            events=result_events, tool_calls=tool_calls,
             skills_invoked=skills, codex_invocations=codex_calls,
             subagents_dispatched=subagents,
             files_touched=sorted(files_touched),
             total_cost_usd=total_cost,
-            duration_seconds=time.time() - start,
+            duration_seconds=duration,
             stderr=stderr_text,
             error=f"claude session timed out after {timeout}s",
         )
-    finally:
-        if log_fh:
-            log_fh.close()
-
-    exit_code = proc.returncode
-    duration = time.time() - start
 
     # Fall back to final event text if result event didn't land
     if not final_text:
@@ -331,7 +397,7 @@ def run_claude_session(
         success=exit_code == 0,
         final_text=final_text,
         exit_code=exit_code,
-        events=events,
+        events=result_events,
         tool_calls=tool_calls,
         skills_invoked=skills,
         codex_invocations=codex_calls,
@@ -342,6 +408,40 @@ def run_claude_session(
         stderr=stderr_text,
         error=None if exit_code == 0 else f"claude exited with code {exit_code}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Subprocess helpers
+# ---------------------------------------------------------------------------
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill the Claude process and everything it spawned. Best-effort."""
+    if proc.poll() is not None:
+        return
+    try:
+        if IS_POSIX:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    proc.kill()
+        else:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    except Exception:  # noqa: BLE001
+        # Never raise from the kill path — worst case we leak a pid,
+        # but we don't want to mask the primary failure reason.
+        pass
 
 
 # ---------------------------------------------------------------------------

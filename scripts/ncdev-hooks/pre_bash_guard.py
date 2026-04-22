@@ -105,14 +105,42 @@ def _check_staged_for_prohibited(
     return hits
 
 
-def _extract_commit_message(cmd: str) -> str | None:
-    """Pull the -m argument out of a git-commit command. Best effort."""
-    # Naive: look for -m "..." or -m '...'. If the user uses HEREDOC
-    # ($(cat <<...)) we cannot cheaply parse it; allow those through.
-    m = re.search(r"""-m\s+(['"])(.+?)\1""", cmd, flags=re.DOTALL)
-    if m:
-        return m.group(2)
-    return None
+_HEREDOC_SENTINEL = re.compile(r"<<-?\s*['\"]?(\w+)")
+
+
+def _extract_commit_message(cmd: str) -> tuple[str | None, str]:
+    """Pull the ``-m`` argument out of a git-commit command.
+
+    Returns ``(message, parse_mode)`` where ``parse_mode`` is:
+        * "literal"   — we parsed a plain quoted string cleanly
+        * "heredoc"   — message is being supplied via a HEREDOC
+        * "file"      — ``-F <file>`` used; message is in a file
+        * "unknown"   — we don't know what the message is
+
+    Callers can treat "unknown" as "can't enforce, allow through" to
+    avoid breaking legitimate non-inline commit flows.
+    """
+    # -F <file> — message read from a file
+    if re.search(r"(?:^|\s)(?:-F|--file)\s+\S+", cmd):
+        return None, "file"
+
+    # HEREDOC substitution — e.g. git commit -m "$(cat <<'EOF' ... EOF )"
+    if _HEREDOC_SENTINEL.search(cmd):
+        return None, "heredoc"
+
+    # Plain quoted message. Handles escaped quotes inside the value by
+    # looking for the matching close quote that isn't preceded by a
+    # backslash. Double-quote and single-quote variants.
+    for quote in ("'", '"'):
+        pattern = rf"""-m\s+{quote}((?:\\.|(?!{quote}).)*){quote}"""
+        m = re.search(pattern, cmd, flags=re.DOTALL)
+        if m:
+            raw = m.group(1)
+            # Un-escape the quotes so downstream callers see the real message
+            raw = raw.replace(f"\\{quote}", quote)
+            return raw, "literal"
+
+    return None, "unknown"
 
 
 def _is_force_push_to_protected(cmd: str) -> bool:
@@ -154,7 +182,7 @@ def evaluate(tool_name: str, tool_input: dict, cwd: str | None = None) -> tuple[
         return "allow", ""
 
     # 1. Conventional Commits message shape
-    msg = _extract_commit_message(cmd)
+    msg, parse_mode = _extract_commit_message(cmd)
     if msg is not None:
         if not CONVENTIONAL_RE.search(msg):
             return "block", (
@@ -162,6 +190,13 @@ def evaluate(tool_name: str, tool_input: dict, cwd: str | None = None) -> tuple[
                 "(feat|fix|test|chore|refactor|docs|perf|style|build|ci|revert). "
                 f"Got: {msg.splitlines()[0][:120]!r}"
             )
+    elif parse_mode in ("heredoc", "file"):
+        # We can't introspect the message body without running git, so
+        # allow it. Worst case: a badly-formatted heredoc lands — but
+        # relying on heredoc for commits is deliberate, users typically
+        # know what they're doing. "unknown" falls through to allow as
+        # well, since blocking would break edge-case pipelines.
+        pass
 
     # 2. Prohibited patterns in staged content
     patterns = _load_prohibited()

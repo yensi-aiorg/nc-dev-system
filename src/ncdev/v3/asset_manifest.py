@@ -193,11 +193,41 @@ def scan_code_for_asset_references(
     return hits
 
 
+def scan_files_for_asset_references(
+    project_root: Path,
+    files: Iterable[str],
+) -> list[tuple[str, str, int]]:
+    """Variant of :func:`scan_code_for_asset_references` scoped to a
+    specific file list. Paths are project-relative.
+    """
+    hits: list[tuple[str, str, int]] = []
+    for rel in files:
+        fp = project_root / rel
+        if not fp.exists() or not fp.is_file():
+            continue
+        # Only code files — skip binaries, images, etc.
+        if fp.suffix.lower() not in _CODE_EXTENSIONS:
+            continue
+        try:
+            text = fp.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for pat in _ASSET_REFERENCE_PATTERNS:
+                for m in pat.finditer(line):
+                    ref = m.group(1)
+                    if ref.startswith(("http://", "https://", "data:", "//")):
+                        continue
+                    hits.append((rel, ref, lineno))
+    return hits
+
+
 def verify_manifest_covers_references(
     project_root: Path,
     feature_id: str,
     *,
     include_dirs: Iterable[str] = ("frontend", "src", "app", "pages", "public"),
+    touched_files: Iterable[str] | None = None,
 ) -> tuple[bool, list[str]]:
     """Verify every asset reference is accounted for.
 
@@ -208,8 +238,15 @@ def verify_manifest_covers_references(
 
     Returns ``(ok, missing_list)``. When manifest-not-written, ok=False
     and missing_list=["<no-manifest>"].
+
+    Scanning scope:
+      - If ``touched_files`` is given, scan only those files (feature-local
+        verification — the caller passes files_created + files_modified
+        from git diff). This is the preferred call shape: one legacy
+        unmanaged asset elsewhere won't fail every future feature.
+      - Otherwise, fall back to scanning ``include_dirs`` globally. Kept
+        for callers that don't know which files changed.
     """
-    # Manifest for this feature must exist
     manifest = load_feature_manifest(project_root, feature_id)
     aggregate = aggregate_manifests(project_root)
 
@@ -222,12 +259,14 @@ def verify_manifest_covers_references(
     }
     managed_ids: set[str] = {entry.id for entry in all_entries}
 
+    if touched_files is not None:
+        refs = scan_files_for_asset_references(project_root, touched_files)
+    else:
+        refs = scan_code_for_asset_references(project_root, include_dirs=include_dirs)
+
     missing: list[str] = []
-    for file_ref, asset_ref, lineno in scan_code_for_asset_references(
-        project_root, include_dirs=include_dirs,
-    ):
+    for file_ref, asset_ref, lineno in refs:
         normalised = asset_ref.lstrip("./").lstrip("/")
-        # Already exists in the repo?
         candidates = [
             project_root / normalised,
             project_root / "public" / normalised,
@@ -237,7 +276,6 @@ def verify_manifest_covers_references(
         ]
         if any(p.exists() for p in candidates):
             continue
-        # Managed in a manifest?
         if normalised in managed_paths:
             continue
         base = normalised.rsplit("/", 1)[-1].rsplit(".", 1)[0]

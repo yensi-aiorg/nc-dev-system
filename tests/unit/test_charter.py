@@ -88,15 +88,18 @@ def test_prompt_references_three_artifact_files(tmp_path: Path):
     assert "writing-plans" in prompt
 
 
-def test_prompt_includes_hard_fail_rule_for_greenfield_ui_without_design(tmp_path: Path):
+def test_prompt_does_not_hard_fail_on_design_concerns(tmp_path: Path):
+    """Greenfield/design hard-fail is Phase C's responsibility, not the
+    charter prompt. Phase B should produce the three artifacts regardless
+    of whether a design system exists yet."""
     prompt = build_charter_prompt(
         prd_path=tmp_path / "prd.md",
         target_repo=None,
         output_dir=tmp_path / "outputs",
     )
-    assert "charter-error.json" in prompt
-    assert "greenfield" in prompt.lower()
-    assert "design system" in prompt.lower() or "stitch" in prompt.lower()
+    # Charter must NOT instruct Claude to write charter-error.json for
+    # greenfield UI — that confuses the phase boundary.
+    assert "charter-error.json" not in prompt
 
 
 def test_prompt_includes_schema_excerpts(tmp_path: Path):
@@ -154,7 +157,7 @@ def test_generate_charter_success_loads_bundle(tmp_path: Path):
             exit_code=0, duration_seconds=1.0,
         )
 
-    with patch("ncdev.v3.charter.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
         result_bundle, session = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -179,7 +182,7 @@ def test_generate_charter_hard_fails_on_charter_error_file(tmp_path: Path):
             exit_code=0, duration_seconds=0.5,
         )
 
-    with patch("ncdev.v3.charter.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
         result_bundle, session = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -198,7 +201,7 @@ def test_generate_charter_returns_none_when_session_fails(tmp_path: Path):
             error="something broke",
         )
 
-    with patch("ncdev.v3.charter.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
         result_bundle, session = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -219,7 +222,7 @@ def test_generate_charter_returns_none_on_invalid_json(tmp_path: Path):
             success=True, final_text="done", exit_code=0,
         )
 
-    with patch("ncdev.v3.charter.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
         result_bundle, _ = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -237,7 +240,7 @@ def test_generate_charter_uses_plan_tools_only(tmp_path: Path):
         write_charter(_fake_charter_bundle(), kwargs["cwd"])
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.v3.charter.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
         generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",

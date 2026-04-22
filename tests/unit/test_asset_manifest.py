@@ -198,6 +198,44 @@ def test_verify_fails_when_reference_not_in_manifest(tmp_path: Path):
     assert any("unlisted.png" in m for m in missing)
 
 
+def test_verify_ignores_assets_outside_touched_files(tmp_path: Path):
+    """Feature-local scope: a reference in a file the current feature
+    didn't touch must NOT fail this feature's verification.
+
+    Codex's flag: global scans made one legacy unmanaged asset anywhere
+    in the repo cause every future feature to fail forever.
+    """
+    # Legacy file with an unmanaged reference — predates this feature
+    legacy = tmp_path / "frontend" / "src" / "Legacy.tsx"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('<img src="/images/legacy.png" />')
+
+    # Feature only touches a clean file
+    clean = tmp_path / "frontend" / "src" / "Clean.tsx"
+    clean.write_text('export const Clean = () => <div>hi</div>;')
+
+    save_feature_manifest(tmp_path, _mk_manifest("f01"))  # empty manifest OK
+    ok, missing = verify_manifest_covers_references(
+        tmp_path, "f01",
+        touched_files=["frontend/src/Clean.tsx"],  # legacy NOT in list
+    )
+    assert ok is True, f"missing={missing}"
+
+
+def test_verify_catches_references_in_touched_files(tmp_path: Path):
+    """The feature DID touch a file with an unmanaged reference — must fail."""
+    f = tmp_path / "frontend" / "src" / "New.tsx"
+    f.parent.mkdir(parents=True)
+    f.write_text('<img src="/images/new-hero.png" />')
+    save_feature_manifest(tmp_path, _mk_manifest("f01"))
+    ok, missing = verify_manifest_covers_references(
+        tmp_path, "f01",
+        touched_files=["frontend/src/New.tsx"],
+    )
+    assert ok is False
+    assert any("new-hero.png" in m for m in missing)
+
+
 def test_verify_passes_when_asset_listed_in_manifest(tmp_path: Path):
     src = tmp_path / "frontend" / "src" / "App.tsx"
     src.parent.mkdir(parents=True)

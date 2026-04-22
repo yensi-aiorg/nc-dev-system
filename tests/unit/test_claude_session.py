@@ -11,6 +11,7 @@ subprocess layer. They verify:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,13 +32,27 @@ from ncdev.claude_session import (
 
 
 class _FakeProc:
-    """Minimal stand-in for subprocess.Popen."""
+    """Minimal stand-in for subprocess.Popen.
+
+    Supports the production interface: iteration over stdout, iteration
+    over stderr (for the drain thread), poll(), wait(), kill(), pid,
+    terminate(). Good enough for verifying event parsing + argv
+    composition without spawning a real child.
+    """
+
+    _next_pid = 10000
 
     def __init__(self, stdout_lines: list[str], returncode: int = 0, stderr: str = ""):
+        _FakeProc._next_pid += 1
+        self.pid = _FakeProc._next_pid
         self._stdout_lines = stdout_lines
         self.returncode = returncode
         self.stdout = iter(stdout_lines)
         self.stderr = _FakeStderr(stderr)
+        self._done = True   # synchronous fake — process is "complete" immediately
+
+    def poll(self):
+        return self.returncode if self._done else None
 
     def wait(self, timeout=None):  # noqa: ARG002
         return self.returncode
@@ -45,10 +60,18 @@ class _FakeProc:
     def kill(self):
         pass
 
+    def terminate(self):
+        pass
+
 
 class _FakeStderr:
     def __init__(self, text: str):
         self._text = text
+
+    def __iter__(self):
+        if self._text:
+            yield self._text
+        return
 
     def read(self) -> str:
         return self._text
@@ -390,6 +413,129 @@ def test_caller_supplied_settings_path_wins(tmp_path: Path):
     cmd = captured["cmd"]
     idx = cmd.index("--settings")
     assert cmd[idx + 1] == str(user_settings)
+
+
+def test_events_not_retained_by_default(tmp_path: Path):
+    """Codex flag: in-memory event list is wasteful on long runs.
+    Default is now OFF — result.events should be empty unless asked."""
+    events = [
+        {"type": "assistant", "message": {"content": []}},
+        {"type": "result", "result": "ok"},
+    ]
+    popen, _ = _popen_factory(events)
+    with patch("ncdev.claude_session.shutil.which", return_value="/usr/bin/claude"):
+        with patch("ncdev.claude_session.subprocess.Popen", side_effect=popen):
+            result = run_claude_session(
+                "x", cwd=tmp_path, include_codex_protocol=False,
+            )
+    assert result.events == []
+    # But final_text still resolves via the ring buffer
+    assert result.final_text == "ok"
+
+
+def test_retain_events_flag_opt_in(tmp_path: Path):
+    events = [
+        {"type": "assistant", "message": {"content": []}},
+        {"type": "result", "result": "ok"},
+    ]
+    popen, _ = _popen_factory(events)
+    with patch("ncdev.claude_session.shutil.which", return_value="/usr/bin/claude"):
+        with patch("ncdev.claude_session.subprocess.Popen", side_effect=popen):
+            result = run_claude_session(
+                "x", cwd=tmp_path,
+                include_codex_protocol=False,
+                retain_events=True,
+            )
+    assert len(result.events) == 2
+
+
+def test_watchdog_actually_kills_hung_subprocess(tmp_path: Path):
+    """Integration — spawn a real process that never exits, verify
+    run_claude_session kills it via the watchdog within ~timeout seconds.
+
+    This is Codex's critical issue: stdout-block deadlock. If the
+    watchdog isn't wired, this test hangs forever.
+    """
+    import sys as _sys
+
+    # Stand-in for `claude` — a python inline script that hangs reading stdin.
+    # We point shutil.which at this to fool the preflight check.
+    fake_cli = tmp_path / "fake-claude"
+    fake_cli.write_text(
+        "#!/usr/bin/env python3\nimport sys, time\n"
+        "# never produces output, never exits\n"
+        "while True:\n    time.sleep(1)\n",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+
+    import subprocess as _sp
+
+    orig_popen = _sp.Popen
+
+    def fake_popen(cmd, **kwargs):
+        # Replace the claude executable with our hanging script
+        new_cmd = [_sys.executable, str(fake_cli)] + list(cmd[1:])
+        return orig_popen(new_cmd, **kwargs)
+
+    start = time.time()
+    with patch("ncdev.claude_session.shutil.which", return_value=str(fake_cli)):
+        with patch("ncdev.claude_session.subprocess.Popen", side_effect=fake_popen):
+            result = run_claude_session(
+                "x", cwd=tmp_path,
+                timeout=2,   # wall-clock kill after 2s
+                include_codex_protocol=False,
+            )
+    elapsed = time.time() - start
+
+    # Hard upper bound: watchdog + wait should terminate within ~10s even
+    # on a slow CI runner. No test should take 2 minutes, which is what
+    # would happen if the watchdog were broken.
+    assert elapsed < 15, f"watchdog failed to kill: elapsed={elapsed:.1f}s"
+    assert result.success is False
+    assert "timed out" in (result.error or "")
+
+
+def test_stderr_backpressure_does_not_deadlock(tmp_path: Path):
+    """Integration — child emits massive stderr while stdout is light.
+    Without the stderr-drain thread, the pipe fills and the child hangs.
+    """
+    import sys as _sys
+    fake_cli = tmp_path / "fake-claude"
+    fake_cli.write_text(
+        "#!/usr/bin/env python3\nimport sys, json\n"
+        # Emit one result event on stdout, then flood stderr with ~2MB
+        # of output and exit cleanly.
+        'print(json.dumps({"type":"result","result":"ok"}))\n'
+        "sys.stdout.flush()\n"
+        "for _ in range(20000):\n"
+        '    sys.stderr.write("x" * 100 + "\\n")\n'
+        "sys.stderr.flush()\n",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+
+    import subprocess as _sp
+    orig_popen = _sp.Popen
+
+    def fake_popen(cmd, **kwargs):
+        new_cmd = [_sys.executable, str(fake_cli)] + list(cmd[1:])
+        return orig_popen(new_cmd, **kwargs)
+
+    start = time.time()
+    with patch("ncdev.claude_session.shutil.which", return_value=str(fake_cli)):
+        with patch("ncdev.claude_session.subprocess.Popen", side_effect=fake_popen):
+            result = run_claude_session(
+                "x", cwd=tmp_path,
+                timeout=15,
+                include_codex_protocol=False,
+            )
+    elapsed = time.time() - start
+    # Must complete cleanly — not timeout, not hang
+    assert elapsed < 10, f"stderr backpressure deadlocked: elapsed={elapsed:.1f}s"
+    assert result.success is True
+    assert result.final_text == "ok"
+    assert len(result.stderr) > 100_000    # captured the flood
 
 
 def test_summary_includes_key_signals(tmp_path: Path):

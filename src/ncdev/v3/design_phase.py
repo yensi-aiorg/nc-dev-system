@@ -27,22 +27,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ncdev.claude_session import (
-    ClaudeSessionResult,
-    run_claude_session,
-)
+from ncdev.ai_session import run_ai_session
+from ncdev.claude_session import ClaudeSessionResult
+from ncdev.v2.config import NCDevV2Config
 from ncdev.v3.models import (
     DesignSystemDoc,
     TargetProjectContract,
 )
 
 
-# Tools for the design session: Read/Write/Edit for tokens, Bash for
-# any Stitch CLI shell-outs, Skill to trigger frontend-design, Task for
-# subagent dispatch. The Stitch MCP tools come through as
-# ``mcp__stitch__*`` names — we pass a wildcard via an extra_args flag
-# rather than enumerating them (MCP tool names are environment-specific).
-DESIGN_TOOLS: tuple[str, ...] = (
+# Tools for the Stitch / claude_generated branches — Claude needs to
+# write tokens, invoke the frontend-design skill, and potentially shell
+# to a Stitch CLI. Stitch MCP tools come through as ``mcp__stitch__*``
+# names (environment-specific).
+STITCH_DESIGN_TOOLS: tuple[str, ...] = (
     "Read",
     "Write",
     "Edit",
@@ -52,6 +50,18 @@ DESIGN_TOOLS: tuple[str, ...] = (
     "Skill",
     "Task",
 )
+
+# Tools for the brownfield summariser — Claude reads the existing
+# design system and writes ONE JSON artifact. No editing / shelling out.
+SUMMARISE_DESIGN_TOOLS: tuple[str, ...] = (
+    "Read",
+    "Glob",
+    "Grep",
+    "Write",   # must write design-system.json — nothing else
+)
+
+# Backward-compat alias; older callers / tests may import this name.
+DESIGN_TOOLS = STITCH_DESIGN_TOOLS
 
 
 @dataclass
@@ -93,14 +103,40 @@ def stitch_available() -> bool:
     return False
 
 
+_TOKEN_FILE_NAMES: tuple[str, ...] = (
+    "tokens.css",
+    "tokens.scss",
+    "tokens.json",
+    "design-tokens.json",
+    "tailwind.config.js",
+    "tailwind.config.ts",
+    "tailwind.config.cjs",
+    "theme.ts",
+    "theme.js",
+    "theme.json",
+    "colors.css",
+    "colors.scss",
+    "variables.css",
+    "variables.scss",
+    "_tokens.scss",
+    "globals.css",
+)
+
+
 def existing_design_system_present(target_path: Path) -> bool:
-    """True if ``target_path/docs/design-system/`` exists with content."""
+    """True if ``target_path/docs/design-system/`` has real token files.
+
+    A non-empty file is not sufficient — we check for known token file
+    names so an accidental README or stray image doesn't count. Prevents
+    silent acceptance of junk as a design system.
+    """
     ds = target_path / "docs" / "design-system"
     if not ds.exists() or not ds.is_dir():
         return False
-    # Has at least one token-y file
     for f in ds.rglob("*"):
-        if f.is_file() and f.stat().st_size > 0:
+        if not f.is_file():
+            continue
+        if f.name.lower() in _TOKEN_FILE_NAMES and f.stat().st_size > 0:
             return True
     return False
 
@@ -131,7 +167,7 @@ def _stitch_prompt(contract: TargetProjectContract, target_path: Path, output_di
 2. Generate a design system (colors, typography, spacing, corner
    rounding) aligned with the "{contract.design_archetype}" archetype.
 3. Generate the key screens listed in
-   ``{output_dir}/../feature-queue.json`` (at least the ones marked as
+   ``{output_dir}/feature-queue.json`` (at least the ones marked as
    having UI).
 4. Download the design tokens (CSS variables, Tailwind config, or the
    equivalent for {contract.frontend_framework}) into:
@@ -207,11 +243,12 @@ def run_design_phase(
     target_path: Path,
     output_dir: Path,
     *,
-    model: str = "claude-opus-4-6",
+    model: str | None = None,
     timeout: int = 1200,
     max_budget_usd: float | None = None,
     log_path: Path | None = None,
     stitch_probe: callable = stitch_available,
+    config: NCDevV2Config | None = None,
 ) -> DesignPhaseResult:
     """Resolve the design system for this project.
 
@@ -244,42 +281,34 @@ def run_design_phase(
     # --- Brownfield with existing design system ----------------------------
     if has_existing:
         prompt = _brownfield_prompt(contract, target_path, output_dir)
-        session = run_claude_session(
+        session = run_ai_session(
             prompt,
             cwd=target_path,
-            tools=DESIGN_TOOLS,
+            config=config,
+            tools=SUMMARISE_DESIGN_TOOLS,   # read-only + write the summary JSON
             model=model,
             timeout=timeout,
             include_codex_protocol=False,
             max_budget_usd=max_budget_usd,
             log_path=log_path,
         )
-        doc = _load_design_doc(output_dir)
-        return DesignPhaseResult(design_doc=doc, session=session)
+        return _finalise_design_phase(session, output_dir)
 
     # --- Greenfield (or brownfield without designs) + Stitch available ----
     if has_stitch:
         prompt = _stitch_prompt(contract, target_path, output_dir)
-        session = run_claude_session(
+        session = run_ai_session(
             prompt,
             cwd=target_path,
-            tools=DESIGN_TOOLS,
+            config=config,
+            tools=STITCH_DESIGN_TOOLS,
             model=model,
             timeout=timeout,
-            include_codex_protocol=False,  # design phase does not build code
+            include_codex_protocol=False,   # design phase does not build code
             max_budget_usd=max_budget_usd,
             log_path=log_path,
         )
-        # Stitch session may itself fail — check for its error file
-        err_path = output_dir / "design-phase-error.json"
-        if err_path.exists():
-            return DesignPhaseResult(
-                hard_failed=True,
-                session=session,
-                error="Stitch design phase failed — see design-phase-error.json",
-            )
-        doc = _load_design_doc(output_dir)
-        return DesignPhaseResult(design_doc=doc, session=session)
+        return _finalise_design_phase(session, output_dir)
 
     # --- Brownfield without existing designs and no Stitch: Claude decides --
     # Per the user's ruling: "brownfield or design-provided → Claude makes
@@ -295,24 +324,50 @@ def run_design_phase(
         f"If you determine the project genuinely needs Stitch or external "
         f"designs to proceed, write design-phase-error.json instead."
     )
-    session = run_claude_session(
+    session = run_ai_session(
         prompt,
         cwd=target_path,
-        tools=DESIGN_TOOLS,
+        config=config,
+        tools=STITCH_DESIGN_TOOLS,
         model=model,
         timeout=timeout,
         include_codex_protocol=False,
         max_budget_usd=max_budget_usd,
         log_path=log_path,
     )
+    return _finalise_design_phase(session, output_dir)
+
+
+def _finalise_design_phase(session, output_dir: Path) -> DesignPhaseResult:
+    """Enforce success + artifact presence for every non-skip branch.
+
+    Required for a pass: the AI session must have exited cleanly AND a
+    parseable design-system.json must exist on disk. A design-phase-error
+    file written by the session is always a hard fail.
+    """
     err_path = output_dir / "design-phase-error.json"
     if err_path.exists():
         return DesignPhaseResult(
             hard_failed=True,
             session=session,
-            error="Claude determined Stitch or external designs are needed",
+            error=f"Design phase wrote error artifact at {err_path}",
+        )
+    if not session.success:
+        return DesignPhaseResult(
+            hard_failed=True,
+            session=session,
+            error=f"Design session exited unsuccessfully: {session.error or 'no detail'}",
         )
     doc = _load_design_doc(output_dir)
+    if doc is None:
+        return DesignPhaseResult(
+            hard_failed=True,
+            session=session,
+            error=(
+                "Design session reported success but no valid "
+                f"{output_dir}/design-system.json was produced."
+            ),
+        )
     return DesignPhaseResult(design_doc=doc, session=session)
 
 
