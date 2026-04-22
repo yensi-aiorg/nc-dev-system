@@ -223,12 +223,12 @@ def run_v3_full(
                     "(required feature(s) are not in PASSED state)"
                 )
                 console.print(Panel(
-                    f"[yellow]SKIP[/yellow] {feature.feature_id} — {reason}",
-                    border_style="yellow",
+                    f"[red]BLOCKED[/red] {feature.feature_id} — {reason}",
+                    border_style="red",
                 ))
                 completed.append(StepResult(
                     feature_id=feature.feature_id,
-                    status=StepStatus.SKIPPED,
+                    status=StepStatus.BLOCKED,
                     error_message=reason,
                 ))
                 state.completed_steps = completed
@@ -266,8 +266,14 @@ def run_v3_full(
     # ── Phase 6: Summary ─────────────────────────────────────────────────
     state.phase = "complete"
     passed = [r for r in completed if r.status == StepStatus.PASSED]
-    failed = [r for r in completed if r.status == StepStatus.FAILED]
-    state.status = "passed" if not failed else ("partial" if passed else "failed")
+    # Both FAILED (tried and broke) and BLOCKED (couldn't try because a dep
+    # broke) count as run-level failures. Without this, a --strict-deps halt
+    # would report "passed" despite halting because of broken deps.
+    unsuccessful = [
+        r for r in completed
+        if r.status in (StepStatus.FAILED, StepStatus.BLOCKED)
+    ]
+    state.status = "passed" if not unsuccessful else ("partial" if passed else "failed")
 
     _print_summary_table(completed)
 
@@ -281,12 +287,19 @@ def run_v3_full(
 
 
 def _unmet_dependencies(feature, completed: list[StepResult]) -> list[str]:
-    """Return the ids in ``feature.depends_on_features`` that are not PASSED.
+    """Return the ids in ``feature.depends_on_features`` that are not met.
 
-    A feature id is "satisfied" when it appears in ``completed`` with
-    status PASSED or SKIPPED (state scanner can mark a brownfield
-    feature as already-implemented → SKIPPED, which counts as met).
-    Missing ids (not in the completed list at all) are unmet.
+    A dep is "met" when it appears in ``completed`` with status:
+      * PASSED  — built successfully this run
+      * SKIPPED — brownfield state-scanner determined it was already
+                  implemented in the target repo before this run started
+    A dep is "unmet" when it:
+      * is missing from the completed list (never attempted), OR
+      * has status FAILED (we tried and it broke), OR
+      * has status BLOCKED (its own dep was unmet — cascading failure).
+
+    The BLOCKED distinction stops feature-N-blocked from being treated
+    as "already done" and letting feature N+1 sail through.
     """
     acceptable = {
         r.feature_id for r in completed
@@ -327,6 +340,7 @@ def _print_summary_table(completed: list[StepResult]) -> None:
         colour = {
             StepStatus.PASSED: "green",
             StepStatus.FAILED: "red",
+            StepStatus.BLOCKED: "red",
             StepStatus.SKIPPED: "yellow",
         }.get(r.status, "white")
         table.add_row(

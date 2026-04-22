@@ -39,12 +39,24 @@ def test_dependency_failed_is_unmet():
     assert _unmet_dependencies(f, completed=completed) == ["f01"]
 
 
-def test_dependency_skipped_counts_as_satisfied():
+def test_brownfield_skipped_dep_counts_as_satisfied():
     """Brownfield state scanner marks already-implemented features as
-    SKIPPED — those should still count as satisfying a dep."""
+    SKIPPED — those count as satisfying a dep (they're really done)."""
     f = _feat("f02", deps=["f01"])
     completed = [StepResult(feature_id="f01", status=StepStatus.SKIPPED)]
     assert _unmet_dependencies(f, completed=completed) == []
+
+
+def test_blocked_dep_does_NOT_count_as_satisfied():
+    """Codex R2 flagged: a dependency that was BLOCKED (its own dep
+    failed) must not count as met. Otherwise cascading failures break
+    through the gate."""
+    f = _feat("f03", deps=["f02"])
+    completed = [
+        StepResult(feature_id="f01", status=StepStatus.FAILED),
+        StepResult(feature_id="f02", status=StepStatus.BLOCKED),
+    ]
+    assert _unmet_dependencies(f, completed=completed) == ["f02"]
 
 
 def test_multiple_deps_partial_satisfaction():

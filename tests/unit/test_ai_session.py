@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,10 +24,12 @@ from ncdev.v2.config import NCDevV2Config
 # ---------------------------------------------------------------------------
 
 
-def test_mode_tables_cover_every_preset():
-    """If we add a new mode preset, these maps must have entries for it."""
+def test_mode_tables_cover_every_preset_except_custom():
+    """Every non-custom preset must have an orchestrator/implementer
+    entry. 'custom' is deliberately absent — it's resolved from the
+    user's hand-tuned routing via _resolve_custom_providers."""
     from ncdev.v2.config import MODE_PRESETS
-    expected = set(MODE_PRESETS.keys())
+    expected = set(MODE_PRESETS.keys()) - {"custom"}
     assert set(MODE_ORCHESTRATOR.keys()) == expected
     assert set(MODE_IMPLEMENTER.keys()) == expected
 
@@ -136,8 +139,18 @@ def test_openrouter_raises_not_implemented(tmp_path: Path):
         run_ai_session("x", cwd=tmp_path, config=cfg)
 
 
-def test_custom_mode_defaults_to_claude(tmp_path: Path):
-    cfg = NCDevV2Config(mode="custom")
+def test_custom_mode_honours_hand_tuned_routing_claude_everywhere(tmp_path: Path):
+    """Codex R2 flagged: custom was hardcoded to claude+codex, ignoring
+    the user's routing: block. Verify: user routes everything to
+    anthropic_claude_code → Claude orchestrator, Claude implementer,
+    protocol OFF (Claude isn't delegating)."""
+    cfg = NCDevV2Config(
+        mode="custom",
+        routing={
+            "review": ["anthropic_claude_code"],
+            "implementation": ["anthropic_claude_code"],
+        },
+    )
     captured: dict = {}
 
     def fake_claude(prompt, **kwargs):
@@ -146,7 +159,59 @@ def test_custom_mode_defaults_to_claude(tmp_path: Path):
 
     with patch("ncdev.ai_session.run_claude_session", side_effect=fake_claude):
         run_ai_session("x", cwd=tmp_path, config=cfg)
-    # custom → claude orchestrator, codex implementer → protocol on
+
+    # orchestrator=claude, implementer=claude → NO codex protocol
+    assert captured["include_codex_protocol"] is False
+
+
+def test_custom_mode_routes_to_codex_when_user_requests_it(tmp_path: Path):
+    """User flips everything to codex via custom — must actually route
+    to codex runner, not fall back to Claude."""
+    cfg = NCDevV2Config(
+        mode="custom",
+        routing={
+            "review": ["openai_codex"],
+            "implementation": ["openai_codex"],
+        },
+    )
+    called = {"claude": False, "codex": False}
+
+    def fake_claude(*a, **k):  # noqa: ARG001
+        called["claude"] = True
+        return _claude_result()
+
+    def fake_codex(*a, **k):  # noqa: ARG001
+        called["codex"] = True
+        return _codex_result()
+
+    with patch("ncdev.ai_session.run_claude_session", side_effect=fake_claude):
+        with patch("ncdev.ai_session.run_codex_session", side_effect=fake_codex):
+            run_ai_session("x", cwd=tmp_path, config=cfg)
+
+    assert called["codex"] is True, "custom mode must route to codex when user routes review+impl to codex"
+    assert called["claude"] is False
+
+
+def test_custom_mode_plan_codex_build_like_routing(tmp_path: Path):
+    """User configures custom to mimic claude_plan_codex_build: review=
+    claude, implementation=codex → Claude orch WITH codex protocol."""
+    cfg = NCDevV2Config(
+        mode="custom",
+        routing={
+            "review": ["anthropic_claude_code"],
+            "implementation": ["openai_codex"],
+        },
+    )
+    captured: dict = {}
+
+    def fake_claude(prompt, **kwargs):
+        captured.update(kwargs)
+        return _claude_result()
+
+    with patch("ncdev.ai_session.run_claude_session", side_effect=fake_claude):
+        run_ai_session("x", cwd=tmp_path, config=cfg)
+
+    # Claude orchestrates, Codex implements → protocol ON
     assert captured["include_codex_protocol"] is True
 
 
@@ -178,21 +243,41 @@ def test_run_codex_session_errors_when_cli_missing(tmp_path: Path):
     assert "codex CLI not found" in (result.error or "")
 
 
+class _FakeCodexProc:
+    """Minimal Popen stand-in: stdout + stderr iterable, immediate exit."""
+
+    _next_pid = 9000
+
+    def __init__(self, stdout: str = "codex output\n", stderr: str = "", returncode: int = 0):
+        _FakeCodexProc._next_pid += 1
+        self.pid = _FakeCodexProc._next_pid
+        self.stdout = iter([stdout] if stdout else [])
+        self.stderr = iter([stderr] if stderr else [])
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):  # noqa: ARG002
+        return self.returncode
+
+    def kill(self):
+        pass
+
+    def terminate(self):
+        pass
+
+
 def test_run_codex_session_builds_correct_argv(tmp_path: Path):
     captured: dict = {}
 
-    class FakeProc:
-        returncode = 0
-        stdout = "codex output"
-        stderr = ""
-
-    def fake_run(cmd, **kwargs):
+    def fake_popen(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["kwargs"] = kwargs
-        return FakeProc()
+        return _FakeCodexProc(stdout="codex output\n")
 
     with patch("ncdev.ai_session.shutil.which", return_value="/usr/bin/codex"):
-        with patch("ncdev.ai_session.subprocess.run", side_effect=fake_run):
+        with patch("ncdev.ai_session.subprocess.Popen", side_effect=fake_popen):
             result = run_codex_session("build feature X", cwd=tmp_path)
 
     cmd = captured["cmd"]
@@ -205,34 +290,73 @@ def test_run_codex_session_builds_correct_argv(tmp_path: Path):
     assert "build feature X" in cmd[-1]
     assert "codex_only mode" in cmd[-1]
     assert result.success is True
-
-
-def test_run_codex_session_honours_timeout(tmp_path: Path):
-    import subprocess as sp
-
-    def fake_run(cmd, **kwargs):
-        raise sp.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout", 0))
-
-    with patch("ncdev.ai_session.shutil.which", return_value="/usr/bin/codex"):
-        with patch("ncdev.ai_session.subprocess.run", side_effect=fake_run):
-            result = run_codex_session("x", cwd=tmp_path, timeout=5)
-    assert result.success is False
-    assert "timed out" in (result.error or "")
+    assert "codex output" in result.final_text
 
 
 def test_run_codex_session_writes_log(tmp_path: Path):
-    class FakeProc:
-        returncode = 0
-        stdout = "the work"
-        stderr = ""
+    def fake_popen(cmd, **kwargs):  # noqa: ARG001
+        return _FakeCodexProc(stdout="the work\n", stderr="")
 
     log_path = tmp_path / "logs" / "codex.log"
 
     with patch("ncdev.ai_session.shutil.which", return_value="/usr/bin/codex"):
-        with patch("ncdev.ai_session.subprocess.run", return_value=FakeProc()):
+        with patch("ncdev.ai_session.subprocess.Popen", side_effect=fake_popen):
             run_codex_session("x", cwd=tmp_path, log_path=log_path)
 
     assert log_path.exists()
     body = log_path.read_text(encoding="utf-8")
     assert "RUNNER: codex" in body
     assert "the work" in body
+
+
+def test_run_codex_session_truncates_huge_stream(tmp_path: Path):
+    """Codex R2 flagged: unbounded capture_output can blow RAM.
+    Verify the tail-buffer caps memory for chatty runs."""
+    huge = "x" * 1024   # 1KB per line
+    lines = [huge + "\n"] * 200  # 200 KB total
+
+    class HugeProc(_FakeCodexProc):
+        def __init__(self):
+            super().__init__(stdout="", returncode=0)
+            self.stdout = iter(lines)
+
+    with patch("ncdev.ai_session.shutil.which", return_value="/usr/bin/codex"):
+        with patch("ncdev.ai_session.subprocess.Popen", side_effect=lambda *a, **k: HugeProc()):
+            # Cap at 50 KB — result must be capped, no crash
+            result = run_codex_session(
+                "x", cwd=tmp_path, max_bytes_per_stream=50_000,
+            )
+
+    assert result.success is True
+    assert len(result.final_text.encode("utf-8")) <= 60_000  # some tolerance
+
+
+def test_run_codex_session_watchdog_kills_hung_child(tmp_path: Path):
+    """Integration: actual hung child must be killed by the watchdog,
+    same guarantee as run_claude_session."""
+    import sys as _sys
+
+    fake_cli = tmp_path / "fake-codex"
+    fake_cli.write_text(
+        "#!/usr/bin/env python3\nimport time\n"
+        "while True:\n    time.sleep(1)\n",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+
+    import subprocess as _sp
+    orig_popen = _sp.Popen
+
+    def fake_popen(cmd, **kwargs):
+        new_cmd = [_sys.executable, str(fake_cli)] + list(cmd[1:])
+        return orig_popen(new_cmd, **kwargs)
+
+    start = time.time()
+    with patch("ncdev.ai_session.shutil.which", return_value=str(fake_cli)):
+        with patch("ncdev.ai_session.subprocess.Popen", side_effect=fake_popen):
+            result = run_codex_session("x", cwd=tmp_path, timeout=2)
+    elapsed = time.time() - start
+
+    assert elapsed < 15, f"codex watchdog failed: {elapsed:.1f}s"
+    assert result.success is False
+    assert "timed out" in (result.error or "")

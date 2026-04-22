@@ -80,11 +80,22 @@ def _staged_file_list(cwd: str | None) -> list[str]:
 def _check_staged_for_prohibited(
     cwd: str | None, patterns: Iterable[str],
 ) -> list[str]:
-    """Return a list of '<file>:<pattern>' violations found in staged diff."""
+    """Return a list of '<file>:<pattern>' violations found in staged diff.
+
+    Each pattern is tried as a compiled regex first (via ``re.search``);
+    if that fails to compile, we fall back to literal substring match.
+    This matches the semantics of claude_executor._grep_for_prohibited
+    — identical rules on both sides of the commit boundary.
+    """
+    compiled: list[tuple[str, re.Pattern[str] | None]] = []
+    for pat in patterns:
+        try:
+            compiled.append((pat, re.compile(pat)))
+        except re.error:
+            compiled.append((pat, None))
+
     hits: list[str] = []
     for path in _staged_file_list(cwd):
-        # Diff the staged content only — we want to catch what's about
-        # to land, not what's already in HEAD.
         r = subprocess.run(
             ["git", "diff", "--cached", "--", path],
             cwd=cwd, capture_output=True, text=True, timeout=5,
@@ -97,8 +108,9 @@ def _check_staged_for_prohibited(
             if line.startswith("+") and not line.startswith("+++")
         ]
         blob = "\n".join(added)
-        for pat in patterns:
-            if pat in blob:
+        for pat, regex in compiled:
+            hit = regex.search(blob) if regex is not None else (pat in blob)
+            if hit:
                 hits.append(f"{path}:{pat}")
                 if len(hits) > 20:
                     return hits

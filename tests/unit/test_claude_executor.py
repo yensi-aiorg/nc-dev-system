@@ -326,6 +326,72 @@ def test_verification_runs_backend_test_command_when_configured(tmp_path: Path):
     assert any("backend tests failed" in r for r in reasons)
 
 
+def test_health_probe_failure_blocks_pass_when_url_set(tmp_path: Path):
+    """Codex R2: boot probe was soft-signal only. When the contract
+    declares backend_health_url, we must enforce it — the user put
+    the URL there intentionally."""
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "a.py").write_text("x=1")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): a"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    bundle = _make_bundle()
+    # Set a URL that definitely doesn't respond
+    bundle.verification.backend_health_url = "http://127.0.0.1:1/health"
+    bundle.verification.boot_timeout_seconds = 1
+
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(),
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.FAILED
+    reasons = result.verification.failure_reasons
+    assert any("health URL unreachable" in r for r in reasons)
+
+
+def test_health_probe_not_run_when_url_empty(tmp_path: Path):
+    """Empty URL means contract says 'no web boot check' — skip probe."""
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "a.py").write_text("x=1")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): a"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    bundle = _make_bundle()  # backend_health_url="" by default in _make_bundle
+    assert bundle.verification.backend_health_url == ""
+
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(),
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+    # No health-URL failure — probe was skipped
+    assert result.status == StepStatus.PASSED
+
+
 def test_verification_enforces_minimum_test_count(tmp_path: Path):
     target = tmp_path / "app"
     target.mkdir()

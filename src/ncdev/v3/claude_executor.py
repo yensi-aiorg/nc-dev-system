@@ -27,10 +27,13 @@ Claude shells out to Codex via Bash for implementation and test writing
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from ncdev.ai_session import run_ai_session
 from ncdev.claude_session import (
@@ -247,6 +250,7 @@ def execute_feature_claude_driven(
     )
 
     # Decide status
+    recoverability_note = ""
     if session.success and made_commit and not dirty and verification.overall_passed:
         status = StepStatus.PASSED
     elif made_commit and verification.overall_passed:
@@ -255,10 +259,18 @@ def execute_feature_claude_driven(
         status = StepStatus.PASSED
     else:
         # Something is wrong. Commit whatever is there with [BROKEN] tag
-        # so the next feature has context to build on.
+        # so the next feature has context to build on. If that commit
+        # itself fails (repo hook blocks it, git identity missing, etc.)
+        # we surface it explicitly — recoverability is a guarantee we
+        # promise in the docs, silent failure is not acceptable.
         if dirty:
-            _commit_broken(target_path, feature)
-            post_commit = _git_head(target_path)
+            if _commit_broken(target_path, feature):
+                post_commit = _git_head(target_path)
+            else:
+                recoverability_note = (
+                    " | recoverability: [BROKEN] commit failed — dirty "
+                    "working tree remains; see log for git error"
+                )
         status = StepStatus.FAILED
 
     # Reuse the diff — or recompute if a [BROKEN] commit was made above
@@ -277,7 +289,7 @@ def execute_feature_claude_driven(
         files_created=files_created,
         files_modified=files_modified,
         commit_sha=post_commit or "",
-        error_message=session.error or "",
+        error_message=(session.error or "") + recoverability_note,
         builder_output=(session.final_text or "")[:2000],
     )
     # Persist the session cost + skills in metadata for metrics
@@ -386,19 +398,23 @@ def _post_session_verification(
             if not ok:
                 reasons.append(f"frontend tests failed: {_last_line(out)}")
 
-    # 7. Best-effort health probe — Claude may have left the app running;
-    #    if so, we probe it. If it's down, treat as a soft signal, not
-    #    a hard failure (feature may have been built to spec without
-    #    leaving the app booted).
+    # 7. Health probe — if the contract declares a backend_health_url,
+    #    the feature is only "done" when that URL responds. Leaving
+    #    backend_health_url empty in the contract disables the probe
+    #    (common for CLI/library projects). Codex R2 flagged: if the
+    #    user put the URL there, they meant it.
     if probe_health and bundle.verification.backend_health_url:
         reachable = _probe_health(
             bundle.verification.backend_health_url,
             timeout=bundle.verification.boot_timeout_seconds,
         )
         ver.app_boots = reachable
-        # Not added to reasons — soft signal only. Explicit boot
-        # enforcement requires the orchestrator to start the app itself,
-        # which is out of scope for post-hoc verification.
+        if not reachable:
+            reasons.append(
+                f"backend health URL unreachable: "
+                f"{bundle.verification.backend_health_url} — the feature "
+                "must leave the app in a runnable state"
+            )
 
     ver.failure_reasons = reasons
     ver.overall_passed = not reasons
@@ -593,7 +609,7 @@ def _commit_broken(target_path: Path, feature: FeatureStep) -> bool:
             cwd=str(target_path), capture_output=True, text=True, timeout=10,
         )
         if add.returncode != 0:
-            console.print(f"  [red]BROKEN-commit: git add failed[/red]: {add.stderr[:200]}")
+            logger.warning("BROKEN-commit: git add failed: %s", add.stderr[:200])
             return False
         commit = subprocess.run(
             ["git", "commit", "-m",
@@ -603,12 +619,13 @@ def _commit_broken(target_path: Path, feature: FeatureStep) -> bool:
             cwd=str(target_path), capture_output=True, text=True, timeout=10,
         )
         if commit.returncode != 0:
-            console.print(
-                f"  [red]BROKEN-commit: git commit failed[/red] "
-                f"(rc={commit.returncode}): {(commit.stderr or commit.stdout)[:300]}"
+            logger.warning(
+                "BROKEN-commit: git commit failed (rc=%d): %s",
+                commit.returncode,
+                (commit.stderr or commit.stdout)[:300],
             )
             return False
         return True
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        console.print(f"  [red]BROKEN-commit: {exc}[/red]")
+        logger.warning("BROKEN-commit: %s", exc)
         return False
