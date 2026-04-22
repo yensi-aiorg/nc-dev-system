@@ -149,8 +149,12 @@ class NCDevV2Config(BaseModel):
         description=(
             "Named routing preset. One of: "
             + ", ".join(sorted(MODE_PRESETS.keys()))
-            + ". When set to a known preset, RoutingConfig is overwritten with "
-            "the preset. Use 'custom' to keep hand-tuned routing."
+            + ". Flipping this is the main budget switch — "
+            "claude_plan_codex_build (default) uses Claude for planning + "
+            "review and delegates implementation to Codex via Bash; "
+            "codex_only skips Claude entirely for token-lean days; "
+            "claude_only keeps everything on Claude; openrouter routes all "
+            "tasks through the OpenRouter API. Use 'custom' to hand-tune."
         ),
     )
     providers: dict[str, ProviderPreferenceConfig] = Field(

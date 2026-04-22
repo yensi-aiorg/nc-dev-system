@@ -348,6 +348,50 @@ def test_non_zero_exit_marked_unsuccessful(tmp_path: Path):
     assert "exited with code 2" in (result.error or "")
 
 
+def test_ncdev_hooks_wired_in_by_default(tmp_path: Path):
+    """When enable_ncdev_hooks=True (default) and the bundled settings
+    file exists, --settings is passed to claude."""
+    popen, captured = _popen_factory([{"type": "result", "result": "ok"}])
+
+    with patch("ncdev.claude_session.shutil.which", return_value="/usr/bin/claude"):
+        with patch("ncdev.claude_session.subprocess.Popen", side_effect=popen):
+            run_claude_session(
+                "do thing", cwd=tmp_path, include_codex_protocol=False,
+            )
+    cmd = captured["cmd"]
+    assert "--settings" in cmd
+    idx = cmd.index("--settings")
+    settings_path = cmd[idx + 1]
+    assert settings_path.endswith("settings.json")
+
+
+def test_enable_ncdev_hooks_false_omits_settings(tmp_path: Path):
+    popen, captured = _popen_factory([{"type": "result", "result": "ok"}])
+    with patch("ncdev.claude_session.shutil.which", return_value="/usr/bin/claude"):
+        with patch("ncdev.claude_session.subprocess.Popen", side_effect=popen):
+            run_claude_session(
+                "x", cwd=tmp_path, include_codex_protocol=False,
+                enable_ncdev_hooks=False,
+            )
+    cmd = captured["cmd"]
+    assert "--settings" not in cmd
+
+
+def test_caller_supplied_settings_path_wins(tmp_path: Path):
+    user_settings = tmp_path / "custom-settings.json"
+    user_settings.write_text("{}")
+    popen, captured = _popen_factory([{"type": "result", "result": "ok"}])
+    with patch("ncdev.claude_session.shutil.which", return_value="/usr/bin/claude"):
+        with patch("ncdev.claude_session.subprocess.Popen", side_effect=popen):
+            run_claude_session(
+                "x", cwd=tmp_path, include_codex_protocol=False,
+                settings_path=user_settings,
+            )
+    cmd = captured["cmd"]
+    idx = cmd.index("--settings")
+    assert cmd[idx + 1] == str(user_settings)
+
+
 def test_summary_includes_key_signals(tmp_path: Path):
     events = [
         {

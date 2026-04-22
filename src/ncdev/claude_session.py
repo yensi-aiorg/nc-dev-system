@@ -26,6 +26,11 @@ from typing import Callable, Iterable
 PROTOCOLS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts" / "protocols"
 CODEX_PROTOCOL_PATH = PROTOCOLS_DIR / "codex-via-bash.md"
 
+# Default NC Dev hooks — block commits with prohibited patterns / non-
+# conventional messages, block force-push to protected branches.
+NCDEV_HOOKS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts" / "ncdev-hooks"
+NCDEV_HOOKS_SETTINGS = NCDEV_HOOKS_DIR / "settings.json"
+
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -118,6 +123,8 @@ def run_claude_session(
     log_path: Path | None = None,
     on_event: Callable[[dict], None] | None = None,
     extra_args: list[str] | None = None,
+    settings_path: Path | None = None,
+    enable_ncdev_hooks: bool = True,
 ) -> ClaudeSessionResult:
     """Spawn a Claude session and stream its events.
 
@@ -159,6 +166,13 @@ def run_claude_session(
         progress UI. Exceptions in the callback are caught and logged.
     extra_args:
         Additional raw flags passed to ``claude``. Escape hatch.
+    settings_path:
+        Optional path to a Claude Code settings JSON with hooks/MCP
+        config. When set, passed via ``--settings``.
+    enable_ncdev_hooks:
+        When True (default), NC Dev's built-in hook guards (commit
+        hygiene + force-push protection) are wired in automatically
+        unless ``settings_path`` is also set (caller wins).
     """
     if shutil.which("claude") is None:
         return ClaudeSessionResult(
@@ -190,6 +204,17 @@ def run_claude_session(
         cmd += ["--append-system-prompt", system_prompt]
     if max_budget_usd is not None:
         cmd += ["--max-budget-usd", f"{max_budget_usd:.4f}"]
+
+    # Wire hooks: caller-supplied settings_path wins; otherwise, if
+    # enable_ncdev_hooks and the default settings file exists, use it.
+    chosen_settings = settings_path
+    if chosen_settings is None and enable_ncdev_hooks and NCDEV_HOOKS_SETTINGS.exists():
+        chosen_settings = NCDEV_HOOKS_SETTINGS
+    env_overrides: dict[str, str] = {}
+    if chosen_settings is not None:
+        cmd += ["--settings", str(chosen_settings)]
+        # Make the hooks dir discoverable to the command substitution in settings.json
+        env_overrides["NCDEV_HOOKS_DIR"] = str(NCDEV_HOOKS_DIR)
     if extra_args:
         cmd += list(extra_args)
 
@@ -200,6 +225,8 @@ def run_claude_session(
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_fh = log_path.open("w", encoding="utf-8")
 
+    subproc_env = os.environ.copy()
+    subproc_env.update(env_overrides)
     try:
         proc = subprocess.Popen(
             cmd,
@@ -208,6 +235,7 @@ def run_claude_session(
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env=subproc_env,
         )
     except (FileNotFoundError, OSError) as exc:
         if log_fh:
