@@ -136,3 +136,169 @@ class IngestionReport(BaseModel):
     successful: int = 0
     failed: int = 0
     records: list[IngestionRecord] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Charter artifacts — the 3 files that replace the old 9-artifact pipeline.
+# ---------------------------------------------------------------------------
+
+
+class TargetProjectContract(BaseModel):
+    """Hard architectural constraints. The 'don't override' bag.
+
+    Fields the user controls: stack, language, DB, auth, deployment target,
+    ports, design archetype. Claude may infer defaults from the PRD but
+    must NOT change these after the first session — they're the invariants.
+    """
+
+    version: str = "v3"
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    project_name: str
+    project_type: str = "web"  # web | cli | library | api
+    is_brownfield: bool = False
+    existing_repo_path: str = ""
+
+    # Stack — each field optional; "none" means explicitly not used.
+    backend_framework: str = ""     # fastapi | django | express | none
+    frontend_framework: str = ""    # react | vue | svelte | none
+    database: str = ""              # mongodb | postgres | sqlite | none
+    auth_system: str = ""           # keycloak | jwt | none
+    language_backend: str = ""
+    language_frontend: str = ""
+
+    # Deployment
+    deployment_target: str = "docker"   # docker | k8s | serverless
+    ports: dict[str, int] = Field(default_factory=dict)
+
+    # Design
+    design_archetype: str = ""  # See user's global CLAUDE.md for values
+    design_system_source: str = "stitch"   # stitch | existing | claude
+    design_system_path: str = "docs/design-system"
+
+    # Other invariants the orchestrator or verification must know
+    uses_citex: bool = True
+    uses_mock_apis: bool = True
+    production_readiness_required: bool = True
+
+
+class VerificationContract(BaseModel):
+    """What 'done' means for this project.
+
+    The Claude feature-executor session must satisfy every clause before
+    committing. Hooks enforce where possible; post-hoc checks cover the rest.
+    """
+
+    version: str = "v3"
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    # App must boot
+    backend_health_url: str = ""       # e.g. http://localhost:23001/api/health
+    frontend_url: str = ""
+    boot_timeout_seconds: int = 60
+
+    # Tests must exist and pass
+    backend_test_command: str = ""     # e.g. "cd backend && python -m pytest -q"
+    frontend_test_command: str = ""    # e.g. "cd frontend && npm test -- --run"
+    e2e_test_command: str = ""         # e.g. "cd frontend && npx playwright test"
+    minimum_test_count: int = 1
+
+    # Screenshots
+    required_screenshots: list[str] = Field(default_factory=list)
+    screenshot_viewports: list[str] = Field(default_factory=lambda: ["desktop", "mobile"])
+
+    # Files that must exist
+    required_files: list[str] = Field(default_factory=list)
+
+    # Assets
+    assets_manifest_required: bool = True
+    assets_manifest_path: str = ".ncdev/assets-needed"
+
+    # Prohibited patterns (grep-able — hooks enforce these on commit)
+    prohibited_patterns: list[str] = Field(default_factory=lambda: [
+        "TODO",
+        "FIXME",
+        "console.log(",
+        r"except:\s*pass",
+        "Not yet implemented",
+    ])
+
+    # Commit hygiene
+    require_conventional_commits: bool = True
+    require_tests_in_commit: bool = True
+
+
+class CharterBundle(BaseModel):
+    """The three artifacts produced by the discovery phase, together."""
+
+    contract: TargetProjectContract
+    verification: VerificationContract
+    feature_queue: FeatureQueueDoc
+
+
+# ---------------------------------------------------------------------------
+# Design system artifact (Phase C output)
+# ---------------------------------------------------------------------------
+
+
+class DesignScreen(BaseModel):
+    """One design screen / page produced by Stitch or equivalent."""
+    name: str
+    html_path: str = ""         # path to exported HTML within the repo
+    screenshot_path: str = ""   # path to PNG export
+    description: str = ""
+
+
+class AssetManifestEntry(BaseModel):
+    """One asset the feature needs but couldn't generate itself.
+
+    Listed so a downstream system (Nano Banana 2, stock image service,
+    human) can produce it. Claude writes one of these per asset while
+    building the feature — during the build, not after.
+    """
+    id: str                         # unique slug, e.g. "hero-bg"
+    name: str                       # human-readable
+    type: str                       # image | gif | svg | video | icon | audio
+    description: str                # what it shows / represents
+    generation_prompt: str          # prompt for an image-gen AI to produce it
+    suggested_dimensions: str = ""  # "1920x1080", "64x64", etc
+    referenced_in: list[str] = Field(default_factory=list)   # "src/pages/Home.tsx:42"
+    target_path: str = ""           # where in the repo the file should land
+    status: str = "pending"         # pending | generated | manual | skipped
+
+
+class AssetManifest(BaseModel):
+    """All assets needed by one feature."""
+    version: str = "v3"
+    feature_id: str
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    assets: list[AssetManifestEntry] = Field(default_factory=list)
+
+
+class DesignSystemDoc(BaseModel):
+    """Summary of the project's design system.
+
+    Populated by Phase C. Downstream feature builds reference this to
+    know what colours / fonts / spacing / component patterns to use.
+    """
+    version: str = "v3"
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    project_name: str
+    design_archetype: str
+    source: str = "stitch"           # stitch | existing | claude_generated
+
+    # Where the real design tokens live on disk (project-relative)
+    tokens_dir: str = "docs/design-system"
+    tokens_files: list[str] = Field(default_factory=list)   # e.g. ["tokens.css", "tailwind.config.js"]
+
+    # Optional: design system description
+    colors: dict[str, str] = Field(default_factory=dict)
+    typography: dict[str, str] = Field(default_factory=dict)
+    spacing: dict[str, str] = Field(default_factory=dict)
+
+    # Screens exported for reference
+    screens: list[DesignScreen] = Field(default_factory=list)
+
+    # Provenance
+    stitch_project_id: str = ""
+    notes: list[str] = Field(default_factory=list)
