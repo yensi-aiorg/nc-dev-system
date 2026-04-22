@@ -1,0 +1,16 @@
+{
+  "_comment": "NC Dev System — Claude Code hooks wired in at session spawn. Passed via --settings <this file> by claude_executor and dev.py. pre_bash_guard.py blocks git commit commands that violate Conventional Commits or contain prohibited patterns; force-push to protected branches requires NCDEV_ALLOW_FORCE_PUSH=1.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${NCDEV_HOOKS_DIR:-.}/pre_bash_guard.py"
+          }
+        ]
+      }
+    ]
+  }
+}

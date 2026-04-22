@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-"""NC Dev System — The Autonomous Senior Software Engineer.
+"""NC Dev System — thin orchestrator for autonomous development.
 
-Thin glue that connects Claude CLI + Codex CLI + Citex + Playwright + ElevenLabs.
-The AI decides how to work. This script provides context and enforces guardrails.
+This module is deliberately small. It spawns a single Claude session per
+task and lets Claude drive everything via skills + Codex delegation. The
+old 5-step plan/build/verify/fix ladder is gone — Claude's
+:skill:`test-driven-development`, :skill:`verification-before-completion`,
+and :skill:`systematic-debugging` skills handle that loop internally.
 
-Usage:
-    ncdev dev --project /path/to/repo --task "Build a document Q&A for law firms"
-    ncdev dev --project /path/to/repo --task "Fix payment webhook timeout" --mode bugfix
-    ncdev dev --project /path/to/repo --task "Add PDF export feature" --mode enhance
+NC Dev's only responsibilities in this file:
+
+1. Preflight (git repo, Citex reachable, claude + codex CLIs on PATH).
+2. Ensure the target project is a git repo (and has a remote for greenfield).
+3. Compose a short task prompt referencing the project + Citex.
+4. Run one Claude session with full tool access (Bash so Claude can shell
+   to Codex, Skill so it can invoke skills, Task so it can dispatch subagents).
+5. Commit any dirty leftovers with ``[BROKEN]`` if Claude exited without
+   committing (recoverability guarantee).
+6. Store a short run summary in Citex.
+
+For PRD-scale work, use :mod:`ncdev.v3.engine` (full pipeline) or the
+``ncdev full`` command. This ``dev`` command is the freeform
+``--task "whatever"`` entry point.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -21,6 +33,8 @@ from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
+
+from ncdev.claude_session import DEFAULT_BUILD_TOOLS, run_claude_session
 from ncdev.preflight import require_citex
 
 console = Console()
@@ -30,20 +44,16 @@ CITEX_API = "http://localhost:20161"
 
 
 def citex_store(project_id: str, content: str, metadata: dict) -> bool:
-    """Store context in Citex for future retrieval."""
+    """Store a short run summary in Citex."""
     try:
         import httpx
         resp = httpx.post(
             f"{CITEX_API}/api/v1/documents/ingest",
-            json={
-                "project_id": project_id,
-                "content": content,
-                "metadata": metadata,
-            },
+            json={"project_id": project_id, "content": content, "metadata": metadata},
             timeout=30,
         )
         return resp.status_code < 400
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Failed to store context in Citex at {CITEX_API}") from exc
 
 
@@ -53,603 +63,47 @@ def citex_query(project_id: str, query: str, limit: int = 10) -> str:
         import httpx
         resp = httpx.post(
             f"{CITEX_API}/api/v1/retrieval/query",
-            json={
-                "project_id": project_id,
-                "query": query,
-                "limit": limit,
-            },
+            json={"project_id": project_id, "query": query, "limit": limit},
             timeout=30,
         )
         if resp.status_code < 400:
             results = resp.json()
-            # Format results as context string
             parts = []
             for r in results.get("results", results.get("documents", [])):
                 content = r.get("content", r.get("text", ""))
                 if content:
                     parts.append(content[:2000])
             return "\n\n---\n\n".join(parts) if parts else ""
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Failed to query Citex at {CITEX_API}") from exc
     return ""
 
 
-# ── Project Context ─────────────────────────────────────────────────────
+# ── Git / GitHub setup ──────────────────────────────────────────────────
 
-def gather_project_context(project_path: Path, task: str) -> str:
-    """Gather context about the project from filesystem + Citex."""
-    require_citex(CITEX_API)
-    parts = []
-
-    # 1. Read README/spec if exists
-    for name in ["README.md", "SPEC.md", "CLAUDE.md"]:
-        fpath = project_path / name
-        if fpath.exists():
-            parts.append(f"## {name}\n{fpath.read_text(encoding='utf-8')[:5000]}")
-
-    # 2. File tree
-    try:
-        result = subprocess.run(
-            ["find", ".", "-type", "f",
-             "-not", "-path", "./.git/*",
-             "-not", "-path", "*/node_modules/*",
-             "-not", "-path", "*/.venv/*",
-             "-not", "-path", "*/__pycache__/*",
-             ],
-            cwd=str(project_path), capture_output=True, text=True, timeout=10,
-        )
-        if result.stdout:
-            files = sorted(result.stdout.strip().split("\n"))[:200]
-            parts.append(f"## Current File Tree ({len(files)} files)\n" + "\n".join(files))
-    except Exception:
-        pass
-
-    # 3. Recent git history
-    try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", "-20"],
-            cwd=str(project_path), capture_output=True, text=True, timeout=5,
-        )
-        if result.stdout:
-            parts.append(f"## Recent Git History\n{result.stdout}")
-    except Exception:
-        pass
-
-    # 4. Docker/infra info
-    for compose_name in ["docker-compose.yml", "docker-compose.yaml"]:
-        compose_path = project_path / compose_name
-        if compose_path.exists():
-            parts.append(f"## Docker Compose\n{compose_path.read_text(encoding='utf-8')[:3000]}")
-
-    # 5. Citex context (if available)
-    project_id = project_path.name
-    citex_context = citex_query(project_id, task)
-    if citex_context:
-        parts.append(f"## Previous Context from Citex\n{citex_context}")
-
-    return "\n\n".join(parts)
-
-
-# ── Guardrails ──────────────────────────────────────────────────────────
-
-GUARDRAILS = """
-## NON-NEGOTIABLE GUARDRAILS — You MUST follow these. They cannot be skipped.
-
-1. **FULL INTEGRATION TESTING**: Every feature must be tested as part of the complete system. Do NOT report a feature as done unless it works integrated with everything else. Run the full app and verify.
-
-2. **NO NEW ISSUES**: Run the FULL existing test suite after your changes. If ANY existing test breaks, you MUST fix the regression before reporting done. Zero tolerance.
-
-3. **REGRESSION TESTING**: Every bug fix MUST include a regression test. Every feature MUST include tests that verify it works. Tests are NOT optional.
-
-4. **NO UNDOING PAST WORK**: You MUST NOT remove, disable, skip, or comment out tests/features from previous work to make your current task pass. All previous work must remain intact and functional.
-
-5. **EVIDENCE**: You MUST capture screenshots of the working feature using Playwright. You MUST show test results. You MUST prove your work.
-
-If you cannot satisfy ALL 5 guardrails, the task is NOT done. Go back and fix it.
-"""
-
-FRONTEND_METHODOLOGY = """
-## Frontend Development Methodology — MANDATORY for any project with a UI
-
-### Design-First Approach
-NEVER write generic frontend code. Every UI must have a clear design identity.
-
-### Step 1: Choose a Design Archetype
-Pick ONE and commit. Every design decision must pass: "Would [reference brand] do this?"
-
-1. **Cinematic Minimalism** (Apple) — massive whitespace, product-as-hero, typography-driven. Fonts: SF Pro, Playfair Display. Colors: near-monochrome + one accent.
-2. **Technical Elegance** (Stripe) — gradient meshes, deep purples/blues, geometric illustrations. Fonts: GT Walsheim, Sohne, Satoshi. Colors: jewel tones, luminous gradients.
-3. **Opinionated Darkness** (Linear) — dark mode default (#0A0A0A), ultra-tight typography, razor edges, glassmorphism. Fonts: Manrope, General Sans, Geist (NOT Inter). Single luminous accent.
-4. **Warm Playfulness** (Notion) — hand-drawn illustrations, warm pastels, friendly. Fonts: Nunito, Quicksand, Plus Jakarta Sans. Colors: peach, soft yellow, cream, sage.
-5. **Developer Brutalism** (Vercel) — black/white, monospace, code-as-design. Fonts: JetBrains Mono, Fira Code. Colors: pure black + white, maybe one neon accent.
-6. **Bold Brand Photography** (Brex) — real people, strong signature color, 3D renders. Fonts: Clash Display, Cabinet Grotesk. One dominant brand color everywhere.
-
-### ANTI-PATTERNS — NEVER do these:
-- Inter font + purple gradient + white bg + rounded cards = "AI Average" (FORGETTABLE)
-- Standard Tailwind UI/shadcn defaults without customization = "Template Look"
-- Default blue (#3B82F6), default purple (#8B5CF6), default green (#22C55E) = AI defaults
-- Mixing archetypes = chaos
-
-### Step 2: Create Design System
-Before writing components, create `docs/design-system/` with:
-- Color palette (primary, secondary, surface, text, accent, error colors)
-- Typography (font families, sizes, weights, line heights)
-- Spacing scale
-- Component patterns (buttons, cards, inputs, navigation)
-- Implement in tailwind.config.ts
-
-### Step 3: Build Components from Design System
-- Every component MUST reference the design system
-- Use the chosen font (install via Google Fonts or local)
-- Use the chosen color palette — NO generic grays
-- Buttons, cards, inputs must follow the archetype's style
-- Sidebar + content layouts: independent scroll, sticky headers
-
-### Step 4: Verify Visually
-- Boot the frontend dev server
-- Take Playwright screenshots of each page
-- Verify the design matches the chosen archetype
-- Check: does this look like [reference brand]? If not, fix it.
-
-### Key UX Principles
-- Sidebars with lists MUST have their own scroll bar (no full-page scroll)
-- Clicking a list item shows detail immediately (no scrolling to find content)
-- Section titles stay visible (sticky headers in scrollable containers)
-- Dark mode: use actual dark backgrounds, not just gray (#0A0A0A or #080F1E, not #374151)
-"""
-
-QUALITY_STANDARDS = """
-## Quality Standards — Build software that is TRULY done
-
-### 1. State Management Testing
-Test state transitions, not just happy paths:
-- What happens when two users edit the same resource simultaneously?
-- What happens when the user clicks submit twice?
-- What happens when a session expires mid-operation?
-Test the transitions between states — that's where bugs hide.
-
-### 2. Error Path Coverage
-For EVERY data flow, test the error paths:
-- Missing required fields (validation)
-- Oversized inputs (limits)
-- Database unavailable (resilience)
-- XSS/injection attempts in text fields (security)
-- Unauthenticated requests (auth)
-- Unauthorized requests (wrong role)
-For every happy path test, write at least 2 error path tests.
-
-### 3. Performance Baselines
-Measure and flag slow operations:
-- API endpoints should respond in <500ms
-- Pages should render in <2s
-- Database queries should use indexes, not collection scans
-Use `time` in Bash to measure. Flag anything slow.
-
-### 4. Dependency Verification
-- Lock exact versions (pip freeze > requirements.lock, package-lock.json)
-- Run `npm audit` and `pip-audit` if available
-- Document all dependencies in requirements.txt / package.json
-- Verify clean install: `pip install -r requirements.txt` must work from scratch
-
-### 5. Docker Verification
-- The project MUST build and run in Docker
-- `docker compose build` must succeed
-- `docker compose up` must produce a healthy system
-- Run the same tests inside Docker to catch environment issues
-- No hardcoded paths or localhost assumptions that break in containers
-
-### 6. Documentation Verification
-- OpenAPI spec (FastAPI auto-generates this) — verify it's accessible at /docs
-- .env.example MUST list ALL required environment variables with descriptions
-- Every MongoDB collection has a corresponding Pydantic model
-- README.md explains how to run the project locally and in Docker
-
-### 7. Graceful Degradation
-- Health endpoint should check dependencies (DB, Redis) and report status
-- App should boot even if non-critical services are unavailable
-- Missing API keys should produce clear error messages, not crashes
-- Test: start with broken configs, verify graceful error handling
-
-### 8. Seed Data Quality
-- Seed data MUST cover all statuses/states in the system
-- Include edge cases: long text, unicode, empty optional fields
-- Represent multiple user roles
-- Make seed data realistic — names, descriptions, dates that look real
-- Screenshots should show the product with good seed data
-
-### 9. Idempotency
-- Running the build again should not break what exists
-- Database seeds should check before inserting (no duplicate data)
-- File creation should not overwrite without reason
-- Support incremental work — adding features to existing code
-
-### 10. Observability from Day One
-- Use structured logging (Python: `logging` module, not `print()`)
-- Add request/response logging middleware to FastAPI
-- Log unhandled exceptions with full stack traces
-- Health endpoint MUST check all dependencies:
-  GET /api/health → {"status": "ok", "database": "connected", "version": "0.1.0"}
-"""
-
-INFRASTRUCTURE_STANDARDS = """
-## Infrastructure Integration
-
-### Keystone Integration
-Every project built by NC Dev System should be designed to integrate with Keystone infrastructure:
-- Auth: Keycloak (Keystone provides this on port 15703)
-- Logging: structured logs compatible with Grafana/Loki
-- Monitoring: health endpoints compatible with Prometheus
-- Analytics: events compatible with PostHog
-- Reverse proxy: Traefik labels for routing
-
-For now, include Keystone integration POINTS (health endpoint, structured logging, auth middleware) but don't require Keystone to be running. The app should work standalone AND with Keystone.
-
-### Git & GitHub Standards
-- Use `gh` CLI to create GitHub repos for new projects: `gh repo create yensi-solutions/{name} --private`
-- NEVER make merge commits — always rebase: `git config pull.rebase true`
-- Every commit must be atomic and descriptive: "feat(tasks): add CRUD endpoints with validation"
-- Use conventional commits: feat, fix, docs, test, refactor, chore
-- Commit after each verified feature — not one giant commit at the end
-- Label commits with NC Dev System: include "Built by NC Dev System" in commit body
-"""
-
-# ── AI Invocation ───────────────────────────────────────────────────────
-
-def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
-    """Plan the approach — writes detailed build instructions via the configured planner.
-
-    Provider is resolved from ``.nc-dev/v2/config.yaml`` routing for ``design_brief``.
-    Default mode (``claude_plan_codex_build``) uses Claude; ``codex_only`` uses Codex.
-    """
-    planning_prompt = f"""You are a senior software architect. Your job is to PLAN, not build.
-
-Write a detailed, actionable build plan to the file .ncdev/build-instructions.md that another developer (Codex) will follow to build the entire project. The plan must be specific enough that Codex can execute it without asking questions.
-
-DO NOT write any application code. DO NOT create project files. ONLY write the build instructions file.
-
-The instructions file must include:
-- Exact file structure to create
-- Exact API routes with request/response shapes
-- Exact data models with field types
-- Exact frontend components with layout descriptions
-- Which design archetype to follow and specific colors/fonts
-- Test strategy — what to test and how
-- Data flow descriptions
-- Docker Compose service layout
-- Environment variables needed
-
-## Task
-{task}
-
-## Project Context
-{context}
-
-{GUARDRAILS}
-
-{FRONTEND_METHODOLOGY}
-
-## EXECUTION ORDER — Follow this exactly:
-
-### Phase 1: Backend (do this first)
-1. Create backend/ directory with FastAPI app
-2. Add health endpoint: GET /api/health returning {{"status": "ok"}}
-3. Add all API routes from the spec, one at a time
-4. Write tests for EACH route (use pytest + httpx TestClient)
-5. Run tests: `cd backend && pip install -e ".[dev]" && python -m pytest -v`
-6. Fix any failures before moving to frontend
-
-### Phase 2: Frontend (after backend tests pass)
-1. Create frontend/ with Vite + React + TypeScript
-2. Install Tailwind CSS and configure the design system from the chosen archetype
-3. Create `docs/design-system/` with colors, fonts, spacing
-4. Build components from the design system — NOT generic gray
-5. Connect frontend to backend API (use Vite proxy: /api -> http://localhost:PORT)
-6. Run `cd frontend && npm run build` to verify it compiles
-
-### Phase 3: Integration
-1. Create docker-compose.yml connecting all services
-2. Mount frontend static build in FastAPI (or serve via separate container)
-3. Boot the backend: `cd backend && uvicorn app.main:app --port PORT &`
-4. Boot the frontend: `cd frontend && npx vite --port PORT &`
-5. Verify: `curl http://localhost:PORT/api/health`
-6. Install Playwright: `cd frontend && npx playwright install chromium`
-7. Take screenshots of EVERY page, save to .ncdev/evidence/screenshots/
-8. If screenshots show errors (e.g. "Failed to fetch"), FIX the issue and re-screenshot
-
-### Phase 4: Final Verification
-1. Run ALL backend tests
-2. Run ALL frontend tests
-3. Verify ALL screenshots show working UI (no errors, no blank pages)
-4. Commit all changes with conventional commit messages (feat, fix, test, etc.)
-
-{QUALITY_STANDARDS}
-
-{INFRASTRUCTURE_STANDARDS}
-
-## DATA FLOW METHODOLOGY — Build understanding as you build code
-
-As you implement each feature, create a data flow document at `.ncdev/flows/<flow-name>.json`.
-
-WHY: These data flows become the basis for comprehensive multi-actor end-to-end tests. When you later fix a bug, the flows tell you what else might break. They are NOT documentation for humans — they are machine-readable context that you (and future AI sessions) will query to understand the system.
-
-Each flow document must capture:
-- **flow_id**: unique name (e.g., "task_creation", "user_login")
-- **actor**: which user role triggers this flow
-- **input**: what data enters and from where
-- **steps**: each boundary the data crosses (frontend→API, API→DB, system→email)
-- **output**: what the user sees, what's stored, what side effects happen
-- **related_flows**: which other flows share data entities with this one
-- **test_scenario**: setup, action, and assertions to verify this flow works
-
-After building all features, generate end-to-end tests that:
-- Create multiple user accounts with different roles
-- Each role executes their permitted flows
-- Verify that one role's actions correctly appear to other roles
-- Test the COMPLETE data path (UI → API → DB → back to UI)
-- Use real inputs (not mocks) — real PDFs, real form data, real API calls
-
-## CRITICAL RULES
-- Execute immediately. No questions. No options. Just build.
-- Backend MUST have tests. Run them. They MUST pass.
-- Frontend MUST follow the design archetype. No generic UIs.
-- Screenshots MUST show working features. If they show errors, FIX and re-capture.
-- The API proxy MUST work — frontend calls /api/* which proxies to the backend.
-- Data flows MUST be documented as you build. They drive your test strategy.
-"""
-
-    # Save the full context to a file so the planner can read it (avoids ARG_MAX limits)
-    context_dir = project_path / ".ncdev"
-    context_dir.mkdir(parents=True, exist_ok=True)
-    context_file = context_dir / "build-instructions.md"
-    context_file.write_text(planning_prompt, encoding="utf-8")
-
-    short_prompt = (
-        "Read the file .ncdev/build-instructions.md in this directory. "
-        "Replace that file with a detailed executable build plan that the builder will follow. "
-        "Do not implement the project yourself. Do not edit files outside .ncdev/build-instructions.md. "
-        f"The task is: {task}"
-    )
-
-    from ncdev.provider_dispatch import get_provider_for, preferred_model_for
-
-    provider = get_provider_for("design_brief", workspace=project_path)
-    model = preferred_model_for("design_brief", "planning", workspace=project_path)
-    argv = provider.build_argv(
-        short_prompt,
-        model=model,
-        tools=["Read", "Write", "Glob", "Grep"],
-    )
-    console.print(f"[cyan]{provider.short_name.title()} planning...[/cyan]")
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=str(project_path),
-            capture_output=True,
-            text=True,
-            timeout=900,  # 15 min — brownfield projects need more time to read existing code
-        )
-        return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
-    except subprocess.TimeoutExpired:
-        # Planner may have written the instructions file before timing out — that's OK
-        if context_file.exists() and context_file.stat().st_size > 1000:
-            console.print(f"[yellow]  {provider.short_name.title()} timed out but instructions file was written — proceeding[/yellow]")
-            return "Planning completed (timeout but instructions written)"
-        return f"ERROR: {provider.short_name} planning timed out and no instructions were written"
-
-
-def invoke_codex_parallel(context: str, task: str, project_path: Path) -> str:
-    """Invoke the configured implementation provider to build.
-
-    Historical name kept for call-site compatibility; the actual provider
-    comes from routing (``implementation``) — Codex by default, Claude or
-    OpenRouter if the mode says so.
-    """
-    context_file = project_path / ".ncdev" / "build-instructions.md"
-    if not context_file.exists():
-        context_dir = project_path / ".ncdev"
-        context_dir.mkdir(parents=True, exist_ok=True)
-        full_prompt = f"## Task\n{task}\n\n## Project Context\n{context}\n\n{GUARDRAILS}\n\n{FRONTEND_METHODOLOGY}"
-        context_file.write_text(full_prompt, encoding="utf-8")
-
-    short_prompt = (
-        f"Read the file .ncdev/build-instructions.md for your complete task instructions. "
-        f"Follow every instruction precisely. Build the project, run tests, take screenshots. "
-        f"The task is: {task}"
-    )
-
-    from ncdev.provider_dispatch import get_provider_for, preferred_model_for
-
-    provider = get_provider_for("implementation", workspace=project_path)
-    model = preferred_model_for("implementation", "implementation", workspace=project_path)
-    argv = provider.build_argv(
-        short_prompt,
-        model=model,
-        tools=["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-    )
-    console.print(f"[yellow]Invoking {provider.short_name.title()} builder...[/yellow]")
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=str(project_path),
-            capture_output=True,
-            text=True,
-            timeout=900,  # 15 min
-        )
-        return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
-    except Exception as e:
-        return f"{provider.short_name} unavailable: {e}"
-
-
-# ── Video Report ────────────────────────────────────────────────────────
-
-def generate_video_report(project_path: Path, task: str, results: str) -> Path | None:
-    """Generate a Playwright video with ElevenLabs audio overlay."""
-    evidence_dir = project_path / ".ncdev" / "evidence"
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-
-    # Ask Codex to create the Playwright script and narration
-    video_prompt = f"""Create a video report for this completed development task.
-
-## Task Completed
-{task}
-
-## Results Summary
-{results[:3000]}
-
-## Instructions
-1. Write a Playwright script at {evidence_dir}/record.ts that:
-   - Opens the app (check docker-compose.yml for the URL, or use localhost:24100)
-   - Navigates through the key features that were built/fixed
-   - Takes screenshots at each step
-   - Records a video of the walkthrough
-
-2. Write a narration script at {evidence_dir}/narration.txt that:
-   - Describes what was built/fixed (30 seconds)
-   - Shows the key features working (30 seconds)
-   - Shows tests passing (15 seconds)
-   - Summary (15 seconds)
-   Total: ~1-2 minutes
-
-3. Run the Playwright script to capture the video.
-4. The video should be saved at {evidence_dir}/report.webm
-
-Focus on SHOWING the working product, not explaining code.
-"""
-
-    # Configured implementation provider does the actual recording work — timeout is non-fatal
-    from ncdev.provider_dispatch import get_provider_for, preferred_model_for
-
-    provider = get_provider_for("implementation", workspace=project_path)
-    model = preferred_model_for("implementation", "implementation", workspace=project_path)
-    argv = provider.build_argv(
-        video_prompt,
-        model=model,
-        tools=["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-    )
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=str(project_path),
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 min for video generation
-        )
-    except subprocess.TimeoutExpired:
-        console.print("  [yellow]Video recording timed out — checking for partial evidence[/yellow]")
-
-    video_path = evidence_dir / "report.webm"
-    if video_path.exists() and video_path.stat().st_size > 0:
-        console.print(f"  [green]✓[/green] Video saved: {video_path}")
-        return video_path
-
-    # Fallback: check for screenshots and videos in subdirs
-    screenshots = list(evidence_dir.rglob("*.png"))
-    videos = list(evidence_dir.rglob("*.webm"))
-    if videos:
-        largest = max(videos, key=lambda p: p.stat().st_size)
-        if largest.stat().st_size > 0:
-            console.print(f"  [green]✓[/green] Video found: {largest}")
-            return largest
-    if screenshots:
-        console.print(f"  [yellow]No video but {len(screenshots)} screenshots captured[/yellow]")
-
-    return None
-
-
-# ── Guardrail Verification ──────────────────────────────────────────────
-
-def verify_guardrails(project_path: Path) -> tuple[bool, list[str]]:
-    """Run guardrail checks. Returns (passed, issues)."""
-    issues = []
-
-    # 1. Run backend tests
-    backend_path = project_path / "backend"
-    if backend_path.exists():
-        result = subprocess.run(
-            ["python", "-m", "pytest", "-q", "--tb=short"],
-            cwd=str(backend_path), capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode != 0:
-            issues.append(f"Backend tests FAILED:\n{result.stdout[-500:]}")
-        else:
-            console.print(f"  [green]✓[/green] Backend tests pass")
-
-    # 2. Run frontend tests
-    frontend_path = project_path / "frontend"
-    if frontend_path.exists() and (frontend_path / "package.json").exists():
-        result = subprocess.run(
-            ["bash", "-c", "npx vitest run 2>&1 || npm test 2>&1 || true"],
-            cwd=str(frontend_path), capture_output=True, text=True, timeout=120,
-        )
-        # Non-blocking for now — frontend test setup varies
-
-    # 3. Check app boots
-    if backend_path.exists():
-        result = subprocess.run(
-            ["python", "-c", "from app.main import app; print('BOOT_OK')"],
-            cwd=str(backend_path), capture_output=True, text=True, timeout=30,
-        )
-        if "BOOT_OK" not in result.stdout:
-            issues.append(f"Backend cannot boot: {result.stderr[-300:]}")
-        else:
-            console.print(f"  [green]✓[/green] Backend boots OK")
-
-    # 4. Check Docker Compose builds (if exists)
-    compose_path = project_path / "docker-compose.yml"
-    if compose_path.exists():
-        result = subprocess.run(
-            ["docker", "compose", "config", "--quiet"],
-            cwd=str(project_path), capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0:
-            console.print(f"  [green]✓[/green] Docker Compose config valid")
-        else:
-            issues.append(f"Docker Compose config invalid: {result.stderr[:200]}")
-
-    # 5. Check .env.example exists
-    if not (project_path / ".env.example").exists() and not (project_path / "backend" / ".env.example").exists():
-        issues.append("Missing .env.example — all environment variables must be documented")
-
-    # 6. Check for screenshots (evidence) — check all subdirs
-    evidence_dir = project_path / ".ncdev" / "evidence"
-    screenshots = list(evidence_dir.rglob("*.png")) if evidence_dir.exists() else []
-    # Also check frontend/e2e and other common screenshot locations
-    for alt_dir in [project_path / "frontend" / "e2e" / "screenshots", project_path / "screenshots"]:
-        if alt_dir.exists():
-            screenshots.extend(alt_dir.rglob("*.png"))
-    if not screenshots:
-        issues.append("No screenshots captured — take Playwright screenshots of the running app")
-
-    return len(issues) == 0, issues
-
-
-# ── Git & GitHub ────────────────────────────────────────────────────────
 
 def _ensure_git_repo(project_path: Path, mode: str) -> None:
-    """Ensure project has git initialized and a GitHub remote."""
-    project_name = project_path.name
-
-    # Initialize git if needed
-    if not (project_path / ".git").exists():
-        console.print(f"  [yellow]Initializing git repo...[/yellow]")
-        subprocess.run(["git", "init"], cwd=str(project_path), capture_output=True, timeout=10)
-        subprocess.run(["git", "add", "-A"], cwd=str(project_path), capture_output=True, timeout=10)
+    """Ensure the project is a git repo (and has a remote for greenfield)."""
+    git_dir = project_path / ".git"
+    if not git_dir.exists():
+        subprocess.run(["git", "init"], cwd=str(project_path),
+                       capture_output=True, timeout=10)
+        subprocess.run(["git", "add", "-A"], cwd=str(project_path),
+                       capture_output=True, timeout=10)
         subprocess.run(
-            ["git", "-c", "user.name=NC Dev System", "-c", "user.email=ncdev@yensi.dev",
-             "commit", "-m", "chore: initial commit\n\nBuilt by NC Dev System", "--allow-empty"],
+            ["git", "commit", "-q", "-m", "chore: initial commit"],
             cwd=str(project_path), capture_output=True, timeout=10,
         )
+    subprocess.run(["git", "config", "pull.rebase", "true"],
+                   cwd=str(project_path), capture_output=True, timeout=5)
 
-    # Set rebase-only pull
-    subprocess.run(["git", "config", "pull.rebase", "true"], cwd=str(project_path), capture_output=True, timeout=5)
-
-    # Create GitHub repo for greenfield projects if no remote exists
     if mode in ("greenfield", "auto"):
         result = subprocess.run(
             ["git", "remote", "get-url", "origin"],
             cwd=str(project_path), capture_output=True, text=True, timeout=5,
         )
         if result.returncode != 0:
+            project_name = project_path.name
             console.print(f"  [yellow]Creating GitHub repo: yensi-solutions/{project_name}...[/yellow]")
             gh_result = subprocess.run(
                 ["gh", "repo", "create", f"yensi-solutions/{project_name}",
@@ -659,153 +113,216 @@ def _ensure_git_repo(project_path: Path, mode: str) -> None:
             if gh_result.returncode == 0:
                 console.print(f"  [green]✓[/green] GitHub repo created: yensi-solutions/{project_name}")
             else:
-                # Repo might already exist — try adding remote
                 subprocess.run(
-                    ["git", "remote", "add", "origin", f"git@github.com:yensi-solutions/{project_name}.git"],
+                    ["git", "remote", "add", "origin",
+                     f"git@github.com:yensi-solutions/{project_name}.git"],
                     cwd=str(project_path), capture_output=True, timeout=5,
                 )
 
 
+def _git_head(project_path: Path) -> str:
+    r = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(project_path), capture_output=True, text=True, timeout=5,
+    )
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _git_working_tree_dirty(project_path: Path) -> bool:
+    r = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(project_path), capture_output=True, text=True, timeout=5,
+    )
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def _commit_broken_leftovers(project_path: Path, task: str) -> str:
+    """Commit leftover dirty tree with [BROKEN] tag for recoverability."""
+    subprocess.run(["git", "add", "-A"],
+                   cwd=str(project_path), capture_output=True, timeout=10)
+    r = subprocess.run(
+        ["git", "commit", "-m",
+         f"[BROKEN] ncdev dev: {task[:80]}\n\n"
+         "Claude session exited without a clean working tree. "
+         "Committed for recoverability."],
+        cwd=str(project_path), capture_output=True, timeout=10,
+    )
+    if r.returncode != 0:
+        return ""
+    return _git_head(project_path)
+
+
+# ── Prompt composition (short, contract-driven) ─────────────────────────
+
+
+def _build_task_prompt(task: str, project_path: Path, project_id: str, mode: str) -> str:
+    """Compose the short prompt for a freeform dev task.
+
+    Deliberately terse — the Codex protocol is injected via
+    ``--append-system-prompt`` by :func:`run_claude_session`, and Claude
+    can read the repo itself with the Read tool. We do not pre-gather
+    file trees or README content here; Claude is better at deciding
+    what to look at.
+    """
+    return f"""# Task for this ncdev dev session
+
+Mode: {mode}
+Project: {project_path}
+Citex project ID: {project_id}
+Citex URL: {CITEX_API}
+
+## What the user wants
+
+{task}
+
+## Your workflow
+
+You are the engineer. Drive the full cycle yourself using the skill
+machinery available to you. Codex is your implementation peer — see
+the Codex protocol in your system prompt.
+
+1. Explore the project using Read/Glob/Grep. Query Citex (via HTTP
+   or any CLI it exposes) for prior context.
+2. If this is non-trivial, use the `writing-plans` skill.
+3. Use `test-driven-development` for any behavioural change.
+4. Delegate raw implementation and test writing to Codex via Bash:
+   `codex exec --full-auto --sandbox danger-full-access "<scoped task>"`.
+5. Use `verification-before-completion` — run the project's tests,
+   boot the app, check a health endpoint if one exists. No claiming
+   done without evidence.
+6. On failure, use `systematic-debugging` — root-cause first, don't
+   loop blindly.
+7. Commit your work using Conventional Commits. Leave the working
+   tree clean.
+
+## What success looks like
+
+- Tests exist and pass for any behavioural change.
+- Working tree is clean, all changes committed.
+- One-paragraph summary in your final response.
+
+Begin.
+"""
+
+
 # ── Main Entry Point ────────────────────────────────────────────────────
+
 
 def run_dev(
     project_path: Path,
     task: str,
     mode: str = "auto",
+    *,
+    model: str = "claude-opus-4-6",
+    timeout: int = 3600,
+    max_budget_usd: float | None = None,
 ) -> dict[str, Any]:
-    """Run the NC Dev System on a project.
+    """Run a single ncdev dev session.
 
-    This is the thin glue. It:
-    1. Gathers context (filesystem + Citex)
-    2. Invokes Claude CLI (planning) + Codex CLI (build/test) with full context
-    3. Verifies guardrails
-    4. Generates video report
-    5. Stores results in Citex
+    This is thin glue. Claude does the actual work; NC Dev handles:
+    preflight, git repo setup, session orchestration, broken-tag
+    fallback on failure, Citex ingestion of the run summary.
     """
-    start_time = time.time()
+    start = time.time()
     project_id = project_path.name
     run_id = f"dev-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+
     require_citex(CITEX_API)
 
     console.print(Panel(
-        f"[bold cyan]NC Dev System — Autonomous Senior Engineer[/bold cyan]\n"
+        f"[bold cyan]NC Dev System — thin orchestrator[/bold cyan]\n"
         f"Project: {project_path}\n"
-        f"Task: {task}\n"
-        f"Mode: {mode}\n"
-        f"Run: {run_id}",
+        f"Task:    {task}\n"
+        f"Mode:    {mode}\n"
+        f"Run:     {run_id}",
         border_style="cyan",
     ))
 
-    # 0. Ensure project has git + GitHub repo
     _ensure_git_repo(project_path, mode)
 
-    # 1. Gather context
-    console.print("\n[bold]1. Gathering project context...[/bold]")
-    context = gather_project_context(project_path, task)
-    console.print(f"  Context: {len(context)} chars from filesystem + Citex")
+    pre_head = _git_head(project_path)
 
-    # 2. Planner writes the build instructions (provider chosen by mode)
-    console.print("\n[bold]2. Planning phase...[/bold]")
-    plan_output = invoke_ai_planning(context, task, project_path)
-    console.print(f"  Plan: {len(plan_output)} chars")
-
-    # 3. Builder executes all the development work (provider chosen by mode)
-    console.print("\n[bold]3. Build phase...[/bold]")
-    codex_output = invoke_codex_parallel(
-        context,
-        (
-            "Read the file .ncdev/build-instructions.md for your complete task instructions. "
-            "Follow every instruction precisely. You are the developer — build everything:\n"
-            "- Create all backend code, models, routes, tests\n"
-            "- Create all frontend code, components, pages, styles\n"
-            "- Create Docker Compose, .env.example, documentation\n"
-            "- Create data flow documents in .ncdev/flows/\n"
-            "- Run ALL tests and fix any failures\n"
-            "- Boot the app and verify it works\n"
-            "- Take Playwright screenshots of every page\n"
-            "- Commit each feature with conventional commit messages\n\n"
-            f"The task is: {task}"
-        ),
-        project_path,
+    console.print("\n[bold]Running Claude session...[/bold]")
+    log_path = project_path / ".ncdev" / "runs" / run_id / "session.jsonl"
+    prompt = _build_task_prompt(task, project_path, project_id, mode)
+    session = run_claude_session(
+        prompt,
+        cwd=project_path,
+        tools=DEFAULT_BUILD_TOOLS,
+        model=model,
+        timeout=timeout,
+        permission_mode="acceptEdits",
+        include_codex_protocol=True,
+        max_budget_usd=max_budget_usd,
+        log_path=log_path,
     )
-    console.print(f"  Codex build: {len(codex_output)} chars")
+    console.print(f"  Session: {session.summary()}")
 
-    # 4. Fix loop — verify and fix until guardrails pass (max 3 attempts)
-    max_fix_attempts = 3
-    passed = False
-    issues = []
+    post_head = _git_head(project_path)
+    dirty = _git_working_tree_dirty(project_path)
+    made_commit = bool(post_head and post_head != pre_head)
 
-    for attempt in range(1, max_fix_attempts + 1):
-        console.print(f"\n[bold]4. Verification pass {attempt}/{max_fix_attempts}...[/bold]")
-        passed, issues = verify_guardrails(project_path)
+    status = "passed"
+    if not session.success or not made_commit:
+        status = "failed"
+    if dirty:
+        # Recoverability: commit leftovers with [BROKEN]
+        broken_sha = _commit_broken_leftovers(project_path, task)
+        if broken_sha:
+            console.print(f"  [yellow]Committed leftovers with [BROKEN] tag: {broken_sha[:8]}[/yellow]")
+            post_head = broken_sha
+        status = "failed"
 
-        if passed:
-            console.print(f"  [green]All guardrails PASSED on attempt {attempt}[/green]")
-            break
+    duration = time.time() - start
 
-        console.print(f"  [red]Guardrails FAILED — {len(issues)} issues[/red]")
-        for issue in issues:
-            console.print(f"    [red]✗[/red] {issue[:200]}")
+    # Ingest short run summary to Citex (best-effort; do not fail the run)
+    try:
+        citex_store(
+            project_id,
+            content=(
+                f"ncdev dev run {run_id}\n"
+                f"Task: {task}\n"
+                f"Status: {status}\n"
+                f"Commit: {post_head[:12] if post_head else ''}\n"
+                f"Session: {session.summary()}\n"
+                f"Final response:\n{(session.final_text or '')[:2000]}"
+            ),
+            metadata={
+                "run_id": run_id,
+                "task": task[:500],
+                "mode": mode,
+                "status": status,
+                "commit_sha": post_head,
+                "skills_invoked": session.skills_invoked,
+                "codex_invocations": len(session.codex_invocations),
+                "total_cost_usd": session.total_cost_usd,
+                "duration_seconds": duration,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]Citex ingestion of run summary failed: {exc}[/yellow]")
 
-        if attempt < max_fix_attempts:
-            # Codex fixes all issues (it's the developer)
-            console.print(f"\n  [yellow]Codex fixing (attempt {attempt})...[/yellow]")
-            fix_context = f"The following checks FAILED. Fix them ALL:\n" + "\n".join(issues)
-            fix_context += "\n\nRead .ncdev/build-instructions.md for the full project requirements."
-            invoke_codex_parallel(
-                context + "\n\n" + fix_context,
-                f"Fix these failures: {'; '.join(i[:100] for i in issues)}",
-                project_path,
-            )
-
-    # 5. Video report — ONLY if guardrails passed, and non-fatal if it fails
-    video_path = None
-    if passed:
-        console.print("\n[bold]5. Generating video report (non-blocking)...[/bold]")
-        try:
-            video_path = generate_video_report(project_path, task, plan_output)
-        except Exception as exc:
-            console.print(f"  [yellow]Video generation failed: {exc} — build still counts as PASSED[/yellow]")
-            video_path = None
-    else:
-        console.print("\n[bold]5. Skipping video — guardrails not passed[/bold]")
-
-    # 5. Store in Citex
-    console.print("\n[bold]5. Storing context in Citex...[/bold]")
-    citex_store(project_id, f"Task: {task}\nResult: {'PASSED' if passed else 'FAILED'}\n{plan_output[:5000]}", {
-        "run_id": run_id,
-        "task": task,
-        "mode": mode,
-        "passed": passed,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-
-    # 6. Summary
-    duration = time.time() - start_time
-    result = {
-        "run_id": run_id,
-        "project": str(project_path),
-        "task": task,
-        "status": "passed" if passed else "failed",
-        "duration_seconds": duration,
-        "guardrails_passed": passed,
-        "guardrail_issues": issues,
-        "video_path": str(video_path) if video_path else None,
-    }
-
-    status_color = "green" if passed else "red"
     console.print(Panel(
-        f"[{status_color}]Status: {result['status'].upper()}[/{status_color}]\n"
-        f"Duration: {duration:.0f}s\n"
-        f"Guardrails: {'ALL PASSED' if passed else f'{len(issues)} issues'}\n"
-        f"Video: {video_path or 'not generated'}",
-        title="NC Dev System — Complete",
-        border_style=status_color,
+        f"[bold]Status:[/bold] {status}\n"
+        f"[bold]Commit:[/bold] {post_head[:12] if post_head else '(none)'}\n"
+        f"[bold]Skills:[/bold] {', '.join(session.skills_invoked) or '(none)'}\n"
+        f"[bold]Codex calls:[/bold] {len(session.codex_invocations)}\n"
+        f"[bold]Duration:[/bold] {duration:.1f}s"
+        + (f"\n[bold]Cost:[/bold] ${session.total_cost_usd:.3f}"
+           if session.total_cost_usd is not None else ""),
+        title="Run complete",
+        border_style="green" if status == "passed" else "yellow",
     ))
 
-    # Save run report
-    report_dir = project_path / ".ncdev" / "runs" / run_id
-    report_dir.mkdir(parents=True, exist_ok=True)
-    (report_dir / "report.json").write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
-
-    return result
+    return {
+        "run_id": run_id,
+        "status": status,
+        "commit_sha": post_head,
+        "session_summary": session.summary(),
+        "skills_invoked": session.skills_invoked,
+        "codex_invocations": session.codex_invocations,
+        "total_cost_usd": session.total_cost_usd,
+        "duration_seconds": duration,
+        "final_text": session.final_text,
+    }

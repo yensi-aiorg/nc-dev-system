@@ -1,111 +1,197 @@
+"""Tests for the thin ``ncdev dev`` orchestrator."""
+
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from ncdev import dev
-from ncdev import provider_dispatch
-from ncdev.ai_provider import AIProvider, register_provider, reset_registry
+from ncdev.claude_session import ClaudeSessionResult
 
 
-class _FakeProvider(AIProvider):
-    """Test double: records calls, returns a canned argv."""
-
-    instances: list["_FakeProvider"] = []
-
-    def __init__(self) -> None:
-        self.short = "fake"
-        self.argv_calls: list[tuple[str, str | None, list[str] | None]] = []
-        type(self).instances.append(self)
-
-    def is_available(self) -> bool:  # pragma: no cover - unused
-        return True
-
-    async def complete(self, prompt, timeout=300, cwd=None, tools=None):  # pragma: no cover
-        return "ok"
-
-    def build_argv(self, prompt, *, model=None, tools=None):
-        self.argv_calls.append((prompt, model, tools))
-        return ["fake-cli", "--prompt", prompt]
-
-    @property
-    def short_name(self) -> str:
-        return self.short
-
-
-def _install_fake(monkeypatch, short_name: str) -> type[_FakeProvider]:
-    """Register a fake provider under the given short name and route all tasks to it."""
-
-    class Fake(_FakeProvider):
-        pass
-
-    Fake.instances = []
-    Fake.short = short_name  # type: ignore[attr-defined]
-
-    register_provider(short_name, Fake)
-
-    # Point every routing alias at the short name so any task_key → Fake.
-    original_get_provider_for = provider_dispatch.get_provider_for
-
-    def routed(task_key, **kwargs):
-        return Fake()
-
-    monkeypatch.setattr(provider_dispatch, "get_provider_for", routed)
-    monkeypatch.setattr(provider_dispatch, "preferred_model_for", lambda *a, **k: None)
-    return Fake
+def _init_git(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=str(path), check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(path), check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=str(path), check=True)
+    (path / "README.md").write_text("init")
+    subprocess.run(["git", "add", "-A"], cwd=str(path), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(path), check=True)
 
 
 @pytest.fixture(autouse=True)
-def _reset_registries():
-    reset_registry()
-    provider_dispatch.reset_cache()
-    yield
-    reset_registry()
-    provider_dispatch.reset_cache()
+def _patch_citex(monkeypatch):
+    """Bypass Citex health checks in tests."""
+    monkeypatch.setattr(dev, "require_citex", lambda url=None: None)
+    monkeypatch.setattr(dev, "citex_store", lambda *a, **k: True)
 
 
-def test_invoke_ai_planning_uses_dispatched_provider(monkeypatch, tmp_path: Path) -> None:
-    Fake = _install_fake(monkeypatch, "fakeplanner")
-
-    class FakeCompleted:
-        returncode = 0
-        stdout = "planned"
-        stderr = ""
-
-    calls: list[list[str]] = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return FakeCompleted()
-
-    monkeypatch.setattr(dev.subprocess, "run", fake_run)
-
-    result = dev.invoke_ai_planning("project context", "Build feature X", tmp_path)
-
-    assert result == "planned"
-    # Fake provider's argv shape was used — no literal "claude" / "codex" assertions.
-    assert calls and calls[0][0] == "fake-cli"
-    # Fake provider recorded one build_argv call with the planning prompt.
-    assert Fake.instances and Fake.instances[0].argv_calls
-    prompt, _model, tools = Fake.instances[0].argv_calls[0]
-    assert "build-instructions.md" in prompt
-    assert tools == ["Read", "Write", "Glob", "Grep"]
+# ---------------------------------------------------------------------------
+# Prompt shape
+# ---------------------------------------------------------------------------
 
 
-def test_invoke_codex_parallel_uses_dispatched_provider(monkeypatch, tmp_path: Path) -> None:
-    Fake = _install_fake(monkeypatch, "fakebuilder")
+def test_task_prompt_references_project_and_skills(tmp_path: Path):
+    prompt = dev._build_task_prompt(
+        "refactor the auth flow",
+        project_path=tmp_path,
+        project_id="myapp",
+        mode="bugfix",
+    )
+    assert "refactor the auth flow" in prompt
+    assert "myapp" in prompt
+    assert str(tmp_path) in prompt
+    # References the Codex protocol and skill machinery but does not inline them
+    assert "Codex protocol" in prompt
+    assert "test-driven-development" in prompt
+    assert "verification-before-completion" in prompt
+    assert "systematic-debugging" in prompt
+    # Explicit Codex exec command shape appears as guidance
+    assert "codex exec --full-auto" in prompt
 
-    class FakeCompleted:
-        returncode = 0
-        stdout = "built"
-        stderr = ""
 
-    monkeypatch.setattr(dev.subprocess, "run", lambda *a, **k: FakeCompleted())
+def test_task_prompt_is_short():
+    prompt = dev._build_task_prompt("X", Path("/p"), "pid", "auto")
+    # Keep it tight — this is the whole point of the rewrite
+    assert len(prompt) < 2500, f"prompt is {len(prompt)} chars, should stay lean"
 
-    out = dev.invoke_codex_parallel("ctx", "task", tmp_path)
-    assert out == "built"
 
-    assert Fake.instances and Fake.instances[0].argv_calls
-    _, _, tools = Fake.instances[0].argv_calls[0]
-    assert tools == ["Edit", "Write", "Bash", "Read", "Glob", "Grep"]
+# ---------------------------------------------------------------------------
+# Successful run
+# ---------------------------------------------------------------------------
+
+
+def test_run_dev_passes_when_session_commits_cleanly(tmp_path: Path):
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        # Simulate Claude committing a clean change
+        (project / "foo.py").write_text("x = 1")
+        subprocess.run(["git", "add", "-A"], cwd=str(project), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat: foo"],
+                       cwd=str(project), check=True)
+        return ClaudeSessionResult(
+            success=True, final_text="built foo", exit_code=0,
+            duration_seconds=1.0, total_cost_usd=0.05,
+            skills_invoked=["test-driven-development"],
+        )
+
+    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+        result = dev.run_dev(project, task="add foo", mode="auto")
+
+    assert result["status"] == "passed"
+    assert result["commit_sha"] != ""
+    assert "test-driven-development" in result["skills_invoked"]
+
+
+# ---------------------------------------------------------------------------
+# Broken-tag recovery
+# ---------------------------------------------------------------------------
+
+
+def test_dirty_working_tree_gets_broken_commit(tmp_path: Path):
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        # Claude left changes uncommitted
+        (project / "halfdone.py").write_text("# WIP")
+        return ClaudeSessionResult(success=False, final_text="stuck", exit_code=1)
+
+    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+        result = dev.run_dev(project, task="try something", mode="auto")
+
+    assert result["status"] == "failed"
+    # A [BROKEN] commit exists so we can recover
+    log = subprocess.run(
+        ["git", "log", "--oneline"], cwd=str(project),
+        capture_output=True, text=True, check=True,
+    )
+    assert "[BROKEN]" in log.stdout
+
+
+def test_no_work_done_is_failed(tmp_path: Path):
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        return ClaudeSessionResult(
+            success=True, final_text="nothing to do", exit_code=0,
+        )
+
+    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+        result = dev.run_dev(project, task="x", mode="auto")
+
+    assert result["status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Session options flow through
+# ---------------------------------------------------------------------------
+
+
+def test_max_budget_propagates_to_session(tmp_path: Path):
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+    captured: dict = {}
+
+    def fake_session(prompt, **kwargs):
+        captured.update(kwargs)
+        (project / "x").write_text("x")
+        subprocess.run(["git", "add", "-A"], cwd=str(project), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat: x"],
+                       cwd=str(project), check=True)
+        return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
+
+    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+        dev.run_dev(project, task="x", max_budget_usd=1.25)
+
+    assert captured["max_budget_usd"] == 1.25
+    # Must include Bash/Skill/Task so Claude can shell to Codex + invoke skills
+    tools = list(captured["tools"])
+    assert "Bash" in tools and "Skill" in tools and "Task" in tools
+    # Codex protocol must be injected — no opt-out for dev mode
+    assert captured["include_codex_protocol"] is True
+
+
+# ---------------------------------------------------------------------------
+# Citex summary ingestion
+# ---------------------------------------------------------------------------
+
+
+def test_run_summary_ingested_to_citex(tmp_path: Path, monkeypatch):
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+
+    calls = []
+    monkeypatch.setattr(dev, "citex_store",
+                        lambda pid, content, metadata: calls.append((pid, content, metadata)) or True)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        (project / "a").write_text("a")
+        subprocess.run(["git", "add", "-A"], cwd=str(project), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat: a"],
+                       cwd=str(project), check=True)
+        return ClaudeSessionResult(
+            success=True, final_text="done", exit_code=0,
+            skills_invoked=["verification-before-completion"],
+        )
+
+    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+        dev.run_dev(project, task="do a thing", mode="enhance")
+
+    assert len(calls) == 1
+    pid, content, metadata = calls[0]
+    assert pid == "app"
+    assert "do a thing" in content
+    assert metadata["status"] == "passed"
+    assert metadata["mode"] == "enhance"
+    assert "verification-before-completion" in metadata["skills_invoked"]
