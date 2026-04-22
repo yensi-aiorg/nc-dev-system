@@ -55,12 +55,18 @@ def build_skip_results(
     feature_queue: list[FeatureStep],
     completed_ids: set[str],
 ) -> list[StepResult]:
-    """Create SKIPPED StepResults for already-completed features."""
+    """Create SKIPPED StepResults for already-completed brownfield features.
+
+    Uses :attr:`StepStatus.SKIPPED` — these features were done before
+    this run started. The dependency gate treats SKIPPED as dep-
+    satisfying, and metrics / summary correctly exclude them from
+    PASSED / BLOCKED / FAILED counters.
+    """
     return [
         StepResult(
             feature_id=f.feature_id,
-            status=StepStatus.PASSED,
-            error_message="Skipped — already implemented in target repo",
+            status=StepStatus.SKIPPED,
+            error_message="Already implemented in target repo (state-scanner detection)",
         )
         for f in feature_queue
         if f.feature_id in completed_ids

@@ -531,14 +531,46 @@ def _last_line(text: str) -> str:
     return lines[-1][:200] if lines else "(no output)"
 
 
-def _probe_health(url: str, *, timeout: int) -> bool:
-    """Best-effort HTTP GET — True if we get a 2xx response."""
+def _probe_health(
+    url: str,
+    *,
+    timeout: int,
+    per_request_timeout: int = 5,
+    poll_interval: float = 1.0,
+) -> bool:
+    """Poll an HTTP endpoint until it returns 2xx or ``timeout`` expires.
+
+    Codex R3 flagged: the earlier single-shot GET failed good builds
+    whose apps needed a few seconds to boot. This implementation
+    honours ``timeout`` as a real startup grace period — per-request
+    timeout stays short (default 5s) so we can retry, but the whole
+    probe budget can run up to the configured ``boot_timeout_seconds``.
+
+    Returns True on first 2xx, False when the budget runs out.
+    """
     try:
         import httpx
-        r = httpx.get(url, timeout=min(timeout, 10))
-        return 200 <= r.status_code < 300
-    except Exception:  # noqa: BLE001
+    except ImportError:   # pragma: no cover - runtime dependency
         return False
+
+    deadline = time.time() + max(timeout, 1)
+    attempts = 0
+    while time.time() < deadline:
+        attempts += 1
+        remaining = max(deadline - time.time(), 0.1)
+        req_timeout = min(per_request_timeout, remaining)
+        try:
+            r = httpx.get(url, timeout=req_timeout)
+            if 200 <= r.status_code < 300:
+                return True
+        except Exception:  # noqa: BLE001
+            # Connection refused / DNS error / timeout — the app is not
+            # ready yet. Wait briefly and retry unless budget exhausted.
+            pass
+        # Sleep until either the next poll or budget expiry, whichever
+        # comes first.
+        time.sleep(min(poll_interval, max(deadline - time.time(), 0)))
+    return False
 
 
 # ---------------------------------------------------------------------------

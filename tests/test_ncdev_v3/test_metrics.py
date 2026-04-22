@@ -77,6 +77,28 @@ def test_empty_run():
     assert m.features == []
 
 
+def test_blocked_counted_as_failure_not_skipped():
+    """Codex R3: BLOCKED must count against failed_features so metrics
+    match the engine's overall-status determination."""
+    state = V3RunState(
+        run_id="rm1",
+        started_at="2026-04-11T10:00:00+00:00",
+        updated_at="2026-04-11T10:10:00+00:00",
+        completed_steps=[
+            _make_result("f1", StepStatus.PASSED),
+            _make_result("f2", StepStatus.FAILED),
+            _make_result("f3", StepStatus.BLOCKED),
+            _make_result("f4", StepStatus.SKIPPED),
+        ],
+    )
+    m = compute_run_metrics(state)
+    assert m.total_features == 4
+    assert m.passed_features == 1
+    assert m.failed_features == 2      # FAILED + BLOCKED together
+    assert m.blocked_features == 1     # tracked separately for detail
+    assert m.skipped_features == 1
+
+
 def test_ingestion_count_passed_through():
     state = V3RunState(
         run_id="t6", started_at="2026-04-11T10:00:00+00:00", updated_at="2026-04-11T10:30:00+00:00",

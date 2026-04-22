@@ -59,12 +59,15 @@ def test_feature_has_files_no_match():
 
 
 def test_build_skip_results():
+    """Brownfield-done features must be SKIPPED (not PASSED) — the
+    status needs to differentiate 'built this run' from 'already there'
+    so metrics and dep gating stay consistent."""
     features = [_feat("f1", "Auth"), _feat("f2", "Dashboard"), _feat("f3", "Settings")]
     results = build_skip_results(features, {"f1", "f3"})
     assert len(results) == 2
     assert results[0].feature_id == "f1"
-    assert results[0].status == StepStatus.PASSED
-    assert "Skipped" in results[0].error_message
+    assert results[0].status == StepStatus.SKIPPED
+    assert "Already implemented" in results[0].error_message
     assert results[1].feature_id == "f3"
 
 
