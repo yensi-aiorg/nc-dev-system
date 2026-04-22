@@ -76,19 +76,114 @@ def test_existing_design_system_rejects_junk_files(tmp_path: Path):
     assert existing_design_system_present(tmp_path) is True
 
 
-def test_stitch_available_via_env_var(tmp_path: Path, monkeypatch):
+def test_stitch_available_via_env_var_with_stitch_entry(tmp_path: Path, monkeypatch):
     fake_cfg = tmp_path / "stitch.json"
-    fake_cfg.write_text("{}")
+    fake_cfg.write_text('{"mcpServers": {"stitch": {"command": "node"}}}')
     monkeypatch.setenv("NCDEV_STITCH_MCP_CONFIG", str(fake_cfg))
+    monkeypatch.setenv("HOME", str(tmp_path))  # isolate from real ~/.claude
+    monkeypatch.chdir(tmp_path)
     assert stitch_available() is True
 
 
-def test_stitch_available_false_when_env_missing_and_no_config(monkeypatch, tmp_path):
-    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
-    # Point HOME at a temp dir that has no claude config
+def test_stitch_available_via_env_var_but_no_stitch_entry(tmp_path: Path, monkeypatch):
+    """Explicit override with a file that doesn't list stitch → False.
+    We don't silently fall through to other locations when the override
+    was set intentionally."""
+    fake_cfg = tmp_path / "stitch.json"
+    fake_cfg.write_text('{"mcpServers": {"other": {"command": "node"}}}')
+    monkeypatch.setenv("NCDEV_STITCH_MCP_CONFIG", str(fake_cfg))
     monkeypatch.setenv("HOME", str(tmp_path))
-    # Path.home() reads HOME on *nix — this should make it see no config
+    monkeypatch.chdir(tmp_path)
     assert stitch_available() is False
+
+
+def test_stitch_available_via_home_mcp_json(tmp_path: Path, monkeypatch):
+    """~/.claude/mcp.json is where Claude Code actually keeps MCP
+    server definitions on this box — our probe must look there."""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "mcp.json").write_text(
+        '{"mcpServers": {"stitch": {"command": "node", "args": []}}}'
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert stitch_available() is True
+
+
+def test_stitch_available_via_settings_json_legacy_layout(tmp_path: Path, monkeypatch):
+    """Older installs kept MCP servers inside settings.json."""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "settings.json").write_text(
+        '{"mcpServers": {"stitch-local": {"command": "node"}}}'
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert stitch_available() is True
+
+
+def test_stitch_available_via_project_local_mcp_json(tmp_path: Path, monkeypatch):
+    """Project-local .mcp.json in CWD or ancestor counts too."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".mcp.json").write_text(
+        '{"mcpServers": {"stitch-design": {"command": "stitch-server"}}}'
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "home-empty"))
+    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
+    monkeypatch.chdir(proj)
+    assert stitch_available() is True
+
+
+def test_stitch_available_false_when_nothing_configured(monkeypatch, tmp_path):
+    """No env var, empty home, no project config → False."""
+    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert stitch_available() is False
+
+
+def test_stitch_available_ignores_unrelated_mcp_servers(monkeypatch, tmp_path):
+    """MCP config with other servers but no stitch → False."""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "mcp.json").write_text(
+        '{"mcpServers": {"github": {}, "playwright": {}, "filesystem": {}}}'
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert stitch_available() is False
+
+
+def test_stitch_available_case_insensitive_match(monkeypatch, tmp_path):
+    """Key matching is case-insensitive for 'stitch'."""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "mcp.json").write_text(
+        '{"mcpServers": {"Stitch-MCP": {"command": "node"}}}'
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert stitch_available() is True
+
+
+def test_stitch_available_tolerates_malformed_json(monkeypatch, tmp_path):
+    """Broken JSON in one config doesn't crash the probe — just skip it."""
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "mcp.json").write_text("{not valid json")
+    (claude_dir / "settings.json").write_text(
+        '{"mcpServers": {"stitch": {"command": "node"}}}'
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("NCDEV_STITCH_MCP_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
+    # Should still find stitch via settings.json after mcp.json fails to parse
+    assert stitch_available() is True
 
 
 # ---------------------------------------------------------------------------

@@ -82,24 +82,95 @@ class DesignPhaseResult:
 def stitch_available() -> bool:
     """Return True if a Stitch MCP server appears to be configured.
 
-    Detection is intentionally lightweight — we check for the presence of
-    a ``stitch`` key in the user's Claude config, or the env var
-    ``NCDEV_STITCH_MCP_CONFIG`` pointing at a valid path. A full probe
-    would spawn Claude and ask; we avoid that here for speed.
+    Claude Code reads MCP server definitions from several locations,
+    depending on version and install style. We check each of them
+    in order:
+
+    1. ``$NCDEV_STITCH_MCP_CONFIG`` — explicit override path (for tests
+       or non-standard setups).
+    2. ``~/.claude/mcp.json`` — Claude Code's dedicated MCP file.
+    3. ``~/.claude/settings.json`` — older/alternate layout where MCP
+       servers live under ``mcpServers`` in the main settings.
+    4. ``~/.claude/.claude.json`` — some installs keep a project /
+       user-scoped file here with MCP entries.
+    5. Project-local ``.mcp.json`` or ``.claude/mcp.json`` in CWD or
+       its ancestors — per-project MCP registrations.
+
+    Any file with an ``mcpServers`` map containing a key whose name
+    includes ``"stitch"`` (case-insensitive) counts as configured.
+
+    This is a lightweight probe — we do NOT actually start the MCP
+    server. A healthy ``mcp.json`` entry with a missing binary won't
+    fail here, it'll fail at Claude-session time, which is the right
+    place to report it.
     """
     import os
-    if os.environ.get("NCDEV_STITCH_MCP_CONFIG"):
-        return bool(Path(os.environ["NCDEV_STITCH_MCP_CONFIG"]).exists())
-    # Check user-level Claude config for an mcpServer with "stitch" in name
-    config_path = Path.home() / ".claude" / "settings.json"
-    if config_path.exists():
-        try:
-            import json
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            servers = cfg.get("mcpServers", {})
-            return any("stitch" in k.lower() for k in servers.keys())
-        except Exception:  # noqa: BLE001
+    import json
+
+    override = os.environ.get("NCDEV_STITCH_MCP_CONFIG")
+    if override:
+        p = Path(override)
+        if p.exists() and _has_stitch_entry(p):
+            return True
+        # Explicit override that doesn't exist / doesn't list stitch
+        # is a clear "no" — don't fall back silently.
+        if p.exists():
             return False
+        # If override path is missing entirely, treat as no override.
+
+    candidates: list[Path] = [
+        Path.home() / ".claude" / "mcp.json",
+        Path.home() / ".claude" / "settings.json",
+        Path.home() / ".claude" / ".claude.json",
+    ]
+
+    # Project-local MCP configs — walk up from CWD looking for .mcp.json
+    # or .claude/mcp.json. This matches how Claude Code itself discovers
+    # per-project MCP definitions.
+    cwd = Path.cwd()
+    for ancestor in [cwd, *cwd.parents]:
+        candidates.append(ancestor / ".mcp.json")
+        candidates.append(ancestor / ".claude" / "mcp.json")
+        if ancestor == ancestor.parent:
+            break
+
+    seen: set[Path] = set()
+    for path in candidates:
+        path = path.resolve() if path.exists() else path
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        if _has_stitch_entry(path):
+            return True
+    return False
+
+
+def _has_stitch_entry(path: Path) -> bool:
+    """True if the JSON file at ``path`` has an MCP server whose key
+    contains ``stitch`` (case-insensitive)."""
+    import json
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    # Accept either top-level ``mcpServers`` or nested under a profile.
+    mcp_maps: list[dict] = []
+    if isinstance(data, dict):
+        top = data.get("mcpServers")
+        if isinstance(top, dict):
+            mcp_maps.append(top)
+        # Some configs nest under "projects" / project-path → mcpServers
+        projects = data.get("projects")
+        if isinstance(projects, dict):
+            for v in projects.values():
+                if isinstance(v, dict):
+                    nested = v.get("mcpServers")
+                    if isinstance(nested, dict):
+                        mcp_maps.append(nested)
+    for servers in mcp_maps:
+        for key in servers.keys():
+            if isinstance(key, str) and "stitch" in key.lower():
+                return True
     return False
 
 
