@@ -257,7 +257,13 @@ def run_v3_full(
             )
             completed.append(result)
             state.completed_steps = completed
-            state.completed_features = len([r for r in completed if r.status == StepStatus.PASSED])
+            # Count PASSED + SKIPPED — both are "done from NC Dev's
+            # perspective". SKIPPED = brownfield state scanner already
+            # found them in the target repo; PASSED = built this run.
+            state.completed_features = len([
+                r for r in completed
+                if r.status in (StepStatus.PASSED, StepStatus.SKIPPED)
+            ])
             _persist_state(state, run_dir)
 
             status_style = "green" if result.status == StepStatus.PASSED else "red"

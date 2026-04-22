@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -324,6 +325,85 @@ def test_verification_runs_backend_test_command_when_configured(tmp_path: Path):
     assert result.status == StepStatus.FAILED
     reasons = result.verification.failure_reasons if result.verification else []
     assert any("backend tests failed" in r for r in reasons)
+
+
+def test_health_probe_polls_until_app_comes_up(monkeypatch):
+    """Codex R3 blocker: probe was single-shot; now it must poll and
+    accept the app when it comes up within boot_timeout_seconds."""
+    from ncdev.v3 import claude_executor as ex
+
+    attempts = {"count": 0}
+
+    class FakeResp:
+        def __init__(self, status):
+            self.status_code = status
+
+    def fake_get(url, timeout=None):  # noqa: ARG001
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionError("app not up yet")
+        return FakeResp(200)
+
+    import httpx
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = ex._probe_health(
+        "http://localhost:99999/health",
+        timeout=10,
+        per_request_timeout=1,
+        poll_interval=0.05,
+    )
+    assert result is True
+    # Multiple attempts were made — polling worked
+    assert attempts["count"] >= 3
+
+
+def test_health_probe_returns_false_when_budget_exhausted(monkeypatch):
+    """Apps that never come up within the budget fail cleanly."""
+    from ncdev.v3 import claude_executor as ex
+
+    def fake_get(url, timeout=None):  # noqa: ARG001
+        raise ConnectionError("never up")
+
+    import httpx
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    start = time.time()
+    result = ex._probe_health(
+        "http://localhost:99999/health",
+        timeout=1,
+        per_request_timeout=1,
+        poll_interval=0.1,
+    )
+    elapsed = time.time() - start
+    assert result is False
+    # Must actually respect the budget — not give up immediately, not
+    # run 10x longer.
+    assert 0.8 <= elapsed < 3.0, f"probe ran for {elapsed:.2f}s, expected ~1s"
+
+
+def test_health_probe_early_success_returns_immediately(monkeypatch):
+    """If the app is already up, don't waste the budget polling."""
+    from ncdev.v3 import claude_executor as ex
+
+    class FakeResp:
+        status_code = 200
+
+    def fake_get(url, timeout=None):  # noqa: ARG001
+        return FakeResp()
+
+    import httpx
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    start = time.time()
+    result = ex._probe_health(
+        "http://localhost:99999/health",
+        timeout=30,
+        per_request_timeout=5,
+    )
+    elapsed = time.time() - start
+    assert result is True
+    assert elapsed < 1.0
 
 
 def test_health_probe_failure_blocks_pass_when_url_set(tmp_path: Path):

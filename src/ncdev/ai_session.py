@@ -137,7 +137,21 @@ def run_ai_session(
     if cfg.mode == "custom":
         # Honour the hand-tuned routing block — this is exactly what
         # "custom" means per the config contract.
-        orch, impl = _resolve_custom_providers(cfg)
+        try:
+            orch, impl = _resolve_custom_providers(cfg)
+        except ValueError as exc:
+            # Unknown provider name in routing — surface as a structured
+            # session failure, not an uncaught exception mid-run.
+            return ClaudeSessionResult(
+                success=False, final_text="", exit_code=-1,
+                error=(
+                    f"custom mode config error: {exc}. "
+                    "Check `routing.review` and `routing.implementation` "
+                    "in .nc-dev/v2/config.yaml — allowed values are "
+                    "'anthropic_claude_code', 'openai_codex', 'openrouter', "
+                    "or the short aliases 'claude' / 'codex'."
+                ),
+            )
     else:
         orch = MODE_ORCHESTRATOR.get(cfg.mode, "claude")
         impl = MODE_IMPLEMENTER.get(cfg.mode, "codex")
@@ -350,6 +364,11 @@ class _TailBuffer:
     Recent output is more useful than the head when debugging a builder
     that went off the rails. ``truncated`` flips True once we start
     dropping bytes so callers can surface that to users / logs.
+
+    If a single incoming chunk is larger than ``max_bytes``, we slice
+    the tail bytes out of *that* chunk instead of evicting it wholesale
+    (Codex R3 flagged: the previous behavior produced an empty buffer
+    when a single append overflowed the cap).
     """
 
     __slots__ = ("_chunks", "_size", "_max", "truncated")
@@ -357,16 +376,30 @@ class _TailBuffer:
     def __init__(self, max_bytes: int) -> None:
         self._chunks: list[str] = []
         self._size = 0
-        self._max = max_bytes
+        self._max = max(max_bytes, 1)
         self.truncated = False
 
     def append(self, chunk: str) -> None:
         if not chunk:
             return
-        enc = len(chunk.encode("utf-8", errors="ignore"))
+
+        # Oversized single chunk: keep the tail bytes of this chunk only.
+        chunk_bytes = chunk.encode("utf-8", errors="ignore")
+        if len(chunk_bytes) > self._max:
+            tail_bytes = chunk_bytes[-self._max:]
+            tail = tail_bytes.decode("utf-8", errors="ignore")
+            self._chunks = [tail]
+            self._size = len(tail.encode("utf-8", errors="ignore"))
+            self.truncated = True
+            return
+
         self._chunks.append(chunk)
-        self._size += enc
-        while self._size > self._max and self._chunks:
+        self._size += len(chunk_bytes)
+
+        # Normal eviction path: drop whole chunks from the head until
+        # we're under the cap again. Safe now because no single chunk
+        # is larger than ``_max``.
+        while self._size > self._max and len(self._chunks) > 1:
             head = self._chunks.pop(0)
             self._size -= len(head.encode("utf-8", errors="ignore"))
             self.truncated = True

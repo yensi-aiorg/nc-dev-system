@@ -30,8 +30,10 @@ class RunMetrics(BaseModel):
     completed_at: str = ""
     total_duration_seconds: float = 0.0
     total_features: int = 0
-    passed_features: int = 0
-    failed_features: int = 0
+    passed_features: int = 0          # built successfully this run
+    failed_features: int = 0          # tried and broke OR dep-blocked
+    skipped_features: int = 0         # brownfield — already implemented
+    blocked_features: int = 0         # broken dep cascaded here
     first_pass_success_rate: float = 0.0
     repair_rate: float = 0.0
     mean_repair_attempts: float = 0.0
@@ -56,7 +58,14 @@ def compute_run_metrics(
         return RunMetrics(run_id=state.run_id, started_at=state.started_at)
 
     passed = [s for s in steps if s.status == StepStatus.PASSED]
-    failed = [s for s in steps if s.status == StepStatus.FAILED]
+    # Both FAILED (tried and broke) and BLOCKED (upstream dep broke)
+    # are failures at the run-metric level — they count against
+    # failed_features so the number matches the engine's "unsuccessful"
+    # run status. blocked_features is tracked separately for detail.
+    failed_direct = [s for s in steps if s.status == StepStatus.FAILED]
+    blocked = [s for s in steps if s.status == StepStatus.BLOCKED]
+    failed = failed_direct + blocked
+    skipped = [s for s in steps if s.status == StepStatus.SKIPPED]
     first_pass = [s for s in passed if s.repair_attempts == 0]
     repaired = [s for s in steps if s.repair_attempts > 0]
 
@@ -92,6 +101,8 @@ def compute_run_metrics(
         total_features=total,
         passed_features=len(passed),
         failed_features=len(failed),
+        skipped_features=len(skipped),
+        blocked_features=len(blocked),
         first_pass_success_rate=len(first_pass) / total,
         repair_rate=len(repaired) / total,
         mean_repair_attempts=(

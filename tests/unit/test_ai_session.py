@@ -192,6 +192,26 @@ def test_custom_mode_routes_to_codex_when_user_requests_it(tmp_path: Path):
     assert called["claude"] is False
 
 
+def test_custom_mode_unknown_provider_returns_structured_failure(tmp_path: Path):
+    """Codex R3: an unknown provider name in routing used to raise
+    ValueError uncaught mid-run. Now must surface as a structured
+    ClaudeSessionResult with success=False + actionable error."""
+    cfg = NCDevV2Config(
+        mode="custom",
+        routing={
+            "review": ["something_weird"],
+            "implementation": ["openai_codex"],
+        },
+    )
+    result = run_ai_session("x", cwd=tmp_path, config=cfg)
+    assert result.success is False
+    assert result.exit_code == -1
+    assert "custom mode" in (result.error or "")
+    assert "something_weird" in (result.error or "")
+    # Must not have spawned any runner
+    assert result.final_text == ""
+
+
 def test_custom_mode_plan_codex_build_like_routing(tmp_path: Path):
     """User configures custom to mimic claude_plan_codex_build: review=
     claude, implementation=codex → Claude orch WITH codex protocol."""
@@ -329,6 +349,46 @@ def test_run_codex_session_truncates_huge_stream(tmp_path: Path):
 
     assert result.success is True
     assert len(result.final_text.encode("utf-8")) <= 60_000  # some tolerance
+
+
+def test_tail_buffer_preserves_tail_of_oversized_chunk():
+    """Codex R3 flagged: _TailBuffer(10).append('x' * 25) previously
+    returned ''. Now must preserve the last 10 bytes."""
+    from ncdev.ai_session import _TailBuffer
+
+    buf = _TailBuffer(10)
+    buf.append("x" * 25)
+    text = buf.text()
+    assert buf.truncated is True
+    assert len(text.encode("utf-8")) <= 10
+    # The tail is preserved — last 10 'x' characters
+    assert text == "x" * 10
+
+
+def test_tail_buffer_normal_eviction_across_chunks():
+    """Multiple small chunks — head gets evicted as cap is exceeded."""
+    from ncdev.ai_session import _TailBuffer
+
+    buf = _TailBuffer(10)
+    buf.append("aaaa")
+    buf.append("bbbb")
+    buf.append("cccc")    # total 12 > 10; head "aaaa" gets evicted
+    text = buf.text()
+    assert buf.truncated is True
+    assert "cccc" in text
+    # "aaaa" at the head was evicted; size must be under cap
+    assert len(text.encode("utf-8")) <= 10
+
+
+def test_tail_buffer_keeps_last_chunk_even_when_oversized_alone():
+    """When only one chunk exists and it's oversized, slice its tail
+    instead of losing everything."""
+    from ncdev.ai_session import _TailBuffer
+
+    buf = _TailBuffer(5)
+    buf.append("1234567890")
+    text = buf.text()
+    assert text == "67890"
 
 
 def test_run_codex_session_watchdog_kills_hung_child(tmp_path: Path):
