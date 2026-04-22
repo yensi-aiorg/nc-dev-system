@@ -373,7 +373,7 @@ def main() -> int:
             strict_deps=bool(getattr(args, "strict_deps", False)),
         )
         console.print(f"run_id={state.run_id} status={state.status}")
-        console.print(f"features: {state.completed_features}/{state.total_features} passed")
+        console.print(f"features: {state.completed_features}/{state.total_features} completed")
         console.print(f"run_dir={state.run_dir}")
         if state.status != "passed":
             return 1

@@ -1,6 +1,8 @@
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from ncdev.cli import _doctor_report, _quickstart_text, _resolve_target_repo, build_parser
+from ncdev.cli import _doctor_report, _quickstart_text, _resolve_target_repo, build_parser, main
 
 
 def test_cli_quickstart_parses() -> None:
@@ -87,3 +89,23 @@ def test_doctor_report_detects_git_repo(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     _, report = _doctor_report(tmp_path)
     assert "git repository" in report
+
+
+def test_cli_full_reports_completed_not_passed(tmp_path: Path) -> None:
+    source = tmp_path / "requirements.md"
+    source.write_text("x")
+    printed: list[str] = []
+    state = SimpleNamespace(
+        run_id="r1",
+        status="passed",
+        completed_features=2,
+        total_features=3,
+        run_dir="/tmp/run",
+    )
+
+    with patch("ncdev.cli.run_v3_full", return_value=state):
+        with patch("ncdev.cli.console.print", side_effect=lambda *args, **kwargs: printed.append(str(args[0]))):
+            with patch("sys.argv", ["ncdev", "full", "--source", str(source), "--dry-run"]):
+                assert main() == 0
+
+    assert any("features: 2/3 completed" in line for line in printed)

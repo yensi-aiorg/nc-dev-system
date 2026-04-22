@@ -351,10 +351,13 @@ def _post_session_verification(
                 reasons.append(f"asset references without manifest: {missing[:5]}")
 
     # 3. Prohibited patterns (regex — treats entries in the contract as
-    #    patterns, falls back to literal match if the regex fails to compile)
+    #    patterns, falls back to literal match if the regex fails to compile).
+    #    Feature-local scope matters here for the same reason it matters for
+    #    asset manifests: one legacy TODO elsewhere in a brownfield repo should
+    #    not fail every future feature.
     patterns = bundle.verification.prohibited_patterns
     if patterns:
-        bad = _grep_for_prohibited(target_path, patterns)
+        bad = _grep_for_prohibited(target_path, patterns, touched_files=touched_files)
         if bad:
             reasons.append(f"prohibited patterns found: {bad[:5]}")
 
@@ -422,12 +425,20 @@ def _post_session_verification(
     return ver
 
 
-def _grep_for_prohibited(target_path: Path, patterns: list[str]) -> list[str]:
+def _grep_for_prohibited(
+    target_path: Path,
+    patterns: list[str],
+    *,
+    touched_files: list[str] | None = None,
+) -> list[str]:
     """Scan git-tracked files for prohibited patterns.
 
     Each entry is treated as a regular expression via ``re.search``. If
     a pattern fails to compile, falls back to a substring check so
     human-written entries like ``TODO`` still work.
+
+    When ``touched_files`` is provided, only scan that feature-local set.
+    This keeps brownfield legacy debt from failing unrelated future work.
     """
     compiled: list[tuple[str, re.Pattern[str] | None]] = []
     for pat in patterns:
@@ -444,9 +455,14 @@ def _grep_for_prohibited(target_path: Path, patterns: list[str]) -> list[str]:
         )
         if ls.returncode != 0:
             return []
-        files = [f for f in ls.stdout.splitlines() if f]
+        tracked_files = {f for f in ls.stdout.splitlines() if f}
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
+
+    if touched_files is not None:
+        files = [f for f in touched_files if f in tracked_files]
+    else:
+        files = sorted(tracked_files)
 
     for f in files:
         fp = target_path / f

@@ -12,7 +12,8 @@ and dispatches to the right concrete runner:
       Codex handles the whole task directly.
     * ``openrouter`` → raises ``NotImplementedError`` (API-only, no CLI
       tooling). Caller should fall back or surface to the user.
-    * ``custom`` → falls back to Claude orchestrator as a safe default.
+    * ``custom`` → resolves orchestrator + implementer from the
+      hand-tuned ``routing:`` block.
 
 The returned :class:`ClaudeSessionResult` is the common result shape
 across runners — ``skills_invoked`` and ``codex_invocations`` are

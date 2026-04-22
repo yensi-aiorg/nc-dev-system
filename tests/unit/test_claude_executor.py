@@ -294,6 +294,46 @@ def test_prohibited_patterns_block_pass(tmp_path: Path):
     assert any("prohibited" in r.lower() for r in result.verification.failure_reasons)
 
 
+def test_legacy_prohibited_pattern_outside_touched_files_does_not_block_pass(tmp_path: Path):
+    """Post-hoc verification must stay feature-local.
+
+    A brownfield repo can contain an old TODO in some untouched file; that
+    should not fail a new clean feature, because the pre-commit hook only
+    guards staged content and the executor already scopes asset checks
+    feature-locally for the same reason.
+    """
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    # Legacy debt that predates this feature.
+    (target / "legacy.py").write_text("# TODO historical debt\n")
+    subprocess.run(["git", "add", "legacy.py"], cwd=str(target), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "feat(legacy): existing debt"],
+                   cwd=str(target), check=True)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "clean.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): clean"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    bundle = _make_bundle()  # prohibited_patterns=["TODO"]
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(),
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.PASSED
+
+
 def test_verification_runs_backend_test_command_when_configured(tmp_path: Path):
     """New enforcement: backend_test_command actually runs, not just documented."""
     target = tmp_path / "app"

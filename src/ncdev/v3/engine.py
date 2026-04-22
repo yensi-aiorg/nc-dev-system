@@ -207,6 +207,8 @@ def run_v3_full(
 
         # Brownfield: skip features already implemented
         remaining = _filter_completed_features(target_path, features, completed)
+        _sync_progress_state(state, completed)
+        _persist_state(state, run_dir)
         console.print(f"\n[bold]Phase 5: Building {len(remaining)} features sequentially[/bold]")
 
         for feature in remaining:
@@ -231,7 +233,7 @@ def run_v3_full(
                     status=StepStatus.BLOCKED,
                     error_message=reason,
                 ))
-                state.completed_steps = completed
+                _sync_progress_state(state, completed)
                 _persist_state(state, run_dir)
                 if strict_deps:
                     console.print("[red]--strict-deps set: halting run[/red]")
@@ -256,14 +258,7 @@ def run_v3_full(
                 config=config,
             )
             completed.append(result)
-            state.completed_steps = completed
-            # Count PASSED + SKIPPED — both are "done from NC Dev's
-            # perspective". SKIPPED = brownfield state scanner already
-            # found them in the target repo; PASSED = built this run.
-            state.completed_features = len([
-                r for r in completed
-                if r.status in (StepStatus.PASSED, StepStatus.SKIPPED)
-            ])
+            _sync_progress_state(state, completed)
             _persist_state(state, run_dir)
 
             status_style = "green" if result.status == StepStatus.PASSED else "red"
@@ -362,3 +357,14 @@ def _print_summary_table(completed: list[StepResult]) -> None:
 def _persist_state(state: V3RunState, run_dir: Path) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "state.json").write_text(state.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _sync_progress_state(state: V3RunState, completed: list[StepResult]) -> None:
+    """Keep persisted progress counters in sync with the completed list."""
+    state.completed_steps = list(completed)
+    # Count PASSED + SKIPPED — both are "done from NC Dev's perspective".
+    # SKIPPED means the brownfield state scanner found them already present;
+    # PASSED means they were built successfully during this run.
+    state.completed_features = sum(
+        1 for r in completed if r.status in (StepStatus.PASSED, StepStatus.SKIPPED)
+    )
