@@ -300,7 +300,10 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--workspace", default=None)
     full.add_argument("--base-url", default="http://localhost:23000")
     full.add_argument("--dry-run", action="store_true", help="Do not invoke builders")
-    full.add_argument("--model", default="gpt-5.4", choices=["gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"], help="Codex model label for build/repair")
+    full.add_argument("--model", default="claude-opus-4-6",
+                      help="Claude model for the orchestrator session (e.g. claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001)")
+    full.add_argument("--max-budget-usd", type=float, default=None,
+                      help="Cost ceiling per feature session (Claude only — ignored by Codex shell-outs)")
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
     full.add_argument("--quality-gate", action="store_true", default=False, help="Run quality gate loop after build completes")
@@ -364,6 +367,7 @@ def main() -> int:
             builder_model=args.model,
             builder_timeout=args.timeout,
             max_repair_attempts=args.max_repairs,
+            max_budget_usd=getattr(args, "max_budget_usd", None),
         )
         console.print(f"run_id={state.run_id} status={state.status}")
         console.print(f"features: {state.completed_features}/{state.total_features} passed")

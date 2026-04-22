@@ -1,33 +1,179 @@
 # nc-dev-system
 
-**Autonomous senior software engineer — builds, tests, deploys products**
+**Thin orchestrator — Claude drives, Codex implements**
 
 **Deployed:** Local (ncdev CLI)
 **Ports:** intake_api: 16650
-**Tests:** 1310 passing
-**Commands:** ncdev dev (build), ncdev report (video), ncdev serve (Sentinel intake), ncdev full-v3 (sequential sprints)
-**Strategy:** Claude plans, Codex builds. Context-driven, not pipeline-driven. 5 non-negotiable guardrails.
-
-Recent commits:
-4d87450 feat: sync-project-context — auto-populates CLAUDE.md + AGENTS.md for all projects
-16784e1 fix(dev): harden pipeline — brownfield timeouts, non-fatal video, separate report cmd
-d98458a fix(dev): treat Claude planning timeout as non-fatal if instructions file exists
-010a7e8 feat(serve): wire intake API to uvicorn for Sentinel integration
-47dd45e refactor(dev): Claude plans, Codex builds — clear role separation
-Branch: main
+**Tests:** 372 passing on `claude-orchestrator-migration` branch
+**Commands:**
+  - `ncdev full --source prd.md` — PRD-scale sequential sprint engine
+  - `ncdev dev --project X --task Y` — single-task freeform engineering
+  - `ncdev serve` — HTTP intake for Sentinel reports
+  - `ncdev doctor` — preflight
+**Strategy:** Claude is the orchestrator for each session; it invokes skills (`test-driven-development`, `verification-before-completion`, `systematic-debugging`) and delegates raw implementation + test writing to Codex via Bash (`codex exec --full-auto ...`). NC Dev itself is thin — it spawns sessions, streams events, commits verified work, tags `[BROKEN]` on failure for recoverability.
 
 ## Related YENSI Projects
-- **sentinel**: Production monitoring & auto-fix dispatch system
-- **citebot**: AI document Q&A with visual citations — deployed as SiteBot — https://sitebot.yensi.solutions
-- **yensi-booking**: Virtual appointment scheduling SaaS for therapy/coaching — https://booking.yensi.solutions
-- **vigil**: AI operations engine — daily digest, WhatsApp bridge, CEO mode
-- **keystone**: Shared infrastructure — auth, logging, monitoring, analytics
+- **sentinel**: Production monitoring & auto-fix dispatch
+- **citebot**: SiteBot — AI document Q&A with visual citations
+- **yensi-booking**: Virtual appointment scheduling SaaS
+- **vigil**: AI ops engine — daily digest, WhatsApp bridge, CEO mode
+- **keystone**: Shared infrastructure — auth, logging, monitoring
 - **citex**: RAG engine — vector search + graph nodes + document ingestion
-- **ignition**: Autonomous co-founder pipeline — spec gen, product registry, deploy
-- **helyx**: Command center — project management, MongoDB collections, canvas
+- **ignition**: Autonomous co-founder pipeline
+- **helyx**: Command center — project management, canvas
 
-_Context synced: 2026-04-11 05:00 UTC_
----------|------|
+---
+
+## Architecture — how a PRD flows end to end
+
+```
+ncdev full --source prd.md
+    │
+    ├─ Preflight (git, claude, codex, Citex, optionally Stitch MCP)
+    │
+    ├─ Phase 2: Charter (one Claude session, writing-plans skill)
+    │     → target-project-contract.json   # hard architectural constraints
+    │     → verification-contract.json     # what "done" means
+    │     → feature-queue.json             # ordered features
+    │
+    ├─ Phase 3: Design system (one Claude session)
+    │     ├─ Greenfield UI + Stitch MCP available    → Stitch generates tokens + screens
+    │     ├─ Brownfield + docs/design-system/ exists → Claude summarises into artifact
+    │     ├─ Brownfield + no designs + no Stitch     → Claude's frontend-design skill
+    │     └─ Greenfield UI + neither                 → HARD FAIL (intentional)
+    │
+    ├─ Phase 4: Brownfield Citex ingestion (when applicable)
+    │     → existing code chunked + synthesised → Citex RAG
+    │
+    ├─ Phase 5: Sequential feature execution
+    │     for each feature:
+    │         one Claude session with:
+    │           Tools:    Read, Write, Edit, Glob, Grep, Bash, Skill, Task
+    │           Protocol: prompts/protocols/codex-via-bash.md (in system prompt)
+    │           Hooks:    scripts/ncdev-hooks/settings.json (guard commits)
+    │         Claude internally uses:
+    │           writing-plans, test-driven-development,
+    │           verification-before-completion, systematic-debugging
+    │         Claude delegates to Codex for raw impl + test writing:
+    │           codex exec --full-auto --sandbox danger-full-access "<scoped task>"
+    │         Claude emits .ncdev/assets-needed/<feature_id>.json as it builds
+    │         Claude commits with Conventional Commits when verification passes
+    │     ncdev:
+    │         streams events, reads final response, verifies post-hoc,
+    │         tags [BROKEN] commit on failure
+    │
+    └─ Phase 6: Summary + metrics
+```
+
+## Mode switch — the budget lever
+
+`.nc-dev/v2/config.yaml` has a single `mode:` field that flips who does what. Flip one line, no code change:
+
+| mode                        | planning | review  | implementation | tests   |
+|-----------------------------|----------|---------|----------------|---------|
+| `claude_plan_codex_build`   | Claude   | Claude  | Codex          | Codex   | (default)
+| `codex_only`                | Codex    | Codex   | Codex          | Codex   | (lean days)
+| `claude_only`               | Claude   | Claude  | Claude         | Claude  |
+| `openrouter`                | OR API   | OR API  | OR API         | OR API  | (needs OPENROUTER_API_KEY)
+| `custom`                    | hand-tuned routing   | — use when you want per-task overrides |
+
+## Key modules
+
+| Module                              | Role |
+|-------------------------------------|------|
+| `src/ncdev/claude_session.py`       | The primitive — `run_claude_session()` spawns Claude with stream-json + hooks + cost ceiling |
+| `src/ncdev/ai_provider.py`          | CLI/API adapters: `CodexCLIProvider`, `ClaudeCLIProvider`, `OpenRouterProvider` |
+| `src/ncdev/provider_dispatch.py`    | Maps routing task keys → providers, honouring `mode` |
+| `src/ncdev/v2/config.py`            | `NCDevV2Config`, `MODE_PRESETS`, `RoutingConfig` |
+| `src/ncdev/v3/charter.py`           | Phase B — generates the 3 charter artifacts |
+| `src/ncdev/v3/design_phase.py`      | Phase C — Stitch / existing / claude_generated / hard-fail |
+| `src/ncdev/v3/asset_manifest.py`    | Phase D — schema, scan, verify |
+| `src/ncdev/v3/claude_executor.py`   | Phase E — per-feature Claude session |
+| `src/ncdev/v3/engine.py`            | Phase 1–6 — top-level orchestrator |
+| `src/ncdev/dev.py`                  | `ncdev dev` — thin single-task orchestrator |
+| `prompts/protocols/codex-via-bash.md` | Protocol Claude reads at session init |
+| `scripts/ncdev-hooks/`              | PreToolUse hook — Conventional Commits, prohibited patterns, force-push guard |
+
+## What NC Dev explicitly does NOT do anymore
+
+- ❌ Hand Claude/Codex a mega-prompt full of `FRONTEND_METHODOLOGY` /
+  `GUARDRAILS` / "execution order: backend first" prose. Claude decides.
+- ❌ Run a Python build/verify/repair loop. Claude's
+  `verification-before-completion` + `systematic-debugging` skills do
+  it in-session.
+- ❌ Generate 9 discovery artifacts. Three only: contract, verification,
+  feature queue.
+- ❌ Use separate per-task provider routing (source_ingest,
+  market_research, feature_extraction, etc.) for the main flow. One
+  Claude session per feature, full stop.
+- ❌ Call `claude -p "<prompt>" --output-format text`. Everything is
+  `--output-format stream-json` for event-level observability.
+
+## What NC Dev still owns
+
+- ✅ Cross-feature coherence via sequential verified commits (rollback
+  unit = one feature)
+- ✅ Citex RAG grounding so feature N+1 sees what feature N built
+- ✅ Brownfield state scanner (skip features already implemented)
+- ✅ The charter (hard architectural constraints) — the user's
+  control plane
+- ✅ Verification contract enforcement (required files, asset manifest,
+  prohibited patterns)
+- ✅ `[BROKEN]` tag for recoverability
+- ✅ Mode switch for budget control
+- ✅ Git / GitHub repo setup
+
+---
+
+## The Codex protocol (TL;DR)
+
+Claude invokes Codex with:
+
+```bash
+codex exec --full-auto --sandbox danger-full-access "<prompt>"
+```
+
+Every Codex prompt follows a 5-section shape (Task / Context /
+Requirements / Files / Verification) — see
+`prompts/protocols/codex-via-bash.md` for the full spec and rationale.
+
+Codex is used for: implementation, test writing, mechanical refactors,
+boilerplate. Not for: planning, review, debugging, judgment calls.
+
+## Hooks (guardrails)
+
+`scripts/ncdev-hooks/settings.json` is wired in automatically via
+`--settings` when a Claude session spawns. Current guards:
+
+1. **Conventional Commits** — `git commit -m "..."` must start with
+   `feat|fix|test|chore|refactor|docs|perf|style|build|ci|revert`.
+2. **Prohibited patterns** — `TODO`, `FIXME`, `console.log(`, "Not yet
+   implemented" in staged diff blocks the commit.
+3. **Force-push protection** — `git push --force origin main` requires
+   `NCDEV_ALLOW_FORCE_PUSH=1`.
+
+Project-level overrides via `NCDEV_HOOKS_CONFIG=/path/to/hooks.json`
+with `{"prohibited_patterns": [...]}`.
+
+## Asset manifest
+
+Every Claude feature-build session MUST emit
+`.ncdev/assets-needed/<feature_id>.json` listing images/GIFs/SVGs/videos
+the feature references but cannot generate itself. Downstream system
+(Nano Banana 2 / human) populates them. The manifest is verified
+against code references — committing code that references an unlisted
+asset fails the feature.
+
+Schema: `{id, name, type, description, generation_prompt,
+suggested_dimensions, referenced_in[], target_path, status}`
+
+Aggregate all features into `.ncdev/assets-needed/_all.json` for batch
+processing.
+
+## Ports (for generated projects)
+
+| Service | Port |
+|---------|------|
 | Frontend | 23000 |
 | Backend | 23001 |
 | MongoDB | 23002 |
@@ -35,466 +181,12 @@ _Context synced: 2026-04-11 05:00 UTC_
 | KeyCloak | 23004 |
 | KeyCloak Postgres | 23005 |
 
-## AI Tier Architecture
-
-- **Claude Code Opus 4.6**: Orchestrator (Team Lead), reviewer, architecture, delivery
-- **Claude Code Sonnet 4.6**: Builders (x3 parallel), feature implementation, unit tests (default)
-- **Claude Code Haiku 4.5**: Quick validation, lint checks, simple fixes
-- **OpenAI Codex** (optional, disabled by default): Alternative builder — enable via config
-- **Ollama Local Models**: Mock data, test fixtures, bulk generation, vision pre-screening (free)
-
-### Builder Configuration
-
-The builder provider is configurable. Set via environment variables or `BuildConfig`:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NC_BUILDER_CLI` | `claude` | CLI to use: `claude` or `codex` |
-| `NC_BUILDER_MODEL` | `claude-sonnet-4-6` | Model for the builder CLI |
-| `NC_MAX_BUILDER_ATTEMPTS` | `2` | Retries before fallback |
-| `NC_BUILDER_TIMEOUT` | `600` | Per-builder timeout in seconds |
-
-Routing is configured in `.nc-dev/v2/config.yaml` under `routing:`.
-
-## AI Integration (Adapter Pattern - MANDATORY)
-
-All AI features in generated projects MUST use the adapter pattern:
-- **Development/Testing**: CLI-based access via Python subprocesses (NOT SDK integrations)
-  - Claude CLI (Anthropic) — primary builder
-  - Codex CLI (OpenAI) — optional alternative builder
-  - Gemini CLI (Google)
-- **Production**: Open Router (multi-model access)
-- **Local**: Ollama API (localhost:11434)
-- **RAG**: Citex (external plug-and-play RAG system, when needed)
-
-Requirements:
-- Abstract base class/interface for all AI operations
-- Concrete implementations per provider (CLI for dev/test, Open Router for production)
-- Configuration-driven model/provider selection
-- No direct coupling to specific AI providers in business logic
-- Seamless switching between development (CLI) and production (Open Router) modes
-
-## Local Model Usage
-
-For mock data and test fixtures, use Ollama (localhost:11434):
-- Mock API responses: qwen3-coder:30b
-- Bulk test data: qwen3:8b
-- Screenshot analysis: qwen2.5vl:7b (pre-screen before Claude Vision)
-
-Always try local models first, fall back to cloud only when local fails.
-
-## Build Pipeline
-
-```
-Phase 1: UNDERSTAND (Opus) — Parse requirements, extract features, design architecture
-Phase 2: SCAFFOLD (Sonnet) — Create repo, generate project, set up mocks
-Phase 3: BUILD (3x Sonnet 4.6) — Parallel feature building in isolated worktrees
-Phase 4: VERIFY (Sonnet) — Unit tests, E2E tests, screenshots, AI vision analysis
-Phase 5: HARDEN (Sonnet) — Error handling, responsive, accessibility, performance
-Phase 6: DELIVER (Opus) — Usage docs, screenshots, build report, push to GitHub
-```
-
 ## Git Conventions
 
-- Repository: Created on GitHub under the user's account or org
-- Branch strategy: main + feature branches (nc-dev/feature-name)
-- Commit format: `feat(scope): description` / `fix(scope): description` / `test(scope): description`
-- Worktrees: Each builder uses isolated worktree in .worktrees/
-- Small, incremental commits after each logical unit of work
-- All tests must pass before committing
+- Repository: created under `yensi-solutions` org on first greenfield run
+- Branch strategy: main + feature branches (`nc-dev/feature-name`)
+- Commit format: enforced by the PreToolUse hook (Conventional Commits)
+- Small, incremental commits, one per feature when possible
+- `[BROKEN]` tag reserved for recoverability leftovers only
 
-## Builder Invocation
-
-Builders are Claude CLI processes by default (configurable to Codex via `NC_BUILDER_CLI=codex`).
-
-**Claude CLI (default):**
-```bash
-claude -p "$(cat .nc-dev/prompts/build-feature-name.md)" \
-  --output-format json \
-  --model claude-sonnet-4-6 \
-  --allowedTools "Edit,Write,Bash,Read,Glob,Grep" \
-  --cd .worktrees/feature-name 2>&1 &
-```
-
-**Codex CLI (optional):**
-```bash
-codex exec --full-auto --sandbox danger-full-access --json \
-  --cd .worktrees/feature-name \
-  "$(cat .nc-dev/prompts/build-feature-name.md)" \
-  -o .nc-dev/codex-results/feature-name.json 2>&1 &
-```
-
-Fallback: If the primary builder fails 2x on a feature, the fallback builder takes over.
-
-## Generated Project Structure (MANDATORY)
-
-Generated projects MUST follow this structure:
-
-```
-project-name/
-├── docker-compose.yml          # Production
-├── docker-compose.dev.yml      # Development with hot reload
-├── docker-compose.test.yml     # Test environment
-├── .env.example
-├── .env.development
-├── .env.test
-├── Makefile
-├── README.md
-├── .github/
-│   └── workflows/
-│       └── ci.yml              # GitHub Actions CI/CD
-│
-├── backend/
-│   ├── Dockerfile              # Production (multi-stage, non-root user)
-│   ├── Dockerfile.dev          # Development with hot reload
-│   ├── requirements.txt
-│   ├── requirements-dev.txt
-│   ├── pyproject.toml
-│   │
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py             # FastAPI app with lifespan (graceful shutdown)
-│   │   ├── config.py           # Pydantic Settings (env-driven)
-│   │   │
-│   │   ├── api/
-│   │   │   ├── __init__.py
-│   │   │   ├── deps.py         # Dependency injection (get_db, get_current_user)
-│   │   │   ├── middleware.py   # CORS, security headers, rate limiting
-│   │   │   └── v1/
-│   │   │       ├── __init__.py
-│   │   │       ├── router.py   # API router aggregation
-│   │   │       └── endpoints/
-│   │   │           ├── __init__.py
-│   │   │           ├── health.py   # /health and /ready endpoints
-│   │   │           ├── auth.py
-│   │   │           └── [feature].py
-│   │   │
-│   │   ├── core/
-│   │   │   ├── __init__.py
-│   │   │   ├── security.py     # KeyCloak integration (when auth required)
-│   │   │   ├── exceptions.py   # AppException, NotFoundException, etc.
-│   │   │   └── logging.py      # Structured JSON logging
-│   │   │
-│   │   ├── models/
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py         # Base MongoDB document model
-│   │   │   └── [feature].py
-│   │   │
-│   │   ├── schemas/
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py         # Base Pydantic request/response schemas
-│   │   │   └── [feature].py
-│   │   │
-│   │   ├── services/
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py         # BaseService(ABC, Generic[T]) with CRUD
-│   │   │   └── [feature]_service.py
-│   │   │
-│   │   └── db/
-│   │       ├── __init__.py
-│   │       ├── mongodb.py      # MongoDB connection + get_database()
-│   │       ├── indexes.py      # Database index creation
-│   │       └── migrations/     # Seeds and migrations
-│   │
-│   └── tests/
-│       ├── __init__.py
-│       ├── conftest.py         # Pytest fixtures (test_db, client, mock deps)
-│       ├── unit/
-│       │   └── test_services/
-│       ├── integration/
-│       │   └── test_api/
-│       └── e2e/
-│           └── test_workflows/
-│
-├── frontend/
-│   ├── Dockerfile              # Production (multi-stage with nginx)
-│   ├── Dockerfile.dev          # Development with HMR
-│   ├── nginx.conf              # Production nginx config
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── vitest.config.ts
-│   ├── playwright.config.ts
-│   │
-│   ├── src/
-│   │   ├── main.tsx
-│   │   ├── App.tsx
-│   │   ├── vite-env.d.ts
-│   │   │
-│   │   ├── api/
-│   │   │   ├── index.ts        # Axios instance with interceptors
-│   │   │   ├── endpoints.ts    # API endpoint definitions
-│   │   │   └── types.ts        # API response types
-│   │   │
-│   │   ├── stores/
-│   │   │   ├── index.ts
-│   │   │   ├── useAuthStore.ts
-│   │   │   └── [feature]Store.ts
-│   │   │
-│   │   ├── components/
-│   │   │   ├── ui/             # Reusable UI (Button, Input, Modal, etc.)
-│   │   │   ├── layout/         # Header, Sidebar, Footer
-│   │   │   └── features/       # Feature-specific components
-│   │   │
-│   │   ├── pages/
-│   │   │   ├── HomePage.tsx
-│   │   │   ├── LoginPage.tsx
-│   │   │   └── [Feature]Page.tsx
-│   │   │
-│   │   ├── hooks/              # Custom React hooks
-│   │   ├── types/              # TypeScript type definitions
-│   │   ├── utils/              # Constants, helpers, validators
-│   │   ├── styles/
-│   │   │   └── globals.css
-│   │   │
-│   │   └── mocks/
-│   │       ├── browser.ts      # MSW browser setup
-│   │       ├── server.ts       # MSW server setup (for tests)
-│   │       └── handlers.ts     # Mock API handlers
-│   │
-│   ├── e2e/                    # Playwright E2E tests
-│   └── tests/
-│       ├── unit/
-│       ├── integration/
-│       └── e2e/
-│
-├── keycloak/                   # Only when auth is required
-│   ├── Dockerfile
-│   ├── realm-export.json       # Realm configuration
-│   └── themes/                 # Custom themes (optional)
-│
-├── scripts/
-│   ├── setup.sh
-│   ├── seed-data.sh
-│   ├── run-tests.sh
-│   └── validate-system.sh
-│
-└── docs/                       # Generated documentation
-    ├── usage-guide.md
-    ├── api-documentation.md
-    ├── build-report.md
-    ├── mock-documentation.md
-    ├── setup-guide.md
-    └── screenshots/
-```
-
-## Frontend Design Stack (MANDATORY for all generated projects)
-
-Every frontend must use these component libraries for visually polished UIs:
-
-| Layer | Library | Purpose | Install |
-|-------|---------|---------|---------|
-| **Core** | shadcn/ui | Buttons, forms, dialogs, tables, charts | `npx shadcn add <component>` |
-| **Animation** | Magic UI | Animated text, cards, landing blocks | `npx shadcn add` (compatible) |
-| **3D / Effects** | Aceternity UI | Parallax heroes, spotlights, sparkles, 3D cards | Copy from ui.aceternity.com |
-| **Backgrounds** | Eldora UI | Animated backgrounds, wavy text, beams | `npx shadcn add` (compatible) |
-| **Motion** | Framer Motion | Transitions, gestures, layout animations | `npm install framer-motion` |
-
-### Design Rules
-- **Never use plain unstyled HTML** — every element must use shadcn/ui or equivalent
-- **Every page needs at least one animated/visual element** — use Magic UI or Aceternity
-- **Dark themes with vivid accents** preferred unless project specifies otherwise
-- **No placeholder images** — generate with Nano Banana 2 or use real assets
-- **Component layering** — combine shadcn (structure) + Magic UI (animation) + Aceternity (effects)
-
----
-
-## Frontend Architecture Rules (STRICTLY ENFORCED)
-
-### The Golden Rule: Components NEVER Call APIs Directly
-
-```
-Component Layer (UI only, no API calls)
-        │
-        ▼
-Zustand Stores (state management + API call actions)
-        │
-        ▼
-Axios Interceptor Layer (auth headers, error handling, logging)
-        │
-        ▼
-Backend API
-```
-
-### Zustand Store Pattern (MANDATORY)
-
-All API calls MUST go through Zustand stores. Components consume store state and call store actions.
-
-```typescript
-// stores/useFeatureStore.ts
-import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
-import { api } from '@/api';
-
-interface FeatureState {
-  items: Item[];
-  isLoading: boolean;
-  error: string | null;
-  fetchItems: () => Promise<void>;
-  createItem: (data: CreateItemDTO) => Promise<Item>;
-}
-
-export const useFeatureStore = create<FeatureState>()(
-  devtools((set) => ({
-    items: [],
-    isLoading: false,
-    error: null,
-    fetchItems: async () => {
-      set({ isLoading: true, error: null });
-      try {
-        const response = await api.get<Item[]>('/items');
-        set({ items: response.data, isLoading: false });
-      } catch (error) {
-        set({ error: 'Failed to fetch items', isLoading: false });
-        throw error;
-      }
-    },
-    // ... other actions
-  }), { name: 'feature-store' })
-);
-```
-
-### Axios Interceptor Setup (MANDATORY)
-
-```typescript
-// api/index.ts
-import axios from 'axios';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:23001/api/v1';
-
-export const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
-  headers: { 'Content-Type': 'application/json' },
-});
-
-// Request interceptor: auth token + request ID
-// Response interceptor: 401 → redirect to login, error logging
-```
-
-## Backend Architecture Rules (STRICTLY ENFORCED)
-
-### Service Layer Pattern (MANDATORY)
-
-```python
-# services/base.py
-class BaseService(ABC, Generic[T]):
-    def __init__(self, collection: AsyncIOMotorCollection):
-        self.collection = collection
-
-    async def get_by_id(self, id: str) -> Optional[T]: ...
-    async def get_all(self, skip: int = 0, limit: int = 100) -> List[T]: ...
-    async def create(self, data: dict) -> T: ...
-    async def update(self, id: str, data: dict) -> Optional[T]: ...
-    async def delete(self, id: str) -> bool: ...
-```
-
-### Dependency Injection (MANDATORY)
-
-```python
-# api/deps.py
-async def get_db() -> AsyncIOMotorDatabase: ...
-async def get_current_active_user(credentials, db) -> dict: ...
-```
-
-### API Endpoint Pattern
-
-```python
-# api/v1/endpoints/[feature].py
-@router.get("/", response_model=List[ItemResponse])
-async def list_items(
-    service: Annotated[ItemService, Depends(get_item_service)],
-    current_user: Annotated[dict, Depends(get_current_active_user)],
-): ...
-```
-
-### Error Handling (MANDATORY)
-
-Custom exception hierarchy:
-- `AppException` — base
-- `NotFoundException` — 404
-- `UnauthorizedException` — 401
-- `ForbiddenException` — 403
-
-## Production Readiness (MANDATORY in generated projects)
-
-Every generated project MUST include:
-
-1. **Health endpoints**: `/health` (basic) and `/ready` (with DB ping)
-2. **Structured logging**: JSON format in production, human-readable in dev
-3. **Database indexes**: Created on startup via `db/indexes.py`
-4. **Rate limiting**: slowapi on sensitive endpoints (login, signup)
-5. **Graceful shutdown**: FastAPI lifespan context manager
-6. **Security headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection
-7. **CORS**: Restricted origins in production, localhost in dev
-8. **Production Dockerfiles**: Multi-stage builds, non-root user
-9. **CI/CD**: GitHub Actions workflow (lint → test → build → e2e)
-10. **Makefile**: dev, test-all, lint-all, format-all, clean targets
-
-## Docker Configuration
-
-Generated projects MUST have 3 Docker Compose files:
-- `docker-compose.yml` — Production
-- `docker-compose.dev.yml` — Development with hot reload (volume mounts)
-- `docker-compose.test.yml` — Test environment
-
-Services:
-- Frontend (Vite dev / nginx prod)
-- Backend (uvicorn with reload in dev, gunicorn in prod)
-- MongoDB
-- Redis
-- KeyCloak + Postgres (when auth required)
-
-## Testing Requirements
-
-- Every feature must have unit tests (80%+ coverage target)
-- Every route must have a Playwright E2E test
-- Every route must be screenshotted (desktop 1440x900 + mobile 375x812)
-- All external APIs must be mocked (MSW frontend, pytest fixtures backend)
-- Visual verification must pass before feature is considered done
-- Two-tier vision: Ollama Qwen2.5-VL pre-screens (fast, free) → Claude Vision escalation (accurate)
-- Tests MUST pass before any commit
-
-### Test Pyramid
-```
-      E2E (Playwright) — few, critical user journeys
-    Integration (pytest/vitest) — API & component integration
-  Unit (pytest/vitest) — many, fast, isolated tests
-```
-
-## Mocking Strategy
-
-- Frontend: MSW (Mock Service Worker) intercepts Axios calls in browser
-- Backend: httpx MockTransport + pytest fixtures
-- Data: Factory functions + Ollama-generated domain-specific data
-- Environment: MOCK_APIS=true/false switches between mock and real APIs
-- Coverage: Every external API mocked with success, error, and empty responses
-
-## No Incomplete Code (STRICTLY ENFORCED)
-
-Generated code and builder output must NEVER contain:
-- TODO comments
-- Placeholder implementations (`pass`, `return True # Placeholder`)
-- "Coming soon" or "Not yet implemented" text
-- Empty exception handlers (`except: pass`)
-- Commented-out code blocks
-- Hardcoded test data in production code
-- console.log debugging statements
-- Disabled functionality
-
-Every file must be fully functional, syntactically correct, linted, type-checked, and tested.
-If a feature cannot be completed, it must not be committed — inform the user and adjust scope.
-
-## Delivery Requirements
-
-Every completed build must include:
-- GitHub repository with full source code
-- Docker Compose deployment configs (dev + prod + test)
-- Comprehensive test suite (unit + E2E + visual)
-- Mock system for all external APIs
-- Screenshots (desktop + mobile) for every route
-- Usage documentation with annotated screenshots
-- Build report (features, test results, known limitations)
-- CI/CD pipeline configuration
-- Makefile with standard targets
+_Context synced: 2026-04-22_
