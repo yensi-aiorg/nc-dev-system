@@ -89,8 +89,8 @@ def test_non_conventional_messages_blocked(tmp_path: Path, bad: str):
     assert "Conventional Commits" in reason
 
 
-def test_commit_without_inline_m_is_allowed(tmp_path: Path):
-    # If we cannot parse the message (HEREDOC), we allow and rely on other checks.
+def test_commit_with_F_file_flag_is_allowed(tmp_path: Path):
+    """-F <file> — message is in a file; we can't introspect, allow."""
     _init_git_with_staged(tmp_path, {"foo.py": "x = 1\n"})
     decision, _ = pre_bash_guard.evaluate(
         "Bash",
@@ -98,6 +98,41 @@ def test_commit_without_inline_m_is_allowed(tmp_path: Path):
         cwd=str(tmp_path),
     )
     assert decision == "allow"
+
+
+def test_commit_with_heredoc_is_allowed(tmp_path: Path):
+    """HEREDOC substitution — can't parse the message cheaply, allow."""
+    _init_git_with_staged(tmp_path, {"foo.py": "x = 1\n"})
+    cmd = '''git commit -m "$(cat <<'EOF'
+feat: add heredoc support
+EOF
+)"'''
+    decision, _ = pre_bash_guard.evaluate(
+        "Bash", {"command": cmd}, cwd=str(tmp_path),
+    )
+    assert decision == "allow"
+
+
+def test_commit_message_with_escaped_quotes_parses_correctly(tmp_path: Path):
+    """Codex flag: escaped inner quotes broke the extractor. Verify fix."""
+    _init_git_with_staged(tmp_path, {"foo.py": "x = 1\n"})
+    cmd = 'git commit -m "feat: handle \\"escaped\\" quotes"'
+    decision, reason = pre_bash_guard.evaluate(
+        "Bash", {"command": cmd}, cwd=str(tmp_path),
+    )
+    # The message starts with "feat:" so Conventional Commits accepts it
+    assert decision == "allow", reason
+
+
+def test_bad_message_with_escaped_quotes_still_blocked(tmp_path: Path):
+    """Extractor must not be tricked into missing a bad message by escapes."""
+    _init_git_with_staged(tmp_path, {"foo.py": "x = 1\n"})
+    cmd = 'git commit -m "updated \\"thing\\" again"'
+    decision, reason = pre_bash_guard.evaluate(
+        "Bash", {"command": cmd}, cwd=str(tmp_path),
+    )
+    assert decision == "block"
+    assert "Conventional Commits" in reason
 
 
 # ---------------------------------------------------------------------------

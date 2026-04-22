@@ -19,11 +19,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ncdev.ai_session import run_ai_session
 from ncdev.claude_session import (
     DEFAULT_PLAN_TOOLS,
     ClaudeSessionResult,
-    run_claude_session,
 )
+from ncdev.v2.config import NCDevV2Config
 from ncdev.v3.models import (
     CharterBundle,
     FeatureQueueDoc,
@@ -101,17 +102,6 @@ Rules:
 - Target 4–12 features for most PRDs. If the PRD is huge, group into
   logical features rather than listing every sub-task.
 
-## Brownfield special rule
-
-If the repository already contains a design system at
-`docs/design-system/`, or has sample pages under a frontend tree, you MAY
-proceed. Otherwise, for greenfield UI projects, you MUST fail the run by
-writing ONLY a file named `charter-error.json` with:
-
-  {{"error": "greenfield UI project requires a design system (Stitch
-  setup) before charter generation can proceed", "fix": "run stitch
-  setup or supply docs/design-system/ with tokens"}}
-
 ## Output format
 
 Use the `Write` tool to create each file. Validate with `Read` that you
@@ -182,10 +172,11 @@ def generate_charter(
     *,
     target_repo: Path | None = None,
     project_type_hint: str = "web",
-    model: str = "claude-opus-4-6",
+    model: str | None = None,
     timeout: int = 900,
     max_budget_usd: float | None = None,
     log_path: Path | None = None,
+    config: NCDevV2Config | None = None,
 ) -> tuple[CharterBundle | None, ClaudeSessionResult]:
     """Run the charter Claude session and load the produced artifacts.
 
@@ -196,9 +187,10 @@ def generate_charter(
     output_dir.mkdir(parents=True, exist_ok=True)
     prompt = build_charter_prompt(prd_path, target_repo, output_dir, project_type_hint)
 
-    session = run_claude_session(
+    session = run_ai_session(
         prompt,
         cwd=output_dir,
+        config=config,
         tools=DEFAULT_PLAN_TOOLS,
         model=model,
         timeout=timeout,

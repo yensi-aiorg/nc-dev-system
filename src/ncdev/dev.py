@@ -34,8 +34,10 @@ from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 
-from ncdev.claude_session import DEFAULT_BUILD_TOOLS, run_claude_session
+from ncdev.ai_session import run_ai_session
+from ncdev.claude_session import DEFAULT_BUILD_TOOLS
 from ncdev.preflight import require_citex
+from ncdev.v2.config import NCDevV2Config, load_v2_config
 
 console = Console()
 
@@ -213,9 +215,10 @@ def run_dev(
     task: str,
     mode: str = "auto",
     *,
-    model: str = "claude-opus-4-6",
+    model: str | None = None,
     timeout: int = 3600,
     max_budget_usd: float | None = None,
+    config: NCDevV2Config | None = None,
 ) -> dict[str, Any]:
     """Run a single ncdev dev session.
 
@@ -242,17 +245,24 @@ def run_dev(
 
     pre_head = _git_head(project_path)
 
-    console.print("\n[bold]Running Claude session...[/bold]")
+    # Load mode-aware config so the session dispatcher knows which CLI to run.
+    effective_config = config
+    if effective_config is None:
+        try:
+            effective_config = load_v2_config(project_path)
+        except Exception:  # noqa: BLE001
+            effective_config = NCDevV2Config()
+    console.print(f"\n[bold]Running session (mode={effective_config.mode})...[/bold]")
     log_path = project_path / ".ncdev" / "runs" / run_id / "session.jsonl"
     prompt = _build_task_prompt(task, project_path, project_id, mode)
-    session = run_claude_session(
+    session = run_ai_session(
         prompt,
         cwd=project_path,
+        config=effective_config,
         tools=DEFAULT_BUILD_TOOLS,
         model=model,
         timeout=timeout,
         permission_mode="acceptEdits",
-        include_codex_protocol=True,
         max_budget_usd=max_budget_usd,
         log_path=log_path,
     )

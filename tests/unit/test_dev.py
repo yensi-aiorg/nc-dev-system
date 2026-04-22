@@ -80,7 +80,7 @@ def test_run_dev_passes_when_session_commits_cleanly(tmp_path: Path):
             skills_invoked=["test-driven-development"],
         )
 
-    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
         result = dev.run_dev(project, task="add foo", mode="auto")
 
     assert result["status"] == "passed"
@@ -103,7 +103,7 @@ def test_dirty_working_tree_gets_broken_commit(tmp_path: Path):
         (project / "halfdone.py").write_text("# WIP")
         return ClaudeSessionResult(success=False, final_text="stuck", exit_code=1)
 
-    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
         result = dev.run_dev(project, task="try something", mode="auto")
 
     assert result["status"] == "failed"
@@ -125,7 +125,7 @@ def test_no_work_done_is_failed(tmp_path: Path):
             success=True, final_text="nothing to do", exit_code=0,
         )
 
-    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
         result = dev.run_dev(project, task="x", mode="auto")
 
     assert result["status"] == "failed"
@@ -150,15 +150,16 @@ def test_max_budget_propagates_to_session(tmp_path: Path):
                        cwd=str(project), check=True)
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
         dev.run_dev(project, task="x", max_budget_usd=1.25)
 
     assert captured["max_budget_usd"] == 1.25
     # Must include Bash/Skill/Task so Claude can shell to Codex + invoke skills
     tools = list(captured["tools"])
     assert "Bash" in tools and "Skill" in tools and "Task" in tools
-    # Codex protocol must be injected — no opt-out for dev mode
-    assert captured["include_codex_protocol"] is True
+    # The mode-aware config must be forwarded to the dispatcher — it
+    # decides whether to inject the Codex protocol based on mode.
+    assert captured["config"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +186,7 @@ def test_run_summary_ingested_to_citex(tmp_path: Path, monkeypatch):
             skills_invoked=["verification-before-completion"],
         )
 
-    with patch("ncdev.dev.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
         dev.run_dev(project, task="do a thing", mode="enhance")
 
     assert len(calls) == 1

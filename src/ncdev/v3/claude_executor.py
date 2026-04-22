@@ -27,15 +27,17 @@ Claude shells out to Codex via Bash for implementation and test writing
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
 
+from ncdev.ai_session import run_ai_session
 from ncdev.claude_session import (
     DEFAULT_BUILD_TOOLS,
     ClaudeSessionResult,
-    run_claude_session,
 )
+from ncdev.v2.config import NCDevV2Config
 from ncdev.v3.asset_manifest import (
     manifest_prompt_section,
     verify_manifest_covers_references,
@@ -46,6 +48,7 @@ from ncdev.v3.models import (
     StepResult,
     StepStatus,
     StepVerification,
+    TestResult,
 )
 
 
@@ -173,10 +176,13 @@ def execute_feature_claude_driven(
     prior_results: list[StepResult],
     project_id: str,
     *,
-    model: str = "claude-opus-4-6",
+    model: str | None = None,
     timeout: int = 3600,
     max_budget_usd: float | None = None,
     citex_url: str = "http://localhost:20161",
+    config: NCDevV2Config | None = None,
+    run_test_commands: bool = True,
+    probe_health: bool = True,
 ) -> StepResult:
     """Run one feature via a Claude session and return the StepResult.
 
@@ -202,14 +208,15 @@ def execute_feature_claude_driven(
     pre_commit = _git_head(target_path)
 
     start = time.time()
-    session = run_claude_session(
+    session = run_ai_session(
         prompt,
         cwd=target_path,
+        config=config,
+        workspace=run_dir.parent.parent.parent if run_dir.parent.parent.parent.exists() else None,
         tools=DEFAULT_BUILD_TOOLS,
         model=model,
         timeout=timeout,
         permission_mode="acceptEdits",
-        include_codex_protocol=True,
         max_budget_usd=max_budget_usd,
         log_path=step_dir / "session.jsonl",
     )
@@ -224,10 +231,19 @@ def execute_feature_claude_driven(
     made_commit = bool(post_commit and post_commit != pre_commit)
     dirty = _git_working_tree_dirty(target_path)
 
+    # Files the feature actually touched — used for feature-local asset
+    # manifest verification so one legacy unmanaged asset elsewhere in
+    # the repo doesn't fail every future feature.
+    feature_files_created, feature_files_modified = _diff_since(target_path, pre_commit)
+    touched = feature_files_created + feature_files_modified
+
     # Post-hoc verification (Claude's own verification-before-completion
     # skill should have caught most things; this is our belt-and-braces)
     verification = _post_session_verification(
         target_path, feature, charter_bundle,
+        run_test_commands=run_test_commands,
+        probe_health=probe_health,
+        touched_files=touched,
     )
 
     # Decide status
@@ -245,7 +261,11 @@ def execute_feature_claude_driven(
             post_commit = _git_head(target_path)
         status = StepStatus.FAILED
 
-    files_created, files_modified = _diff_since(target_path, pre_commit)
+    # Reuse the diff — or recompute if a [BROKEN] commit was made above
+    files_created = feature_files_created
+    files_modified = feature_files_modified
+    if status == StepStatus.FAILED and dirty:
+        files_created, files_modified = _diff_since(target_path, pre_commit)
 
     result = StepResult(
         feature_id=feature.feature_id,
@@ -288,8 +308,16 @@ def _post_session_verification(
     target_path: Path,
     feature: FeatureStep,
     bundle: CharterBundle,
+    *,
+    run_test_commands: bool = True,
+    probe_health: bool = True,
+    touched_files: list[str] | None = None,
 ) -> StepVerification:
-    """Sanity-check what Claude left behind. Not the primary gate."""
+    """Enforce every clause of the verification contract.
+
+    Belt-and-braces to Claude's in-session ``verification-before-completion``
+    skill — we don't trust "claimed done" to mean "actually done".
+    """
     ver = StepVerification()
     reasons: list[str] = []
 
@@ -300,31 +328,100 @@ def _post_session_verification(
 
     # 2. Asset manifest must exist and cover code references
     if bundle.verification.assets_manifest_required:
-        ok, missing = verify_manifest_covers_references(target_path, feature.feature_id)
+        ok, missing = verify_manifest_covers_references(
+            target_path, feature.feature_id,
+            touched_files=touched_files,
+        )
         if not ok:
             if missing == ["<no-manifest>"]:
                 reasons.append(f"asset manifest not written for {feature.feature_id}")
             else:
                 reasons.append(f"asset references without manifest: {missing[:5]}")
 
-    # 3. Prohibited patterns (quick grep)
+    # 3. Prohibited patterns (regex — treats entries in the contract as
+    #    patterns, falls back to literal match if the regex fails to compile)
     patterns = bundle.verification.prohibited_patterns
     if patterns:
         bad = _grep_for_prohibited(target_path, patterns)
         if bad:
             reasons.append(f"prohibited patterns found: {bad[:5]}")
 
+    # 4. Required screenshots must exist on disk
+    for shot in bundle.verification.required_screenshots:
+        if not _screenshot_exists(target_path, shot):
+            reasons.append(f"required screenshot not captured: {shot}")
+
+    # 5. Minimum test count — prevents "0 tests, all green" gaming
+    if bundle.verification.minimum_test_count > 0:
+        count = _count_test_files(target_path)
+        ver.unit_tests = TestResult(suite="unit", passed=count, success=count > 0)
+        if count < bundle.verification.minimum_test_count:
+            reasons.append(
+                f"test file count {count} below minimum "
+                f"{bundle.verification.minimum_test_count}"
+            )
+
+    # 6. Run the declared test commands
+    if run_test_commands:
+        if bundle.verification.backend_test_command:
+            ok, out = _run_shell(
+                bundle.verification.backend_test_command,
+                cwd=target_path, timeout=600,
+            )
+            ver.integration_tests = TestResult(
+                suite="backend", passed=1 if ok else 0,
+                failed=0 if ok else 1, success=ok, output=out[:2000],
+            )
+            if not ok:
+                reasons.append(f"backend tests failed: {_last_line(out)}")
+        if bundle.verification.frontend_test_command:
+            ok, out = _run_shell(
+                bundle.verification.frontend_test_command,
+                cwd=target_path, timeout=600,
+            )
+            ver.e2e_tests = TestResult(
+                suite="frontend", passed=1 if ok else 0,
+                failed=0 if ok else 1, success=ok, output=out[:2000],
+            )
+            if not ok:
+                reasons.append(f"frontend tests failed: {_last_line(out)}")
+
+    # 7. Best-effort health probe — Claude may have left the app running;
+    #    if so, we probe it. If it's down, treat as a soft signal, not
+    #    a hard failure (feature may have been built to spec without
+    #    leaving the app booted).
+    if probe_health and bundle.verification.backend_health_url:
+        reachable = _probe_health(
+            bundle.verification.backend_health_url,
+            timeout=bundle.verification.boot_timeout_seconds,
+        )
+        ver.app_boots = reachable
+        # Not added to reasons — soft signal only. Explicit boot
+        # enforcement requires the orchestrator to start the app itself,
+        # which is out of scope for post-hoc verification.
+
     ver.failure_reasons = reasons
     ver.overall_passed = not reasons
-    ver.prohibited_patterns = reasons if any("prohibited" in r for r in reasons) else []
+    ver.prohibited_patterns = [r for r in reasons if "prohibited" in r.lower()]
     return ver
 
 
 def _grep_for_prohibited(target_path: Path, patterns: list[str]) -> list[str]:
-    """Grep committed files (staged tree) for prohibited patterns."""
+    """Scan git-tracked files for prohibited patterns.
+
+    Each entry is treated as a regular expression via ``re.search``. If
+    a pattern fails to compile, falls back to a substring check so
+    human-written entries like ``TODO`` still work.
+    """
+    compiled: list[tuple[str, re.Pattern[str] | None]] = []
+    for pat in patterns:
+        try:
+            compiled.append((pat, re.compile(pat)))
+        except re.error:
+            compiled.append((pat, None))
+
     hits: list[str] = []
     try:
-        # Only scan files git tracks — avoids node_modules etc.
         ls = subprocess.run(
             ["git", "ls-files"],
             cwd=str(target_path), capture_output=True, text=True, timeout=10,
@@ -335,21 +432,97 @@ def _grep_for_prohibited(target_path: Path, patterns: list[str]) -> list[str]:
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
 
-    for pat in patterns:
-        for f in files:
-            # Skip binary / large files cheaply
-            fp = target_path / f
-            try:
-                if fp.stat().st_size > 1_000_000:
-                    continue
-                text = fp.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
+    for f in files:
+        fp = target_path / f
+        try:
+            if fp.stat().st_size > 1_000_000:
                 continue
-            if pat in text:
+            text = fp.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for pat, regex in compiled:
+            hit = regex.search(text) if regex is not None else (pat in text)
+            if hit:
                 hits.append(f"{f} contains '{pat}'")
                 if len(hits) > 20:
                     return hits
+                break   # one hit per file is enough
     return hits
+
+
+# ---------------------------------------------------------------------------
+# Verification helpers
+# ---------------------------------------------------------------------------
+
+
+def _screenshot_exists(target_path: Path, name: str) -> bool:
+    """True if a file matching the screenshot name exists under the repo.
+
+    Matches common conventions: <name>.png, <name>-desktop.png, name-*.png,
+    under evidence/screenshots/, .ncdev/evidence/, or docs/screenshots/.
+    """
+    slug = name.replace(" ", "-").replace("/", "-").lower()
+    candidate_dirs = [
+        target_path / ".ncdev" / "evidence",
+        target_path / "evidence" / "screenshots",
+        target_path / "docs" / "screenshots",
+    ]
+    for d in candidate_dirs:
+        if not d.exists():
+            continue
+        for f in d.rglob("*.png"):
+            if slug in f.name.lower():
+                return True
+    return False
+
+
+def _count_test_files(target_path: Path) -> int:
+    patterns = (
+        "tests/**/test_*.py",
+        "tests/**/*_test.py",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "backend/tests/**/*.py",
+        "frontend/tests/**/*.ts",
+        "frontend/tests/**/*.tsx",
+    )
+    seen: set[Path] = set()
+    for pat in patterns:
+        for p in target_path.glob(pat):
+            if p.is_file() and "node_modules" not in p.parts:
+                seen.add(p.resolve())
+    return len(seen)
+
+
+def _run_shell(cmd: str, *, cwd: Path, timeout: int) -> tuple[bool, str]:
+    """Run ``cmd`` in a shell. Returns (success, combined_output)."""
+    try:
+        r = subprocess.run(
+            cmd, shell=True, cwd=str(cwd),
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return r.returncode == 0, (r.stdout + "\n" + r.stderr)
+    except subprocess.TimeoutExpired as exc:
+        return False, f"timed out after {timeout}s: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"exec error: {exc}"
+
+
+def _last_line(text: str) -> str:
+    lines = [l for l in text.strip().splitlines() if l.strip()]
+    return lines[-1][:200] if lines else "(no output)"
+
+
+def _probe_health(url: str, *, timeout: int) -> bool:
+    """Best-effort HTTP GET — True if we get a 2xx response."""
+    try:
+        import httpx
+        r = httpx.get(url, timeout=min(timeout, 10))
+        return 200 <= r.status_code < 300
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -406,16 +579,36 @@ def _diff_since(target_path: Path, ref: str) -> tuple[list[str], list[str]]:
     return created, modified
 
 
-def _commit_broken(target_path: Path, feature: FeatureStep) -> None:
+def _commit_broken(target_path: Path, feature: FeatureStep) -> bool:
+    """Commit leftover dirty tree with [BROKEN] tag. Returns True on success.
+
+    Explicitly checks git return codes and surfaces failure so the
+    caller knows whether recoverability actually worked. If pre-commit
+    hooks reject the commit (e.g. the repo has its own guards), we bail
+    cleanly and let the orchestrator handle it.
+    """
     try:
-        subprocess.run(["git", "add", "-A"],
-                       cwd=str(target_path), capture_output=True, timeout=10)
-        subprocess.run(
+        add = subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(target_path), capture_output=True, text=True, timeout=10,
+        )
+        if add.returncode != 0:
+            console.print(f"  [red]BROKEN-commit: git add failed[/red]: {add.stderr[:200]}")
+            return False
+        commit = subprocess.run(
             ["git", "commit", "-m",
              f"[BROKEN] {feature.feature_id}: {feature.title}\n\n"
              "Claude session did not reach a clean-tree final state. "
              "Committed for recoverability."],
-            cwd=str(target_path), capture_output=True, timeout=10,
+            cwd=str(target_path), capture_output=True, text=True, timeout=10,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+        if commit.returncode != 0:
+            console.print(
+                f"  [red]BROKEN-commit: git commit failed[/red] "
+                f"(rc={commit.returncode}): {(commit.stderr or commit.stdout)[:300]}"
+            )
+            return False
+        return True
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        console.print(f"  [red]BROKEN-commit: {exc}[/red]")
+        return False

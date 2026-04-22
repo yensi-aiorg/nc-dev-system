@@ -43,11 +43,16 @@ def _make_feature(fid: str = "f01-scaffold") -> FeatureStep:
 
 
 def _make_bundle(required_files: list[str] | None = None) -> CharterBundle:
+    # Test-only bundle: empty test commands + no health URL so
+    # _post_session_verification doesn't try to run real pytest / probe
+    # a non-existent server in unit tests.
     return CharterBundle(
         contract=TargetProjectContract(project_name="myapp", project_type="web"),
         verification=VerificationContract(
-            backend_health_url="http://localhost:23001/api/health",
-            backend_test_command="pytest",
+            backend_health_url="",
+            backend_test_command="",
+            frontend_test_command="",
+            minimum_test_count=0,
             required_files=required_files or [],
             prohibited_patterns=["TODO"],
             assets_manifest_required=True,
@@ -151,7 +156,7 @@ def test_passed_when_session_succeeds_and_commits(tmp_path: Path):
         )
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -186,7 +191,7 @@ def test_failed_when_no_commit_made(tmp_path: Path):
         )
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -210,7 +215,7 @@ def test_dirty_working_tree_committed_as_broken(tmp_path: Path):
         return ClaudeSessionResult(success=False, final_text="gave up", exit_code=1)
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -245,7 +250,7 @@ def test_missing_asset_manifest_causes_verification_failure(tmp_path: Path):
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -275,7 +280,98 @@ def test_prohibited_patterns_block_pass(tmp_path: Path):
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle()  # prohibited_patterns=["TODO"]
-    with patch("ncdev.v3.claude_executor.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(),
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+    assert result.status == StepStatus.FAILED
+    assert any("prohibited" in r.lower() for r in result.verification.failure_reasons)
+
+
+def test_verification_runs_backend_test_command_when_configured(tmp_path: Path):
+    """New enforcement: backend_test_command actually runs, not just documented."""
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "a.py").write_text("x=1")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): a"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    bundle = _make_bundle()
+    # Contract declares a test command that deliberately fails
+    bundle.verification.backend_test_command = "false"  # exit 1
+
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(),
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.FAILED
+    reasons = result.verification.failure_reasons if result.verification else []
+    assert any("backend tests failed" in r for r in reasons)
+
+
+def test_verification_enforces_minimum_test_count(tmp_path: Path):
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "foo.py").write_text("pass")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): notests"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
+
+    bundle = _make_bundle()
+    bundle.verification.minimum_test_count = 1
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(),
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+    assert result.status == StepStatus.FAILED
+    assert any("test file count" in r for r in result.verification.failure_reasons)
+
+
+def test_verification_regex_prohibited_pattern_matches(tmp_path: Path):
+    """Codex flagged: `r'except:\\s*pass'` was substring-checked and never
+    fired. With regex enforcement it must match."""
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "bad.py").write_text("try:\n    x = 1\nexcept:   pass\n")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): bad"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
+
+    bundle = _make_bundle()
+    bundle.verification.prohibited_patterns = [r"except:\s*pass"]
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -302,7 +398,7 @@ def test_required_files_missing_blocks_pass(tmp_path: Path):
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle(required_files=["docker-compose.yml", "README.md"])
-    with patch("ncdev.v3.claude_executor.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,

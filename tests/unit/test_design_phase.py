@@ -62,6 +62,20 @@ def test_existing_design_system_false_for_empty_or_missing(tmp_path: Path):
     assert existing_design_system_present(tmp_path) is False
 
 
+def test_existing_design_system_rejects_junk_files(tmp_path: Path):
+    """A README or a stray image doesn't make a valid design system."""
+    ds = tmp_path / "docs" / "design-system"
+    ds.mkdir(parents=True)
+    (ds / "README.md").write_text("coming soon")
+    (ds / "screenshot.png").write_bytes(b"\x89PNG")
+    # Must not falsely claim a design system is present
+    assert existing_design_system_present(tmp_path) is False
+
+    # Now drop a real token file — should flip to True
+    (ds / "tokens.css").write_text(":root { --brand: #000; }")
+    assert existing_design_system_present(tmp_path) is True
+
+
 def test_stitch_available_via_env_var(tmp_path: Path, monkeypatch):
     fake_cfg = tmp_path / "stitch.json"
     fake_cfg.write_text("{}")
@@ -144,7 +158,7 @@ def test_brownfield_with_design_system_runs_summariser(tmp_path: Path):
         )
         return ClaudeSessionResult(success=True, final_text="summarised", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,   # doesn't matter, existing wins
@@ -182,7 +196,7 @@ def test_greenfield_with_stitch_runs_stitch_prompt(tmp_path: Path):
         )
         return ClaudeSessionResult(success=True, final_text="stitch done", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: True,
@@ -208,14 +222,14 @@ def test_stitch_phase_that_writes_error_file_is_hard_failed(tmp_path: Path):
         )
         return ClaudeSessionResult(success=True, final_text="stitch unreachable", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: True,
         )
 
     assert result.hard_failed is True
-    assert "Stitch" in (result.error or "")
+    assert "error artifact" in (result.error or "")
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +254,7 @@ def test_brownfield_without_designs_and_no_stitch_lets_claude_decide(tmp_path: P
         )
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,
@@ -252,6 +266,88 @@ def test_brownfield_without_designs_and_no_stitch_lets_claude_decide(tmp_path: P
     # Prompt instructs Claude it MAY hard-fail itself if it thinks Stitch needed
     assert "frontend-design" in captured["prompt"]
     assert "design-phase-error.json" in captured["prompt"]
+
+
+def test_design_phase_fails_loud_when_session_succeeds_but_no_doc_produced(tmp_path: Path):
+    """Codex flagged: session.success=True with no design-system.json
+    must NOT be silently accepted as passing — it must hard-fail."""
+    contract = _web_contract(is_brownfield=True)
+    ds = tmp_path / "docs" / "design-system"
+    ds.mkdir(parents=True)
+    (ds / "tokens.css").write_text(":root {}")
+    output_dir = tmp_path / "out"
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        # "Claude" exits clean but forgets to write design-system.json
+        return ClaudeSessionResult(success=True, final_text="I forgot", exit_code=0)
+
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+        result = run_design_phase(
+            contract, tmp_path, output_dir,
+            stitch_probe=lambda: False,
+        )
+
+    assert result.hard_failed is True
+    assert "design-system.json" in (result.error or "")
+
+
+def test_design_phase_fails_when_session_exits_unsuccessfully(tmp_path: Path):
+    """Codex flagged: session.success=False must hard-fail even if the
+    session wrote a valid design-system.json by accident."""
+    contract = _web_contract(is_brownfield=True)
+    ds = tmp_path / "docs" / "design-system"
+    ds.mkdir(parents=True)
+    (ds / "tokens.css").write_text(":root {}")
+    output_dir = tmp_path / "out"
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        doc = DesignSystemDoc(
+            project_name="myapp",
+            design_archetype="Technical Elegance",
+            source="existing",
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "design-system.json").write_text(doc.model_dump_json(), encoding="utf-8")
+        return ClaudeSessionResult(success=False, final_text="crashed", exit_code=1,
+                                    error="session timed out")
+
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+        result = run_design_phase(
+            contract, tmp_path, output_dir,
+            stitch_probe=lambda: False,
+        )
+
+    assert result.hard_failed is True
+    assert "unsuccessfully" in (result.error or "")
+
+
+def test_brownfield_summariser_uses_read_only_tools(tmp_path: Path):
+    """Codex flagged: summariser branch had Edit/Bash/Task which contradicts
+    the 'read and summarise only' contract. Verify read-only toolset."""
+    contract = _web_contract(is_brownfield=True)
+    ds = tmp_path / "docs" / "design-system"
+    ds.mkdir(parents=True)
+    (ds / "tokens.css").write_text(":root {}")
+    output_dir = tmp_path / "out"
+    captured: dict = {}
+
+    def fake_session(prompt, **kwargs):
+        captured.update(kwargs)
+        doc = DesignSystemDoc(project_name="x", design_archetype="y", source="existing")
+        (output_dir / "design-system.json").write_text(doc.model_dump_json(), encoding="utf-8")
+        return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
+
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+        run_design_phase(contract, tmp_path, output_dir, stitch_probe=lambda: False)
+
+    tools = list(captured["tools"])
+    # Read-only: no Edit, no Bash, no Task
+    assert "Edit" not in tools
+    assert "Bash" not in tools
+    assert "Task" not in tools
+    # But Write is allowed (for design-system.json itself)
+    assert "Write" in tools
+    assert "Read" in tools
 
 
 def test_design_session_does_not_include_codex_protocol(tmp_path: Path):
@@ -268,7 +364,7 @@ def test_design_session_does_not_include_codex_protocol(tmp_path: Path):
         (output_dir / "design-system.json").write_text(doc.model_dump_json(), encoding="utf-8")
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_claude_session", side_effect=fake_session):
+    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
         run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,

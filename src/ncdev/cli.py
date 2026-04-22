@@ -307,6 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
     full.add_argument("--quality-gate", action="store_true", default=False, help="Run quality gate loop after build completes")
+    full.add_argument("--strict-deps", action="store_true", default=False,
+                      help="Halt the run the moment a feature has an unmet dependency (default: skip the feature and continue).")
 
     # --- Dev Mode: The Autonomous Senior Engineer ---
     dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
@@ -368,6 +370,7 @@ def main() -> int:
             builder_timeout=args.timeout,
             max_repair_attempts=args.max_repairs,
             max_budget_usd=getattr(args, "max_budget_usd", None),
+            strict_deps=bool(getattr(args, "strict_deps", False)),
         )
         console.print(f"run_id={state.run_id} status={state.status}")
         console.print(f"features: {state.completed_features}/{state.total_features} passed")
