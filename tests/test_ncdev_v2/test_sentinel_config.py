@@ -51,7 +51,7 @@ def test_sentinel_config_roundtrip(tmp_path: Path) -> None:
 def test_routing_sentinel_reproduce(tmp_path: Path) -> None:
     config = ensure_default_v2_config(tmp_path)
     providers = config.routing.providers_for(TaskType.SENTINEL_REPRODUCE)
-    assert providers == ["openai_codex"]
+    assert providers == ["anthropic_claude_code"]
 
 
 def test_routing_sentinel_fix(tmp_path: Path) -> None:

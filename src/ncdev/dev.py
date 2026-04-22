@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """NC Dev System — The Autonomous Senior Software Engineer.
 
-Thin glue that connects Codex CLI + Citex + Playwright + ElevenLabs.
+Thin glue that connects Claude CLI + Codex CLI + Citex + Playwright + ElevenLabs.
 The AI decides how to work. This script provides context and enforces guardrails.
 
 Usage:
@@ -296,7 +296,11 @@ For now, include Keystone integration POINTS (health endpoint, structured loggin
 # ── AI Invocation ───────────────────────────────────────────────────────
 
 def invoke_ai_planning(context: str, task: str, project_path: Path) -> str:
-    """Codex plans the approach — writes detailed build instructions for the build pass."""
+    """Plan the approach — writes detailed build instructions via the configured planner.
+
+    Provider is resolved from ``.nc-dev/v2/config.yaml`` routing for ``design_brief``.
+    Default mode (``claude_plan_codex_build``) uses Claude; ``codex_only`` uses Codex.
+    """
     planning_prompt = f"""You are a senior software architect. Your job is to PLAN, not build.
 
 Write a detailed, actionable build plan to the file .ncdev/build-instructions.md that another developer (Codex) will follow to build the entire project. The plan must be specific enough that Codex can execute it without asking questions.
@@ -393,28 +397,32 @@ After building all features, generate end-to-end tests that:
 - Data flows MUST be documented as you build. They drive your test strategy.
 """
 
-    # Save the full planning prompt to a file so Codex can read it (avoids ARG_MAX limits)
+    # Save the full context to a file so the planner can read it (avoids ARG_MAX limits)
     context_dir = project_path / ".ncdev"
     context_dir.mkdir(parents=True, exist_ok=True)
     context_file = context_dir / "build-instructions.md"
     context_file.write_text(planning_prompt, encoding="utf-8")
 
-    # Give Codex a short prompt that constrains it to planning only.
     short_prompt = (
         "Read the file .ncdev/build-instructions.md in this directory. "
-        "Replace that file with a detailed executable build plan for the task. "
-        "Do not implement the project yet. Do not edit files outside .ncdev/build-instructions.md. "
+        "Replace that file with a detailed executable build plan that the builder will follow. "
+        "Do not implement the project yourself. Do not edit files outside .ncdev/build-instructions.md. "
         f"The task is: {task}"
     )
 
-    console.print("[cyan]Codex planning...[/cyan]")
+    from ncdev.provider_dispatch import get_provider_for, preferred_model_for
+
+    provider = get_provider_for("design_brief", workspace=project_path)
+    model = preferred_model_for("design_brief", "planning", workspace=project_path)
+    argv = provider.build_argv(
+        short_prompt,
+        model=model,
+        tools=["Read", "Write", "Glob", "Grep"],
+    )
+    console.print(f"[cyan]{provider.short_name.title()} planning...[/cyan]")
     try:
         result = subprocess.run(
-            [
-                "codex", "exec", "--full-auto",
-                "--sandbox", "danger-full-access",
-                short_prompt,
-            ],
+            argv,
             cwd=str(project_path),
             capture_output=True,
             text=True,
@@ -422,22 +430,26 @@ After building all features, generate end-to-end tests that:
         )
         return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
     except subprocess.TimeoutExpired:
-        # Codex may have written the instructions file before timing out — that's OK
+        # Planner may have written the instructions file before timing out — that's OK
         if context_file.exists() and context_file.stat().st_size > 1000:
-            console.print("[yellow]  Codex timed out but instructions file was written — proceeding[/yellow]")
+            console.print(f"[yellow]  {provider.short_name.title()} timed out but instructions file was written — proceeding[/yellow]")
             return "Planning completed (timeout but instructions written)"
-        return "ERROR: Codex planning timed out and no instructions were written"
+        return f"ERROR: {provider.short_name} planning timed out and no instructions were written"
 
 
 def invoke_codex_parallel(context: str, task: str, project_path: Path) -> str:
-    """Invoke Codex CLI for parallel/supporting work."""
-    # Save context to file for Codex too
+    """Invoke the configured implementation provider to build.
+
+    Historical name kept for call-site compatibility; the actual provider
+    comes from routing (``implementation``) — Codex by default, Claude or
+    OpenRouter if the mode says so.
+    """
     context_file = project_path / ".ncdev" / "build-instructions.md"
     if not context_file.exists():
         context_dir = project_path / ".ncdev"
         context_dir.mkdir(parents=True, exist_ok=True)
-        codex_prompt_full = f"## Task\n{task}\n\n## Project Context\n{context}\n\n{GUARDRAILS}\n\n{FRONTEND_METHODOLOGY}"
-        context_file.write_text(codex_prompt_full, encoding="utf-8")
+        full_prompt = f"## Task\n{task}\n\n## Project Context\n{context}\n\n{GUARDRAILS}\n\n{FRONTEND_METHODOLOGY}"
+        context_file.write_text(full_prompt, encoding="utf-8")
 
     short_prompt = (
         f"Read the file .ncdev/build-instructions.md for your complete task instructions. "
@@ -445,13 +457,19 @@ def invoke_codex_parallel(context: str, task: str, project_path: Path) -> str:
         f"The task is: {task}"
     )
 
-    console.print("[yellow]Invoking Codex CLI...[/yellow]")
+    from ncdev.provider_dispatch import get_provider_for, preferred_model_for
+
+    provider = get_provider_for("implementation", workspace=project_path)
+    model = preferred_model_for("implementation", "implementation", workspace=project_path)
+    argv = provider.build_argv(
+        short_prompt,
+        model=model,
+        tools=["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+    )
+    console.print(f"[yellow]Invoking {provider.short_name.title()} builder...[/yellow]")
     try:
         result = subprocess.run(
-            [
-                "codex", "exec", "--full-auto",
-                short_prompt,
-            ],
+            argv,
             cwd=str(project_path),
             capture_output=True,
             text=True,
@@ -459,7 +477,7 @@ def invoke_codex_parallel(context: str, task: str, project_path: Path) -> str:
         )
         return result.stdout if result.returncode == 0 else f"ERROR: {result.stderr}"
     except Exception as e:
-        return f"Codex unavailable: {e}"
+        return f"{provider.short_name} unavailable: {e}"
 
 
 # ── Video Report ────────────────────────────────────────────────────────
@@ -498,13 +516,19 @@ def generate_video_report(project_path: Path, task: str, results: str) -> Path |
 Focus on SHOWING the working product, not explaining code.
 """
 
-    # Codex does the actual recording work — timeout is non-fatal
+    # Configured implementation provider does the actual recording work — timeout is non-fatal
+    from ncdev.provider_dispatch import get_provider_for, preferred_model_for
+
+    provider = get_provider_for("implementation", workspace=project_path)
+    model = preferred_model_for("implementation", "implementation", workspace=project_path)
+    argv = provider.build_argv(
+        video_prompt,
+        model=model,
+        tools=["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+    )
     try:
         result = subprocess.run(
-            [
-                "codex", "exec", "--full-auto",
-                video_prompt,
-            ],
+            argv,
             cwd=str(project_path),
             capture_output=True,
             text=True,
@@ -653,7 +677,7 @@ def run_dev(
 
     This is the thin glue. It:
     1. Gathers context (filesystem + Citex)
-    2. Invokes Codex CLI with full context
+    2. Invokes Claude CLI (planning) + Codex CLI (build/test) with full context
     3. Verifies guardrails
     4. Generates video report
     5. Stores results in Citex
@@ -680,13 +704,13 @@ def run_dev(
     context = gather_project_context(project_path, task)
     console.print(f"  Context: {len(context)} chars from filesystem + Citex")
 
-    # 2. Codex plans — writes the build instructions
-    console.print("\n[bold]2. Codex CLI planning...[/bold]")
+    # 2. Planner writes the build instructions (provider chosen by mode)
+    console.print("\n[bold]2. Planning phase...[/bold]")
     plan_output = invoke_ai_planning(context, task, project_path)
-    console.print(f"  Codex plan: {len(plan_output)} chars")
+    console.print(f"  Plan: {len(plan_output)} chars")
 
-    # 3. Codex BUILDS — executes all the development work
-    console.print("\n[bold]3. Codex CLI building project...[/bold]")
+    # 3. Builder executes all the development work (provider chosen by mode)
+    console.print("\n[bold]3. Build phase...[/bold]")
     codex_output = invoke_codex_parallel(
         context,
         (

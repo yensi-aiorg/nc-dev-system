@@ -146,6 +146,7 @@ def execute_feature_step(
             timeout=builder_timeout,
             model=builder_model,
             log_path=step_dir / f"repair-{attempt}.log",
+            use_codex=False,  # Repairs use Claude — better at understanding failure context
         )
 
         verification = _run_verification(target_path, feature, step_dir)
@@ -210,25 +211,46 @@ def _run_builder(
     timeout: int,
     model: str,
     log_path: Path,
+    use_codex: bool = True,
 ) -> dict:
-    """Invoke Codex CLI to build or repair a feature."""
+    """Invoke the configured builder/reviewer for a feature.
+
+    ``use_codex=True`` routes through the ``implementation`` task (builder).
+    ``use_codex=False`` routes through ``review`` (repair/reasoning pass).
+    The actual CLI or API backing each task is defined by the active mode
+    in ``.nc-dev/v2/config.yaml`` — flipping the mode flips the builder.
+    """
+    from ncdev.provider_dispatch import get_provider_for
+
     # Kill any orphaned processes from prior steps
     _kill_orphan_processes()
 
-    if not shutil.which("codex"):
-        error = "Codex CLI is required but not installed or not on PATH."
-        log_path.write_text(f"RUNNER: Codex\nERROR: {error}\n", encoding="utf-8")
+    task_key = "implementation" if use_codex else "review"
+
+    try:
+        provider = get_provider_for(task_key, workspace=target_path)
+    except ValueError as exc:
+        log_path.write_text(f"DISPATCH ERROR: {exc}\n", encoding="utf-8")
+        return {"success": False, "output": "", "error": str(exc)}
+
+    cli_name = provider.short_name
+    if not shutil.which(cli_name):
+        error = f"{cli_name.capitalize()} CLI required for '{task_key}' but not on PATH."
+        log_path.write_text(f"RUNNER: {cli_name}\nERROR: {error}\n", encoding="utf-8")
         return {"success": False, "output": "", "error": error}
 
-    cmd = [
-        "codex", "exec",
-        "--full-auto",
-        "--sandbox", "danger-full-access",
-        prompt,
-    ]
-    runner_label = f"Codex ({model})"
+    try:
+        cmd = provider.build_argv(
+            prompt,
+            model=model if cli_name == "codex" else None,
+            tools=["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+        )
+    except NotImplementedError as exc:
+        log_path.write_text(f"RUNNER: {cli_name}\nERROR: {exc}\n", encoding="utf-8")
+        return {"success": False, "output": "", "error": str(exc)}
 
-    console.print(f"  [cyan]Using {runner_label} builder[/cyan]")
+    runner_label = f"{cli_name.capitalize()} ({model})" if cli_name == "codex" else f"{cli_name.capitalize()} (opus)"
+    console.print(f"  [cyan]Using {runner_label} for {task_key}[/cyan]")
 
     try:
         result = subprocess.run(
@@ -257,8 +279,11 @@ def _run_builder(
         log_path.write_text(f"TIMEOUT after {timeout}s ({runner_label})", encoding="utf-8")
         return {"success": False, "output": "", "error": f"{runner_label} timed out after {timeout}s"}
     except FileNotFoundError:
-        error = "Codex CLI is required but was not found."
-        log_path.write_text(f"RUNNER: Codex\nERROR: {error}\n", encoding="utf-8")
+        if use_codex:
+            console.print(f"  [yellow]{cli_name} not found, falling back to review provider[/yellow]")
+            return _run_builder(prompt, target_path, timeout, model, log_path, use_codex=False)
+        error = f"Builder CLI not found for configured providers."
+        log_path.write_text(f"RUNNER: {runner_label}\nERROR: {error}\n", encoding="utf-8")
         return {"success": False, "output": "", "error": error}
 
 

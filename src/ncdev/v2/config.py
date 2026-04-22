@@ -3,9 +3,57 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ncdev.v2.models import TaskType
+
+
+# ---------------------------------------------------------------------------
+# Routing task keys — single source of truth for RoutingConfig fields.
+# ---------------------------------------------------------------------------
+
+ROUTING_TASK_KEYS: tuple[str, ...] = (
+    "source_ingest",
+    "repo_analysis",
+    "market_research",
+    "feature_extraction",
+    "design_brief",
+    "implementation",
+    "test_authoring",
+    "review",
+    "second_opinion",
+    "sentinel_reproduce",
+    "sentinel_fix",
+)
+
+
+def _uniform_preset(provider: str) -> dict[str, list[str]]:
+    return {key: [provider] for key in ROUTING_TASK_KEYS}
+
+
+# Named presets. Flipping `NCDevV2Config.mode` picks one. "custom" leaves
+# RoutingConfig untouched so users can hand-tune it.
+MODE_PRESETS: dict[str, dict[str, list[str]]] = {
+    "codex_only": _uniform_preset("openai_codex"),
+    "claude_only": _uniform_preset("anthropic_claude_code"),
+    "openrouter": _uniform_preset("openrouter"),
+    "claude_plan_codex_build": {
+        "source_ingest": ["anthropic_claude_code"],
+        "repo_analysis": ["anthropic_claude_code"],
+        "market_research": ["anthropic_claude_code"],
+        "feature_extraction": ["anthropic_claude_code"],
+        "design_brief": ["anthropic_claude_code"],
+        "implementation": ["openai_codex"],
+        "test_authoring": ["openai_codex"],
+        "review": ["anthropic_claude_code"],
+        "second_opinion": ["anthropic_claude_code"],
+        "sentinel_reproduce": ["anthropic_claude_code"],
+        "sentinel_fix": ["openai_codex"],
+    },
+    "custom": {},
+}
+
+DEFAULT_MODE = "claude_plan_codex_build"
 
 
 class ProviderPreferenceConfig(BaseModel):
@@ -16,16 +64,16 @@ class ProviderPreferenceConfig(BaseModel):
 
 
 class RoutingConfig(BaseModel):
-    source_ingest: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    repo_analysis: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    market_research: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    feature_extraction: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    design_brief: list[str] = Field(default_factory=lambda: ["openai_codex"])
+    source_ingest: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    repo_analysis: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    market_research: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    feature_extraction: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    design_brief: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
     implementation: list[str] = Field(default_factory=lambda: ["openai_codex"])
     test_authoring: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    review: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    second_opinion: list[str] = Field(default_factory=lambda: ["openai_codex"])
-    sentinel_reproduce: list[str] = Field(default_factory=lambda: ["openai_codex"])
+    review: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    second_opinion: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
+    sentinel_reproduce: list[str] = Field(default_factory=lambda: ["anthropic_claude_code"])
     sentinel_fix: list[str] = Field(default_factory=lambda: ["openai_codex"])
 
     def providers_for(self, task_type: TaskType) -> list[str]:
@@ -96,17 +144,31 @@ class QualityGateConfig(BaseModel):
 
 
 class NCDevV2Config(BaseModel):
+    mode: str = Field(
+        default=DEFAULT_MODE,
+        description=(
+            "Named routing preset. One of: "
+            + ", ".join(sorted(MODE_PRESETS.keys()))
+            + ". When set to a known preset, RoutingConfig is overwritten with "
+            "the preset. Use 'custom' to keep hand-tuned routing."
+        ),
+    )
     providers: dict[str, ProviderPreferenceConfig] = Field(
         default_factory=lambda: {
+            "anthropic_claude_code": ProviderPreferenceConfig(
+                enabled=True,
+                preferred_models={"planning": "opus", "review": "opus"},
+                features={"use_subagents": True, "use_hooks": True, "use_mcp": True},
+            ),
             "openai_codex": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={
-                    "planning": "gpt-5.4",
-                    "review": "gpt-5.4",
-                    "implementation": "gpt-5.4",
-                    "test_implementation": "gpt-5.4",
-                },
+                preferred_models={"implementation": "gpt-5.4", "test_implementation": "gpt-5.4"},
                 defaults={"reasoning_effort": "high"},
+            ),
+            "openrouter": ProviderPreferenceConfig(
+                enabled=False,
+                preferred_models={"planning": "anthropic/claude-opus-4-6"},
+                defaults={"base_url": "https://openrouter.ai/api/v1"},
             ),
             "gemini_cli": ProviderPreferenceConfig(enabled=False),
         }
@@ -114,6 +176,21 @@ class NCDevV2Config(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     quality_gates: QualityGateConfig = Field(default_factory=QualityGateConfig)
     sentinel: SentinelConfig = Field(default_factory=SentinelConfig)
+
+    @model_validator(mode="after")
+    def _apply_mode_preset(self) -> "NCDevV2Config":
+        preset = MODE_PRESETS.get(self.mode)
+        if preset is None:
+            raise ValueError(
+                f"Unknown mode '{self.mode}'. Known modes: "
+                + ", ".join(sorted(MODE_PRESETS.keys()))
+            )
+        if not preset:
+            # "custom" — leave RoutingConfig as declared.
+            return self
+        for field, providers in preset.items():
+            setattr(self.routing, field, list(providers))
+        return self
 
     def to_yaml_dict(self) -> dict[str, object]:
         return self.model_dump(mode="python")

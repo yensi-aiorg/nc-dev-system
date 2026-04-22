@@ -222,7 +222,11 @@ def _read_code_files(target_path: Path, patterns: Iterable[str], max_files: int 
 
 
 def _synthesize_with_opus(category: str, raw_content: str) -> str:
-    """Call Codex to synthesize raw content into a structured summary."""
+    """Call the configured source-ingest provider to synthesize context.
+
+    Historical name kept for call-site compatibility; the provider (Claude,
+    Codex, or OpenRouter) is resolved from ``source_ingest`` routing.
+    """
     if not raw_content.strip():
         return ""
 
@@ -234,9 +238,14 @@ def _synthesize_with_opus(category: str, raw_content: str) -> str:
         f"Raw content:\n{raw_content[:30000]}"
     )
 
+    from ncdev.provider_dispatch import get_provider_for, preferred_model_for
+
     try:
+        provider = get_provider_for("source_ingest")
+        model = preferred_model_for("source_ingest", "planning")
+        argv = provider.build_argv(prompt, model=model)
         result = subprocess.run(
-            ["codex", "exec", "--full-auto", "--sandbox", "danger-full-access", prompt],
+            argv,
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0 and result.stdout.strip():
