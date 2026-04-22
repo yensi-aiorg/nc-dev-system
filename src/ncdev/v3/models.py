@@ -46,7 +46,8 @@ class StepStatus(str, Enum):
     REPAIRING = "repairing"
     PASSED = "passed"
     FAILED = "failed"
-    SKIPPED = "skipped"
+    SKIPPED = "skipped"   # brownfield state-scanner: feature already implemented
+    BLOCKED = "blocked"   # dependency failed / blocked — we did NOT try
 
 
 class TestResult(BaseModel):

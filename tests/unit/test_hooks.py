@@ -154,6 +154,24 @@ def test_staged_content_with_todo_is_blocked(tmp_path: Path):
     assert "src/app.py" in reason
 
 
+def test_regex_prohibited_pattern_matches_at_hook_level(tmp_path: Path, monkeypatch):
+    """Codex R2: hook used substring only; regex entries from the
+    verification contract never fired at commit time. Parity check."""
+    config = tmp_path / "hooks.json"
+    config.write_text('{"prohibited_patterns": ["except:\\\\s*pass"]}')
+    monkeypatch.setenv("NCDEV_HOOKS_CONFIG", str(config))
+
+    _init_git_with_staged(tmp_path, {
+        "bad.py": "try:\n    x = 1\nexcept:    pass\n",
+    })
+    decision, reason = pre_bash_guard.evaluate(
+        "Bash", {"command": 'git commit -m "feat: add thing"'},
+        cwd=str(tmp_path),
+    )
+    assert decision == "block"
+    assert "except:" in reason or "pass" in reason
+
+
 def test_staged_content_with_console_log_is_blocked(tmp_path: Path):
     _init_git_with_staged(tmp_path, {
         "frontend/app.tsx": 'export const x = () => { console.log("hi"); };\n',
