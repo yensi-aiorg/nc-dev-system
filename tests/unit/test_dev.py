@@ -10,6 +10,7 @@ import pytest
 
 from ncdev import dev
 from ncdev.claude_session import ClaudeSessionResult
+from ncdev.v2.config import NCDevV2Config, RoutingConfig
 
 
 def _init_git(path: Path) -> None:
@@ -152,27 +153,32 @@ def test_dirty_tree_after_successful_session_is_auto_committed_not_broken(tmp_pa
 
 
 def test_successful_session_with_autocommit_failure_is_not_marked_passed(tmp_path: Path):
-    """If _commit_session_leftovers returns '' (e.g. nothing staged because
-    everything is gitignored, or git identity missing), the run must NOT be
-    marked passed — that would be the same false-positive-success the fix
-    was meant to prevent."""
+    """If _commit_session_leftovers returns '' (auto-commit failed —
+    hook rejected, identity missing, or any other git-level failure),
+    the run must NOT be marked passed — that would reinstate the same
+    false-positive-success the fix was meant to prevent.
+
+    We simulate the auto-commit failure by patching _commit_session_leftovers
+    directly. (Earlier versions of this test wrote a gitignored file and
+    assumed that would leave the tree "dirty"; in fact `git status
+    --porcelain` does not show ignored files, so the tree was clean and
+    the test exercised the wrong branch.)
+    """
     project = tmp_path / "app"
     project.mkdir()
     _init_git(project)
-    (project / ".gitignore").write_text("*.ignored\n")
-    subprocess.run(["git", "add", ".gitignore"], cwd=str(project), check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "add gitignore"],
-                   cwd=str(project), check=True)
 
     def fake_session(prompt, **kwargs):  # noqa: ARG001
-        # Only write to an ignored path — git add -A stages nothing, commit fails.
-        (project / "scratch.ignored").write_text("whatever")
+        # Write a real (non-ignored) file so the working tree is genuinely dirty.
+        (project / "work.py").write_text("# did some work\n")
         return ClaudeSessionResult(
             success=True, final_text="done", exit_code=0,
-            files_touched=["scratch.ignored"],
+            files_touched=["work.py"],
         )
 
-    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
+    # Simulate _commit_session_leftovers failing to produce a SHA.
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session), \
+         patch("ncdev.dev._commit_session_leftovers", return_value=""):
         result = dev.run_dev(project, task="try to do a thing", mode="auto")
 
     assert result["status"] == "failed"
@@ -223,11 +229,65 @@ def test_empty_task_yields_fallback_autocommit_subject(tmp_path: Path):
     with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
         dev.run_dev(project, task="   \n  ", mode="auto")
 
-    subject = subprocess.run(
+    # Exact byte match (only strip git's single mandatory trailing newline)
+    # so a trailing-space regression in the subject can't be hidden by .strip().
+    raw = subprocess.run(
         ["git", "log", "-1", "--pretty=%s"], cwd=str(project),
         capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert subject == "chore(ncdev): uncommitted session work"
+    ).stdout
+    subject = raw[:-1] if raw.endswith("\n") else raw
+    assert subject == "chore(ncdev): uncommitted session work", repr(subject)
+
+
+def _cfg(mode: str, impl: list[str] | None = None) -> NCDevV2Config:
+    """Build a config without triggering the mode preset's routing override.
+
+    The ``custom`` mode preserves whatever routing the user set; other modes
+    reset routing to their preset. We use model_construct here rather than
+    re-running validation, because we need to inject arbitrary routing for
+    test purposes.
+    """
+    routing = RoutingConfig(implementation=impl) if impl is not None else RoutingConfig()
+    return NCDevV2Config.model_construct(mode=mode, routing=routing)
+
+
+def test_expected_codex_claude_plan_codex_build_preset():
+    assert dev._mode_expects_codex_implementer(_cfg("claude_plan_codex_build")) is True
+
+
+def test_expected_codex_claude_only_preset():
+    assert dev._mode_expects_codex_implementer(_cfg("claude_only")) is False
+
+
+def test_expected_codex_codex_only_preset_does_not_warn():
+    # codex_only means the session IS Codex; there is no Claude→Codex
+    # delegation to miss, so the warning must NOT fire.
+    assert dev._mode_expects_codex_implementer(_cfg("codex_only")) is False
+
+
+def test_expected_codex_custom_mode_first_entry_decides():
+    # When the first implementation entry is Claude, Codex isn't the
+    # implementer — even if Codex appears later in the list as a fallback.
+    assert dev._mode_expects_codex_implementer(
+        _cfg("custom", impl=["anthropic_claude_code", "openai_codex"])
+    ) is False
+
+
+def test_expected_codex_custom_mode_short_alias():
+    # The short alias 'codex' should resolve to the same implementer as the
+    # long 'openai_codex'.
+    assert dev._mode_expects_codex_implementer(
+        _cfg("custom", impl=["codex"])
+    ) is True
+    assert dev._mode_expects_codex_implementer(
+        _cfg("custom", impl=["openai_codex"])
+    ) is True
+
+
+def test_expected_codex_custom_mode_empty_impl_chain():
+    assert dev._mode_expects_codex_implementer(
+        _cfg("custom", impl=[])
+    ) is False
 
 
 def test_no_work_done_is_failed(tmp_path: Path):

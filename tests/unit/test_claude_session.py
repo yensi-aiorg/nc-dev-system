@@ -113,6 +113,10 @@ def test_command_includes_stream_json_and_tools(tmp_path: Path):
     assert "-p" in cmd
     assert "--output-format" in cmd
     assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    # --verbose is required by recent claude CLI when combining --print
+    # with --output-format=stream-json; regression-guard so the flag isn't
+    # silently dropped.
+    assert "--verbose" in cmd
     tools_idx = cmd.index("--allowedTools") + 1
     assert cmd[tools_idx] == ",".join(DEFAULT_PLAN_TOOLS)
 

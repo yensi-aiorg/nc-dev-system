@@ -159,6 +159,37 @@ def _commit_broken_leftovers(project_path: Path, task: str) -> str:
     return _git_head(project_path)
 
 
+def _mode_expects_codex_implementer(cfg: NCDevV2Config) -> bool:
+    """Return True iff the effective mode's implementer is Codex.
+
+    Resolution mirrors :func:`ai_session._resolve_custom_providers`:
+
+    - preset ``claude_plan_codex_build`` → Codex
+    - preset ``codex_only`` → Codex is the orchestrator AND implementer, but
+      there is no Claude-to-Codex delegation to detect — the session IS
+      Codex — so we do NOT warn on zero Claude→Codex calls. Return False.
+    - ``custom`` → take ``routing.implementation[0]`` and map it through
+      :func:`provider_dispatch.resolve_provider_name`; the long name
+      ``openai_codex`` and the short alias ``codex`` both resolve to
+      ``codex``.
+    - any other preset → False.
+    """
+    if cfg.mode == "claude_plan_codex_build":
+        return True
+    if cfg.mode != "custom":
+        return False
+
+    from ncdev.provider_dispatch import resolve_provider_name
+
+    impl_chain = getattr(cfg.routing, "implementation", None) or []
+    if not impl_chain:
+        return False
+    try:
+        return resolve_provider_name(impl_chain[0]) == "codex"
+    except (KeyError, ValueError):
+        return False
+
+
 def _commit_session_leftovers(project_path: Path, task: str) -> str:
     """Auto-commit leftover dirty tree from a SUCCESSFUL session.
 
@@ -368,16 +399,9 @@ def run_dev(
 
     # Mode-vs-behavior check: if the active mode expects Codex to implement
     # but the session touched files without calling Codex even once, Claude
-    # implemented directly. This is not a failure — just a divergence from
-    # mode intent worth surfacing so the operator can decide whether to
-    # tighten the prompt or accept the outcome. Covers both the preset mode
-    # and `custom` mode with Codex in its implementation routing.
-    _codex_presets = {"claude_plan_codex_build"}
-    _custom_uses_codex = (
-        effective_config.mode == "custom"
-        and "openai_codex" in (getattr(effective_config.routing, "implementation", None) or [])
-    )
-    expected_codex = effective_config.mode in _codex_presets or _custom_uses_codex
+    # implemented directly. Not a failure — just a divergence worth
+    # surfacing.
+    expected_codex = _mode_expects_codex_implementer(effective_config)
     codex_calls_made = len(session.codex_invocations)
     files_touched_count = len(session.files_touched)
     if (
