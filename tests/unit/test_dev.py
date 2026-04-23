@@ -151,6 +151,85 @@ def test_dirty_tree_after_successful_session_is_auto_committed_not_broken(tmp_pa
     assert status_out.stdout.strip() == ""
 
 
+def test_successful_session_with_autocommit_failure_is_not_marked_passed(tmp_path: Path):
+    """If _commit_session_leftovers returns '' (e.g. nothing staged because
+    everything is gitignored, or git identity missing), the run must NOT be
+    marked passed — that would be the same false-positive-success the fix
+    was meant to prevent."""
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+    (project / ".gitignore").write_text("*.ignored\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=str(project), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add gitignore"],
+                   cwd=str(project), check=True)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        # Only write to an ignored path — git add -A stages nothing, commit fails.
+        (project / "scratch.ignored").write_text("whatever")
+        return ClaudeSessionResult(
+            success=True, final_text="done", exit_code=0,
+            files_touched=["scratch.ignored"],
+        )
+
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
+        result = dev.run_dev(project, task="try to do a thing", mode="auto")
+
+    assert result["status"] == "failed"
+    log = subprocess.run(
+        ["git", "log", "--oneline"], cwd=str(project),
+        capture_output=True, text=True, check=True,
+    )
+    assert "chore(ncdev)" not in log.stdout
+    assert "[BROKEN]" not in log.stdout
+
+
+def test_failed_session_with_clean_tree_is_failed_without_broken_commit(tmp_path: Path):
+    """Complementary gap: session.success=False + clean tree. No broken commit
+    should be created (nothing to preserve), and status is failed."""
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        return ClaudeSessionResult(
+            success=False, final_text="crashed", exit_code=1,
+        )
+
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
+        result = dev.run_dev(project, task="do x", mode="auto")
+
+    assert result["status"] == "failed"
+    log = subprocess.run(
+        ["git", "log", "--oneline"], cwd=str(project),
+        capture_output=True, text=True, check=True,
+    )
+    assert "[BROKEN]" not in log.stdout
+
+
+def test_empty_task_yields_fallback_autocommit_subject(tmp_path: Path):
+    """Guard: an empty or all-whitespace task must still produce a readable
+    commit subject, not 'chore(ncdev): ' with a trailing space."""
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        (project / "f.py").write_text("# x\n")
+        return ClaudeSessionResult(
+            success=True, final_text="ok", exit_code=0, files_touched=["f.py"],
+        )
+
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
+        dev.run_dev(project, task="   \n  ", mode="auto")
+
+    subject = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s"], cwd=str(project),
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert subject == "chore(ncdev): uncommitted session work"
+
+
 def test_no_work_done_is_failed(tmp_path: Path):
     project = tmp_path / "app"
     project.mkdir()

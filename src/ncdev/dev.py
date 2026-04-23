@@ -171,7 +171,7 @@ def _commit_session_leftovers(project_path: Path, task: str) -> str:
     """
     subprocess.run(["git", "add", "-A"],
                    cwd=str(project_path), capture_output=True, timeout=10)
-    short_task = task.replace("\n", " ").strip()[:72]
+    short_task = task.replace("\n", " ").strip()[:72] or "uncommitted session work"
     r = subprocess.run(
         ["git", "commit", "-m",
          f"chore(ncdev): {short_task}\n\n"
@@ -342,7 +342,18 @@ def run_dev(
             )
             post_head = auto_sha
             made_commit = True
-        status = "passed"
+            status = "passed"
+        else:
+            # Auto-commit silently failed (e.g. nothing staged because
+            # everything was gitignored, or git identity missing). Do NOT
+            # mark this run as passed — that would hide exactly the kind of
+            # false-positive-success we are trying to prevent.
+            status = "failed"
+            console.print(
+                "  [yellow]Session reported success but auto-commit "
+                "produced no SHA; working tree still dirty. Marking "
+                "failed.[/yellow]"
+            )
     elif made_commit:
         status = "passed"
     else:
@@ -356,11 +367,17 @@ def run_dev(
         )
 
     # Mode-vs-behavior check: if the active mode expects Codex to implement
-    # (claude_plan_codex_build) but the session touched files without calling
-    # Codex even once, Claude implemented directly. This is not a failure —
-    # just a divergence from mode intent worth surfacing so the operator can
-    # decide whether to tighten the prompt or accept the outcome.
-    expected_codex = effective_config.mode in ("claude_plan_codex_build",)
+    # but the session touched files without calling Codex even once, Claude
+    # implemented directly. This is not a failure — just a divergence from
+    # mode intent worth surfacing so the operator can decide whether to
+    # tighten the prompt or accept the outcome. Covers both the preset mode
+    # and `custom` mode with Codex in its implementation routing.
+    _codex_presets = {"claude_plan_codex_build"}
+    _custom_uses_codex = (
+        effective_config.mode == "custom"
+        and "openai_codex" in (getattr(effective_config.routing, "implementation", None) or [])
+    )
+    expected_codex = effective_config.mode in _codex_presets or _custom_uses_codex
     codex_calls_made = len(session.codex_invocations)
     files_touched_count = len(session.files_touched)
     if (
