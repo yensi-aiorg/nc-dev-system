@@ -139,7 +139,12 @@ def _git_working_tree_dirty(project_path: Path) -> bool:
 
 
 def _commit_broken_leftovers(project_path: Path, task: str) -> str:
-    """Commit leftover dirty tree with [BROKEN] tag for recoverability."""
+    """Commit leftover dirty tree with [BROKEN] tag for recoverability.
+
+    Only used when the session itself failed (non-zero exit, crash, timeout).
+    For successful sessions that simply forgot to commit, use
+    :func:`_commit_session_leftovers` instead.
+    """
     subprocess.run(["git", "add", "-A"],
                    cwd=str(project_path), capture_output=True, timeout=10)
     r = subprocess.run(
@@ -147,6 +152,33 @@ def _commit_broken_leftovers(project_path: Path, task: str) -> str:
          f"[BROKEN] ncdev dev: {task[:80]}\n\n"
          "Claude session exited without a clean working tree. "
          "Committed for recoverability."],
+        cwd=str(project_path), capture_output=True, timeout=10,
+    )
+    if r.returncode != 0:
+        return ""
+    return _git_head(project_path)
+
+
+def _commit_session_leftovers(project_path: Path, task: str) -> str:
+    """Auto-commit leftover dirty tree from a SUCCESSFUL session.
+
+    When Claude's session exits with success=True but forgets to commit, we
+    preserve the work with a neutral ``chore(ncdev):`` Conventional Commit
+    rather than tagging it ``[BROKEN]``. The human reviewer is expected to
+    amend with a more specific prefix (``feat:``, ``fix:``, ``docs:``, ...)
+    if they want before pushing. Returns the new commit SHA or an empty
+    string if nothing was committed.
+    """
+    subprocess.run(["git", "add", "-A"],
+                   cwd=str(project_path), capture_output=True, timeout=10)
+    short_task = task.replace("\n", " ").strip()[:72]
+    r = subprocess.run(
+        ["git", "commit", "-m",
+         f"chore(ncdev): {short_task}\n\n"
+         "Auto-committed by ncdev dev after a successful session that left "
+         "an uncommitted working tree. Review the diff and amend the "
+         "commit message with a more specific Conventional Commit prefix "
+         "(feat / fix / docs / refactor / ...) before pushing."],
         cwd=str(project_path), capture_output=True, timeout=10,
     )
     if r.returncode != 0:
@@ -194,8 +226,13 @@ the Codex protocol in your system prompt.
    done without evidence.
 6. On failure, use `systematic-debugging` — root-cause first, don't
    loop blindly.
-7. Commit your work using Conventional Commits. Leave the working
-   tree clean.
+7. **MANDATORY: Before ending your session, stage all changes and
+   create a git commit using Conventional Commits** (`feat:`, `fix:`,
+   `docs:`, `refactor:`, `test:`, `chore:`, etc.). The working tree
+   MUST be clean when you finish. If you leave uncommitted changes,
+   the harness will auto-commit them with a neutral `chore(ncdev):`
+   message — which is worse than a descriptive one from you. Do not
+   end the session until `git status` shows a clean working tree.
 
 ## What success looks like
 
@@ -270,18 +307,75 @@ def run_dev(
 
     post_head = _git_head(project_path)
     dirty = _git_working_tree_dirty(project_path)
+
+    # Decide status based on session outcome AND evidence of work:
+    #
+    #   session.success=False                       → failed; [BROKEN] commit
+    #                                                 leftovers if any
+    #   session.success=True  + dirty tree          → passed; auto-commit with
+    #                                                 neutral chore(ncdev):
+    #   session.success=True  + commit made + clean → passed
+    #   session.success=True  + no commit  + clean  → failed (session claims
+    #                                                 success but produced no
+    #                                                 evidence of work)
     made_commit = bool(post_head and post_head != pre_head)
 
-    status = "passed"
-    if not session.success or not made_commit:
+    if not session.success:
         status = "failed"
-    if dirty:
-        # Recoverability: commit leftovers with [BROKEN]
-        broken_sha = _commit_broken_leftovers(project_path, task)
-        if broken_sha:
-            console.print(f"  [yellow]Committed leftovers with [BROKEN] tag: {broken_sha[:8]}[/yellow]")
-            post_head = broken_sha
+        if dirty:
+            broken_sha = _commit_broken_leftovers(project_path, task)
+            if broken_sha:
+                console.print(
+                    f"  [yellow]Session failed; committed leftovers with "
+                    f"[BROKEN] tag: {broken_sha[:8]}[/yellow]"
+                )
+                post_head = broken_sha
+                made_commit = True
+    elif dirty:
+        auto_sha = _commit_session_leftovers(project_path, task)
+        if auto_sha:
+            console.print(
+                f"  [cyan]Session succeeded with dirty tree; "
+                f"auto-committed as {auto_sha[:8]} (chore(ncdev): ...). "
+                f"Amend the message before pushing if you want a more "
+                f"specific Conventional Commit prefix.[/cyan]"
+            )
+            post_head = auto_sha
+            made_commit = True
+        status = "passed"
+    elif made_commit:
+        status = "passed"
+    else:
+        # Session claimed success but nothing changed — no files touched, no
+        # commit made, no dirty tree. Treat as a false-positive success.
         status = "failed"
+        console.print(
+            "  [yellow]Session reported success but produced no commit "
+            "and no working-tree changes. Marking failed — there is no "
+            "evidence of work.[/yellow]"
+        )
+
+    # Mode-vs-behavior check: if the active mode expects Codex to implement
+    # (claude_plan_codex_build) but the session touched files without calling
+    # Codex even once, Claude implemented directly. This is not a failure —
+    # just a divergence from mode intent worth surfacing so the operator can
+    # decide whether to tighten the prompt or accept the outcome.
+    expected_codex = effective_config.mode in ("claude_plan_codex_build",)
+    codex_calls_made = len(session.codex_invocations)
+    files_touched_count = len(session.files_touched)
+    if (
+        status == "passed"
+        and expected_codex
+        and codex_calls_made == 0
+        and files_touched_count > 0
+    ):
+        console.print(
+            f"  [yellow]Mode is {effective_config.mode!r} but the session "
+            f"made 0 Codex calls while touching {files_touched_count} file(s). "
+            f"Claude implemented directly instead of delegating. Outcome is "
+            f"accepted, but consider tightening the task prompt or switching "
+            f"to codex_only if delegation is required.[/yellow]"
+        )
 
     duration = time.time() - start
 
@@ -317,7 +411,8 @@ def run_dev(
         f"[bold]Status:[/bold] {status}\n"
         f"[bold]Commit:[/bold] {post_head[:12] if post_head else '(none)'}\n"
         f"[bold]Skills:[/bold] {', '.join(session.skills_invoked) or '(none)'}\n"
-        f"[bold]Codex calls:[/bold] {len(session.codex_invocations)}\n"
+        f"[bold]Codex calls:[/bold] {codex_calls_made}\n"
+        f"[bold]Files touched:[/bold] {files_touched_count}\n"
         f"[bold]Duration:[/bold] {duration:.1f}s"
         + (f"\n[bold]Cost:[/bold] ${session.total_cost_usd:.3f}"
            if session.total_cost_usd is not None else ""),

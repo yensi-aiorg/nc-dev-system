@@ -115,6 +115,42 @@ def test_dirty_working_tree_gets_broken_commit(tmp_path: Path):
     assert "[BROKEN]" in log.stdout
 
 
+def test_dirty_tree_after_successful_session_is_auto_committed_not_broken(tmp_path: Path):
+    """A successful session that forgets to commit should be auto-committed
+    with a neutral chore(ncdev): message, status=passed, no [BROKEN] tag."""
+    project = tmp_path / "app"
+    project.mkdir()
+    _init_git(project)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        # Claude finished the work, tests pass in its session, but it
+        # neglected to run `git commit`.
+        (project / "feature.py").write_text("def feature():\n    return 42\n")
+        return ClaudeSessionResult(
+            success=True,
+            final_text="All tests pass.",
+            exit_code=0,
+            files_touched=["feature.py"],
+        )
+
+    with patch("ncdev.dev.run_ai_session", side_effect=fake_session):
+        result = dev.run_dev(project, task="add feature", mode="auto")
+
+    assert result["status"] == "passed"
+    log = subprocess.run(
+        ["git", "log", "--oneline"], cwd=str(project),
+        capture_output=True, text=True, check=True,
+    )
+    assert "[BROKEN]" not in log.stdout
+    assert "chore(ncdev)" in log.stdout
+    # Working tree should be clean after the auto-commit
+    status_out = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=str(project),
+        capture_output=True, text=True, check=True,
+    )
+    assert status_out.stdout.strip() == ""
+
+
 def test_no_work_done_is_failed(tmp_path: Path):
     project = tmp_path / "app"
     project.mkdir()
