@@ -207,6 +207,7 @@ def run_claude_session(
         "claude",
         "-p", prompt,
         "--output-format", "stream-json",
+        "--verbose",  # required by recent claude CLI when --print + stream-json
         "--include-partial-messages",
         "--include-hook-events",
         "--model", model,
