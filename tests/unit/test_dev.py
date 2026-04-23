@@ -51,6 +51,11 @@ def test_task_prompt_references_project_and_skills(tmp_path: Path):
     assert "systematic-debugging" in prompt
     # Explicit Codex exec command shape appears as guidance
     assert "codex exec --full-auto" in prompt
+    # Mandatory-delegation language: the prompt must make it clear that
+    # Codex is not optional for bulk implementation in claude_plan_codex_build
+    # mode. Regression-guard so a well-meaning edit can't silently soften it.
+    assert "MANDATORY" in prompt
+    assert "Delegate bulk implementation" in prompt
 
 
 def test_task_prompt_is_short():

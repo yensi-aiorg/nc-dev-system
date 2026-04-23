@@ -250,8 +250,23 @@ the Codex protocol in your system prompt.
    or any CLI it exposes) for prior context.
 2. If this is non-trivial, use the `writing-plans` skill.
 3. Use `test-driven-development` for any behavioural change.
-4. Delegate raw implementation and test writing to Codex via Bash:
-   `codex exec --full-auto --sandbox danger-full-access "<scoped task>"`.
+4. **MANDATORY: Delegate bulk implementation and test writing to
+   Codex via Bash.** This mode is `claude_plan_codex_build` — you
+   plan, read, and review; Codex implements. For any new file, any
+   new test file, any multi-file edit of similar shape (routers,
+   components, models), and any change larger than roughly 30 lines,
+   you MUST shell out with:
+   ```
+   codex exec --full-auto --sandbox danger-full-access "<scoped task>"
+   ```
+   Do not write bulk implementation yourself with Write/Edit just
+   because it feels faster — that defeats the whole point of the
+   split mode. Claude may still use Edit for small precision tweaks
+   (1–10 lines), state-machine design, review fixes, and config
+   adjustments. If you end a session in this mode with zero Codex
+   calls while touching multiple files, the harness will surface a
+   warning saying the mode contract was violated — that warning is
+   not cosmetic, it means you picked the wrong tool.
 5. Use `verification-before-completion` — run the project's tests,
    boot the app, check a health endpoint if one exists. No claiming
    done without evidence.
