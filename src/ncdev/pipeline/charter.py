@@ -1,6 +1,6 @@
 """Phase B — Charter generator.
 
-Replaces the 9-artifact V2 discovery pipeline with a single Claude session
+Replaces the legacy 9-artifact discovery pipeline with a single Claude session
 that reads the PRD (and optionally an existing repo) and emits three
 artifacts:
 

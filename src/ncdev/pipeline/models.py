@@ -1,4 +1,4 @@
-"""V3 models — sequential verified sprint engine."""
+"""Pipeline models — sequential verified sprint engine."""
 
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ class StepResult(BaseModel):
 
 
 class PipelineRunState(BaseModel):
-    """Overall state of a V3 pipeline run."""
+    """Overall state of a pipeline run."""
 
     run_id: str
     command: str = "full"

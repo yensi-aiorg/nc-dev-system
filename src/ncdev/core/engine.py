@@ -1,6 +1,6 @@
-"""V2 Engine — reduced to Sentinel fix mode and state utilities.
+"""Sentinel Engine — reduced to Sentinel fix mode and state utilities.
 
-The V2 orchestration pipeline has been superseded by V3.
+The legacy orchestration pipeline has been superseded by the new claude-driven pipeline.
 This module retains only: run_sentinel_fix, load_sentinel_run_state, summarize_sentinel_status.
 """
 

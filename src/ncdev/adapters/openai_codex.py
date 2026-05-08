@@ -90,7 +90,7 @@ class OpenAICodexAdapter(ProviderAdapter):
         resolved_inputs = [str(path) for path in artifact_paths]
         title = TASK_REQUEST_TITLES.get(task_type, task_type.value.replace("_", " ").title())
         prompt = (
-            f"You are Codex implementing a routed V2 task.\n"
+            f"You are Codex implementing a routed pipeline task.\n"
             f"Task: {title}.\n"
             f"Read the provided artifact set and produce code or test changes inside the target project only.\n"
             f"Inputs: {', '.join(path.name for path in artifact_paths)}.\n"

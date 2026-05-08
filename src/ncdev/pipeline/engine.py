@@ -61,7 +61,7 @@ def run_pipeline(
     # skill handles repair now, so this is a no-op.
     max_repair_attempts: int | None = None,
 ) -> PipelineRunState:
-    """Run the full V3 pipeline on a PRD.
+    """Run the full pipeline on a PRD.
 
     Entry point for ``ncdev full --source <prd>``.
     """
@@ -88,7 +88,7 @@ def run_pipeline(
     )
 
     console.print(Panel(
-        f"[bold cyan]NC Dev V3 — {config.mode} mode[/bold cyan]\n"
+        f"[bold cyan]NC Dev — {config.mode} mode[/bold cyan]\n"
         f"Run ID: {run_id}\n"
         f"Source: {source_path}\n"
         f"Target: {target_repo_path or '(greenfield)'}",
@@ -328,7 +328,7 @@ def _filter_completed_features(target_path: Path, features, completed: list[Step
 def _print_summary_table(completed: list[StepResult]) -> None:
     if not completed:
         return
-    table = Table(title="V3 Build Summary")
+    table = Table(title="Build Summary")
     table.add_column("Feature", style="cyan")
     table.add_column("Status", style="bold")
     table.add_column("Duration", justify="right")

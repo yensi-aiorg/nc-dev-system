@@ -102,7 +102,7 @@ class AnthropicClaudeCodeAdapter(ProviderAdapter):
         resolved_inputs = [str(path) for path in artifact_paths]
         title = TASK_REQUEST_TITLES.get(task_type, task_type.value.replace("_", " ").title())
         prompt = (
-            f"You are Claude Code running as the V2 control-plane planner/reviewer.\n"
+            f"You are Claude Code running as the control-plane planner/reviewer.\n"
             f"Task: {title}.\n"
             f"Use the provided artifact set as the only local source of truth for this phase.\n"
             f"Inputs: {', '.join(path.name for path in artifact_paths)}.\n"

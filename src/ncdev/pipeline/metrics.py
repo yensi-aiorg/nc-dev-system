@@ -1,4 +1,4 @@
-"""Run-level build metrics for the V3 pipeline."""
+"""Run-level build metrics for the pipeline."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -22,7 +22,7 @@ class FeatureMetric(BaseModel):
 
 
 class RunMetrics(BaseModel):
-    """Aggregate metrics for one V3 run."""
+    """Aggregate metrics for one pipeline run."""
 
     run_id: str
     project_name: str = ""
@@ -50,7 +50,7 @@ def compute_run_metrics(
     state: PipelineRunState,
     ingestion_doc_count: int = 0,
 ) -> RunMetrics:
-    """Compute aggregate run metrics from the current V3 run state."""
+    """Compute aggregate run metrics from the current pipeline run state."""
     steps = state.completed_steps
     total = len(steps)
 
