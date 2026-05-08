@@ -340,6 +340,24 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--api-key", default=None, help="API key for authentication")
     serve_parser.add_argument("--workspace", default=None)
 
+    qa_import = sub.add_parser("qa-import", help="Import a manual QA report as durable NC-dev intake")
+    qa_import.add_argument("--report", required=True, help="Path to the manual QA report Markdown file")
+    qa_import.add_argument("--target-repo", required=True, help="Target repository that should be fixed")
+    qa_import.add_argument("--project", default=None, help="Project name override")
+    qa_import.add_argument("--base-url", default="", help="Production or local URL covered by the QA report")
+    qa_import.add_argument("--workspace", default=None)
+
+    qa_monitor = sub.add_parser("qa-monitor", help="List imported manual QA reports")
+    qa_monitor.add_argument("--project", default=None, help="Project name filter")
+    qa_monitor.add_argument("--workspace", default=None)
+
+    qa_update = sub.add_parser("qa-update", help="Update a manual QA intake status")
+    qa_update.add_argument("--project", required=True, help="Project name")
+    qa_update.add_argument("--run-id", required=True, help="Manual QA intake run id")
+    qa_update.add_argument("--status", required=True, choices=["queued", "in_progress", "fixed", "blocked", "verified"])
+    qa_update.add_argument("--note", default="", help="Status note")
+    qa_update.add_argument("--workspace", default=None)
+
     return parser
 
 
@@ -455,6 +473,42 @@ def main() -> int:
         app = create_app(workspace=workspace, api_key=args.api_key or "")
         console.print(f"[cyan]Starting NC Dev intake API on port {args.port}...[/cyan]")
         uvicorn.run(app, host="0.0.0.0", port=args.port, workers=args.workers)
+        return 0
+
+    if args.command == "qa-import":
+        from ncdev.qa_intake import import_manual_qa_report, import_to_dict
+
+        workspace = _workspace(args.workspace)
+        item = import_manual_qa_report(
+            workspace=workspace,
+            report_path=Path(args.report),
+            target_repo=Path(args.target_repo),
+            project=args.project,
+            base_url=args.base_url,
+        )
+        console.print_json(data=import_to_dict(item))
+        return 0
+
+    if args.command == "qa-monitor":
+        from ncdev.qa_intake import list_manual_qa_imports
+
+        workspace = _workspace(args.workspace)
+        imports = list_manual_qa_imports(workspace=workspace, project=args.project)
+        console.print_json(data={"count": len(imports), "imports": imports})
+        return 0
+
+    if args.command == "qa-update":
+        from ncdev.qa_intake import update_manual_qa_status
+
+        workspace = _workspace(args.workspace)
+        metadata = update_manual_qa_status(
+            workspace=workspace,
+            project=args.project,
+            run_id=args.run_id,
+            status=args.status,
+            note=args.note,
+        )
+        console.print_json(data=metadata)
         return 0
 
     parser.print_help()
