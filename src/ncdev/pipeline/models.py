@@ -259,6 +259,13 @@ class VerificationContract(BaseModel):
     e2e_test_command: str = ""         # e.g. "cd frontend && npx playwright test"
     minimum_test_count: int = 1
 
+    # Code quality + buildability — run by the integration gate. Empty
+    # commands skip the corresponding clause (libraries or lint-free
+    # repos can opt out, but the charter validator strongly encourages
+    # at least one).
+    lint_command: str = ""             # e.g. "ruff check . && mypy ."
+    build_command: str = ""            # e.g. "cd frontend && npm run build"
+
     # Screenshots
     required_screenshots: list[str] = Field(default_factory=list)
     screenshot_viewports: list[str] = Field(default_factory=lambda: ["desktop", "mobile"])

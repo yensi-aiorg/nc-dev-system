@@ -56,6 +56,10 @@ class IntegrationResult:
     backend_test_output_tail: str = ""
     frontend_test_output_tail: str = ""
     e2e_test_output_tail: str = ""
+    lint_ok: bool | None = None
+    lint_output_tail: str = ""
+    build_ok: bool | None = None
+    build_output_tail: str = ""
 
 
 def run_integration_gate(
@@ -173,6 +177,38 @@ def run_integration_gate(
         if not ok:
             result.failures.append(
                 f"e2e test suite failed: {result.e2e_test_output_tail}"
+            )
+
+    # Clause 7 — lint command. A passing test suite with broken types
+    # or unused-import / unsafe-fallback warnings still ships a
+    # half-baked product; lint is part of "production complete".
+    if run_test_commands and bundle.verification.lint_command:
+        ok, out = _run_shell(
+            bundle.verification.lint_command,
+            cwd=target_path,
+            timeout=600,
+        )
+        result.lint_ok = ok
+        result.lint_output_tail = _tail(out)
+        if not ok:
+            result.failures.append(
+                f"lint failed: {result.lint_output_tail}"
+            )
+
+    # Clause 8 — build command. The product must actually build —
+    # passing tests against unbuildable code is a frequent silent-skip
+    # mode (frontend bundles in particular).
+    if run_test_commands and bundle.verification.build_command:
+        ok, out = _run_shell(
+            bundle.verification.build_command,
+            cwd=target_path,
+            timeout=1800,
+        )
+        result.build_ok = ok
+        result.build_output_tail = _tail(out)
+        if not ok:
+            result.failures.append(
+                f"build failed: {result.build_output_tail}"
             )
 
     result.duration_seconds = time.time() - start

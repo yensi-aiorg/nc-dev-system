@@ -394,3 +394,75 @@ def test_integration_result_default_state() -> None:
     assert r.passed is False
     assert r.failures == []
     assert r.routes_probed == 0
+
+
+def test_gate_runs_lint_when_configured(tmp_path: Path) -> None:
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.lint_command = "exit 0"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.lint_ok is True
+
+
+def test_gate_fails_when_lint_fails(tmp_path: Path) -> None:
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.lint_command = "exit 1"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.passed is False
+    assert result.lint_ok is False
+    assert any("lint failed" in f for f in result.failures)
+
+
+def test_gate_runs_build_when_configured(tmp_path: Path) -> None:
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.build_command = "exit 0"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.build_ok is True
+
+
+def test_gate_fails_when_build_fails(tmp_path: Path) -> None:
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.build_command = "exit 2"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.passed is False
+    assert result.build_ok is False
+    assert any("build failed" in f for f in result.failures)
