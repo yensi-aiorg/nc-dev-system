@@ -6,6 +6,7 @@ import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 def _utc_stamp() -> str:
@@ -90,7 +91,7 @@ def import_manual_qa_report(
     report_copy = intake_dir / report_path.name
     shutil.copy2(report_path, report_copy)
 
-    metadata = {
+    metadata: dict[str, Any] = {
         "schema": "manual-qa-intake.v1",
         "project": project_name,
         "run_id": run_id,

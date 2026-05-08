@@ -214,48 +214,130 @@ def generate_charter(
     max_budget_usd: float | None = None,
     log_path: Path | None = None,
     config: NCDevConfig | None = None,
+    max_retries: int = 1,
 ) -> tuple[CharterBundle | None, ClaudeSessionResult]:
     """Run the charter Claude session and load the produced artifacts.
 
     Returns ``(bundle, session_result)``. ``bundle`` is None if the
-    session failed, produced invalid JSON, or wrote a ``charter-error.json``
-    (enforced hard-fail for greenfield UI without design system).
+    session failed, produced invalid JSON, wrote a ``charter-error.json``
+    (enforced hard-fail), or could not satisfy the completeness validator
+    after ``max_retries`` retry attempts.
+
+    On a validator-rejected charter, this function automatically retries
+    with an augmented prompt that includes the violation list — so a
+    Claude session that almost-correctly produces the charter can
+    self-correct in a follow-up pass instead of killing the whole run.
+    A bare LLM hallucination of the schema is exactly the failure mode
+    this retry exists to absorb. The retry budget is bounded
+    (``max_retries`` defaults to 1, so worst case 2 charter sessions).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    prompt = build_charter_prompt(prd_path, target_repo, output_dir, project_type_hint)
+    base_prompt = build_charter_prompt(prd_path, target_repo, output_dir, project_type_hint)
 
-    session = run_ai_session(
-        prompt,
-        cwd=output_dir,
-        config=config,
-        tools=DEFAULT_PLAN_TOOLS,
-        model=model,
-        timeout=timeout,
-        include_codex_protocol=False,   # planning only — no Codex shell-out
-        max_budget_usd=max_budget_usd,
-        log_path=log_path,
+    last_session: ClaudeSessionResult | None = None
+    last_violations: list[str] = []
+
+    for attempt in range(max_retries + 1):
+        prompt = base_prompt
+        if attempt > 0 and last_violations:
+            prompt = base_prompt + _retry_feedback_section(last_violations, attempt)
+            # Move attempt-N artifacts aside so the next session starts clean
+            # and we keep the failed attempt for postmortem.
+            _archive_attempt(output_dir, attempt)
+
+        session = run_ai_session(
+            prompt,
+            cwd=output_dir,
+            config=config,
+            tools=DEFAULT_PLAN_TOOLS,
+            model=model,
+            timeout=timeout,
+            include_codex_protocol=False,   # planning only — no Codex shell-out
+            max_budget_usd=max_budget_usd,
+            log_path=log_path,
+        )
+        last_session = session
+
+        # Hard-fail: greenfield UI without design system writes this file.
+        error_path = output_dir / "charter-error.json"
+        if error_path.exists():
+            return None, session
+
+        if not session.success:
+            return None, session
+
+        try:
+            bundle = load_charter(output_dir, strict=True)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+            last_violations = _extract_violations(str(exc))
+            if attempt < max_retries:
+                # Retry — keep going; we'll feed the violations back next loop.
+                continue
+            # Out of retries: persist charter-error.json with the
+            # accumulated violation list for postmortem.
+            (output_dir / "charter-error.json").write_text(
+                json.dumps(
+                    {
+                        "error": str(exc),
+                        "attempts": attempt + 1,
+                        "violations": last_violations,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return None, session
+
+        return bundle, session
+
+    # Unreachable — the loop returns on every branch — but defensively
+    # surface a structured failure if it ever does fall through.
+    assert last_session is not None  # noqa: S101
+    return None, last_session  # pragma: no cover
+
+
+def _extract_violations(err_message: str) -> list[str]:
+    """Pull bullet-point violations out of a load_charter ValueError.
+
+    The validator formats violations as ``"\\n  - <text>"``. We split on
+    that to recover the list so the retry prompt can echo each item.
+    """
+    if "  - " not in err_message:
+        return [err_message]
+    head, _, body = err_message.partition("  - ")
+    items = [body] + []
+    items = [head + body] if not body else [b.strip() for b in body.split("\n  - ")]
+    return [item.rstrip() for item in items if item.strip()]
+
+
+def _retry_feedback_section(violations: list[str], attempt: int) -> str:
+    bullets = "\n".join(f"  - {v}" for v in violations)
+    return (
+        f"\n\n## Retry attempt {attempt + 1}: previous charter rejected\n"
+        f"\nThe charter validator rejected your previous attempt with these "
+        f"violations:\n\n{bullets}\n\n"
+        "Address each violation and rewrite the three JSON files. The "
+        "validator runs again on this attempt — do not produce another "
+        "incomplete charter. Use the `Read` tool to inspect the files you "
+        "wrote previously (they are still on disk under "
+        f"`<output_dir>/.attempt-{attempt}/`) so you can see exactly what "
+        "shape was rejected, then re-emit corrected versions."
     )
 
-    # Hard-fail: greenfield UI without design system writes this file.
-    error_path = output_dir / "charter-error.json"
-    if error_path.exists():
-        return None, session
 
-    if not session.success:
-        return None, session
-
-    try:
-        bundle = load_charter(output_dir, strict=True)
-    except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
-        # Persist a charter-error.json so the engine can surface a clear
-        # reason for the run-level failure instead of just "no bundle".
-        (output_dir / "charter-error.json").write_text(
-            json.dumps({"error": str(exc)}, indent=2),
-            encoding="utf-8",
-        )
-        return None, session
-
-    return bundle, session
+def _archive_attempt(output_dir: Path, attempt: int) -> None:
+    """Move the previous attempt's artifacts under ``.attempt-N/`` for postmortem."""
+    archive_dir = output_dir / f".attempt-{attempt}"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "target-project-contract.json",
+        "verification-contract.json",
+        "feature-queue.json",
+        "charter-error.json",
+    ):
+        src = output_dir / name
+        if src.exists():
+            src.rename(archive_dir / name)
 
 
 def load_charter(output_dir: Path, *, strict: bool = True) -> CharterBundle:

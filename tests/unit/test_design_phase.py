@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -201,24 +200,57 @@ def test_cli_project_skips_design_phase(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_greenfield_ui_without_stitch_or_designs_hard_fails(tmp_path: Path):
+def test_greenfield_ui_without_stitch_falls_back_to_claude_generated(
+    tmp_path: Path, monkeypatch
+):
+    """Greenfield UI projects without Stitch must NOT hard-fail anymore;
+    they should run the frontend-design fallback so a missing MCP
+    integration on the developer's machine doesn't block every run."""
+    from ncdev.claude_session import ClaudeSessionResult
+    from ncdev.pipeline.models import DesignSystemDoc
+
     contract = _web_contract(is_brownfield=False)
     output_dir = tmp_path / "out"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    captured_prompts: list[str] = []
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        captured_prompts.append(prompt)
+        # Simulate Claude writing a valid design-system.json via the
+        # frontend-design skill.
+        doc = DesignSystemDoc(
+            project_name=contract.project_name,
+            design_archetype=contract.design_archetype or "Cinematic Minimalism",
+            source="claude_generated",
+        )
+        (output_dir / "design-system.json").write_text(
+            doc.model_dump_json(indent=2), encoding="utf-8",
+        )
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    monkeypatch.setattr(
+        "ncdev.pipeline.design_phase.run_ai_session", fake_session,
+    )
 
     result = run_design_phase(
         contract, tmp_path, output_dir,
-        stitch_probe=lambda: False,   # no Stitch
+        stitch_probe=lambda: False,
     )
 
-    assert result.hard_failed is True
-    assert result.error is not None
-    assert "greenfield" in result.error.lower() or "design" in result.error.lower()
-    # Error artifact written for downstream processing / human
-    err = output_dir / "design-phase-error.json"
-    assert err.exists()
-    payload = json.loads(err.read_text(encoding="utf-8"))
-    assert "error" in payload
-    assert "fix" in payload
+    assert result.hard_failed is False
+    assert result.design_doc is not None
+    assert result.design_doc.source == "claude_generated"
+    # Error file must NOT have been written by the engine itself
+    assert not (output_dir / "design-phase-error.json").exists()
+    # Prompt must drive Claude to use the frontend-design skill and emit
+    # the four design-system files
+    assert len(captured_prompts) == 1
+    assert "frontend-design" in captured_prompts[0]
+    assert "tokens.json" in captured_prompts[0]
+    assert "tokens.css" in captured_prompts[0]
+    assert "tailwind-preset" in captured_prompts[0]
+    assert "components.md" in captured_prompts[0]
 
 
 # ---------------------------------------------------------------------------

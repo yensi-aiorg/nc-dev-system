@@ -335,20 +335,6 @@ def run_design_phase(
     has_existing = existing_design_system_present(target_path)
     has_stitch = stitch_probe()
 
-    # --- Hard-fail: greenfield UI, no existing designs, no Stitch ----------
-    if not contract.is_brownfield and not has_existing and not has_stitch:
-        err_path = output_dir / "design-phase-error.json"
-        err_path.write_text(
-            '{"error": "greenfield UI project requires a design system",'
-            ' "fix": "install and configure the Stitch MCP server, or '
-            'supply docs/design-system/ with design tokens and sample pages"}',
-            encoding="utf-8",
-        )
-        return DesignPhaseResult(
-            hard_failed=True,
-            error="greenfield UI project requires a design system (Stitch or docs/design-system)",
-        )
-
     # --- Brownfield with existing design system ----------------------------
     if has_existing:
         prompt = _brownfield_prompt(contract, target_path, output_dir)
@@ -381,19 +367,46 @@ def run_design_phase(
         )
         return _finalise_design_phase(session, output_dir)
 
-    # --- Brownfield without existing designs and no Stitch: Claude decides --
-    # Per the user's ruling: "brownfield or design-provided → Claude makes
-    # the call". We spawn Claude with the frontend-design skill; it may
-    # generate tokens itself.
+    # --- No Stitch + no existing designs: Claude generates them ------------
+    # The previous behaviour hard-failed greenfield UI projects when Stitch
+    # was unavailable. That's safe but blocks every greenfield run on a
+    # machine without the Stitch MCP installed. The pragmatic fallback uses
+    # Claude's `frontend-design` skill to produce on-brand tokens aligned
+    # with the contract's `design_archetype`, then writes them to
+    # docs/design-system/ for downstream features to consume. The
+    # integration gate still enforces working pages later, so a poor
+    # design will surface as visual regression rather than silently
+    # ship.
+    field_hint = (
+        "brownfield" if contract.is_brownfield else "greenfield"
+    )
     prompt = (
-        f"This is a brownfield project '{contract.project_name}' without "
-        f"a pre-existing design system and without Stitch MCP available. "
-        f"Use the `frontend-design` skill to produce minimal design tokens "
-        f"aligned with the '{contract.design_archetype}' archetype, "
-        f"write them into {target_path}/docs/design-system/, and "
-        f"summarise in {output_dir}/design-system.json with source='claude_generated'. "
-        f"If you determine the project genuinely needs Stitch or external "
-        f"designs to proceed, write design-phase-error.json instead."
+        f"This is a {field_hint} project '{contract.project_name}' "
+        f"without a pre-existing design system and without Stitch MCP "
+        f"available. Use the `frontend-design` skill to produce a "
+        f"complete production-quality design token set aligned with the "
+        f"'{contract.design_archetype}' archetype: colors, typography "
+        f"scale, spacing, border-radius, shadows, motion timings, and a "
+        f"starter component library covering buttons, inputs, cards, "
+        f"tables, navbars, and modals.\n\n"
+        f"Write the tokens to "
+        f"{target_path}/docs/design-system/tokens.json (typed JSON), "
+        f"a CSS variables export to "
+        f"{target_path}/docs/design-system/tokens.css, "
+        f"a Tailwind preset (ESM) to "
+        f"{target_path}/docs/design-system/tailwind-preset.js, "
+        f"and a component-spec note covering the 6 starter components "
+        f"to {target_path}/docs/design-system/components.md.\n\n"
+        f"Then write {output_dir}/design-system.json with "
+        f"source='claude_generated', list the four files above under "
+        f"`screens` (treating each file as a deliverable), and include "
+        f"a brief paragraph summarising the archetype interpretation.\n\n"
+        f"If — and ONLY if — you genuinely cannot produce a design "
+        f"system because the archetype is contradictory or the project "
+        f"is fundamentally non-visual, write "
+        f"{output_dir}/design-phase-error.json with a structured "
+        f"explanation. Do not write the error file just because Stitch "
+        f"is missing — the frontend-design skill handles that case."
     )
     session = run_ai_session(
         prompt,
