@@ -466,3 +466,88 @@ def test_gate_fails_when_build_fails(tmp_path: Path) -> None:
     assert result.passed is False
     assert result.build_ok is False
     assert any("build failed" in f for f in result.failures)
+
+
+# ---------------------------------------------------------------------------
+# App lifecycle (start_command / stop_command)
+# ---------------------------------------------------------------------------
+
+
+def test_gate_starts_app_when_start_command_is_set(tmp_path: Path) -> None:
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.start_command = "echo started > app.log"
+    bundle.verification.stop_command = "echo stopped >> app.log"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.app_started is True
+    assert (target / "app.log").read_text().startswith("started")
+
+
+def test_gate_skips_lifecycle_when_start_command_empty(tmp_path: Path) -> None:
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.start_command = ""
+    bundle.verification.stop_command = "this-would-fail-but-not-called"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.app_started is None  # never attempted
+    assert result.app_stopped is None
+
+
+def test_gate_fails_when_start_command_fails(tmp_path: Path) -> None:
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.start_command = "exit 7"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.passed is False
+    assert result.app_started is False
+    assert any("start_command failed" in f for f in result.failures)
+
+
+def test_gate_runs_stop_command_only_when_we_started(tmp_path: Path, monkeypatch) -> None:
+    """Don't tear down a daemon we didn't bring up."""
+    monkeypatch.setattr(
+        "ncdev.pipeline.integration_gate._wait_for_health", lambda url, *, timeout: True,
+    )
+    target = tmp_path / "app"
+    target.mkdir()
+    bundle = _bundle(features=[])
+    bundle.verification.start_command = "echo up"
+    bundle.verification.stop_command = "echo down >> app.log"
+
+    result = run_integration_gate(
+        bundle=bundle,
+        target_path=target,
+        completed=[],
+        probe_health=False,
+        run_test_commands=True,
+    )
+
+    assert result.app_stopped is True
+    assert (target / "app.log").read_text().strip() == "down"
