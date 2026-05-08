@@ -376,10 +376,15 @@ class DesignSystemDoc(BaseModel):
     tokens_dir: str = "docs/design-system"
     tokens_files: list[str] = Field(default_factory=list)   # e.g. ["tokens.css", "tailwind.config.js"]
 
-    # Optional: design system description
-    colors: dict[str, str] = Field(default_factory=dict)
-    typography: dict[str, str] = Field(default_factory=dict)
-    spacing: dict[str, str] = Field(default_factory=dict)
+    # Optional: design system description. Values are intentionally
+    # free-form (Any) — Claude's brownfield summariser sometimes writes
+    # nested dicts (e.g. typography.fonts, typography.scale) and we
+    # don't want a stricter schema to fail an otherwise-valid summary.
+    # The canonical token source is tokens_dir/tokens_files; these
+    # fields are descriptive only.
+    colors: dict[str, Any] = Field(default_factory=dict)
+    typography: dict[str, Any] = Field(default_factory=dict)
+    spacing: dict[str, Any] = Field(default_factory=dict)
 
     # Screens exported for reference
     screens: list[DesignScreen] = Field(default_factory=list)
