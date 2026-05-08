@@ -8,6 +8,7 @@ from ncdev.qa_intake import (
     import_manual_qa_report,
     import_to_dict,
     list_manual_qa_imports,
+    parse_test_craftr_markdown,
     update_manual_qa_status,
 )
 
@@ -33,6 +34,58 @@ def test_import_manual_qa_report_creates_durable_intake(tmp_path: Path) -> None:
     assert metadata["base_url"] == "https://keeper.yensi.solutions"
     assert Path(item.report_copy).read_text() == report.read_text()
     assert "P1 - Login broken" in Path(item.fix_task_path).read_text()
+
+
+def test_parse_test_craftr_markdown_extracts_issues() -> None:
+    report = parse_test_craftr_markdown(Path("tests/fixtures/test_craftr/issues_report.md").read_text())
+
+    assert report.run_id == "695013ca63fd02b95a217371"
+    assert report.target_url == "http://localhost:15900/"
+    assert report.summary == {
+        "Flows Total": "30",
+        "Flows Passed": "0",
+        "Flows Failed": "30",
+        "Issues Found": "2",
+    }
+    assert len(report.issues or []) == 2
+    issue = (report.issues or [])[1]
+    assert issue.issue_id == "tc-695013ca63fd02b95a217371-2"
+    assert issue.severity == "high"
+    assert issue.url == "http://localhost:15900/platform"
+    assert issue.possible_causes == [
+        "Element `.product-card:first-child` does not exist on the page",
+        "Element exists but is not visible/interactable",
+        "CSS selector is incorrect for the actual DOM structure",
+    ]
+    assert issue.recommended_action == (
+        "Review the platform page DOM structure and verify the correct CSS selector for product cards."
+    )
+
+
+def test_import_test_craftr_report_adds_structured_metadata_and_digest(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    source = Path("tests/fixtures/test_craftr/issues_report.md")
+    report = tmp_path / "issues_report.md"
+    report.write_text(source.read_text())
+
+    item = import_manual_qa_report(
+        workspace=tmp_path,
+        report_path=report,
+        target_repo=target,
+        project="ClubOS",
+        base_url="http://localhost:15900",
+    )
+
+    metadata = json.loads(Path(item.metadata_path).read_text())
+    fix_task = Path(item.fix_task_path).read_text()
+    assert metadata["source_format"] == "test-craftr"
+    assert metadata["issue_count"] == 2
+    assert metadata["test_craftr"]["run_id"] == "695013ca63fd02b95a217371"
+    assert metadata["test_craftr"]["issues"][1]["title"] == "Failed: Hover over first product card"
+    assert "## Parsed Test Craftr Issues" in fix_task
+    assert "[HIGH] Failed: Hover over first product card" in fix_task
+    assert "Recommended action: Review the platform page DOM structure" in fix_task
 
 
 def test_list_manual_qa_imports_filters_by_project(tmp_path: Path) -> None:

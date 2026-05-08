@@ -41,7 +41,7 @@ class RunMetrics(BaseModel):
     feature_throughput_per_hour: float = 0.0
     features: list[FeatureMetric] = Field(default_factory=list)
     builder_primary: str = "codex"
-    builder_model: str = "gpt-5.4"
+    builder_model: str = "gpt-5.5"
     citex_documents_ingested: int = 0
     citex_queries_by_codex: int = 0
 

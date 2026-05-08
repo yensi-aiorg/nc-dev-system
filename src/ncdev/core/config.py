@@ -166,7 +166,12 @@ class NCDevConfig(BaseModel):
             ),
             "openai_codex": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={"implementation": "gpt-5.4", "test_implementation": "gpt-5.4"},
+                preferred_models={
+                    "planning": "gpt-5.5",
+                    "review": "gpt-5.5",
+                    "implementation": "gpt-5.5",
+                    "test_implementation": "gpt-5.5",
+                },
                 defaults={"reasoning_effort": "high"},
             ),
             "openrouter": ProviderPreferenceConfig(

@@ -95,11 +95,11 @@ def test_preferred_model_for_returns_configured_model() -> None:
         providers={
             "openai_codex": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={"implementation": "gpt-5.4"},
+                preferred_models={"implementation": "gpt-5.5"},
             ),
         },
     )
-    assert preferred_model_for("implementation", "implementation", config=cfg) == "gpt-5.4"
+    assert preferred_model_for("implementation", "implementation", config=cfg) == "gpt-5.5"
 
 
 def test_preferred_model_for_returns_none_when_unrouted() -> None:
@@ -120,7 +120,7 @@ def test_preferred_model_for_returns_none_when_model_key_missing() -> None:
         providers={
             "openai_codex": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={"implementation": "gpt-5.4"},
+                preferred_models={"implementation": "gpt-5.5"},
             ),
         },
     )

@@ -51,7 +51,7 @@ Each "feature" = one Claude session:
 
 ## 4. Mode switch (the budget lever)
 
-Edit `.nc-dev/v2/config.yaml`:
+Edit `.nc-dev/config.yaml`:
 
 ```yaml
 mode: claude_plan_codex_build   # default — Claude plans/reviews, Codex builds/tests
@@ -65,14 +65,14 @@ Flipping one line flips who does what. No code change.
 
 ## 5. What gets produced per run
 
-Under `.nc-dev/v2/runs/<run_id>/outputs/`:
+Under `.nc-dev/runs/<run_id>/outputs/`:
 
 - `target-project-contract.json` — hard architectural constraints (stack, ports, auth, deployment, design archetype)
 - `verification-contract.json` — what "done" means (test commands, required files, prohibited patterns, screenshots)
 - `feature-queue.json` — ordered FeatureStep list
 - `design-system.json` — design tokens + screens (UI projects only)
 
-Under `.nc-dev/v2/runs/<run_id>/steps/<feature_id>/`:
+Under `.nc-dev/runs/<run_id>/steps/<feature_id>/`:
 
 - `prompt.md` — the prompt Claude was given
 - `session.jsonl` — every stream event from the Claude session

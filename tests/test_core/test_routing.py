@@ -12,7 +12,7 @@ def test_routing_plan_uses_configured_defaults() -> None:
     by_task = {decision.task_type: decision for decision in plan.decisions}
     # Codex builds and writes tests
     assert by_task[TaskType.BUILD_BATCH].provider == "openai_codex"
-    assert by_task[TaskType.BUILD_BATCH].model == "gpt-5.4"
+    assert by_task[TaskType.BUILD_BATCH].model == "gpt-5.5"
     # Claude plans and reviews
     assert by_task[TaskType.MARKET_RESEARCH].provider == "anthropic_claude_code"
     assert by_task[TaskType.MARKET_RESEARCH].model == "opus"
