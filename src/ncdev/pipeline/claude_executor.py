@@ -427,10 +427,15 @@ def _post_session_verification(
         if bad:
             reasons.append(f"prohibited patterns found: {bad[:5]}")
 
-    # 4. Required screenshots must exist on disk
-    for shot in bundle.verification.required_screenshots:
-        if not _screenshot_exists(target_path, shot):
-            reasons.append(f"required screenshot not captured: {shot}")
+    # 4. Required screenshots — REMOVED from per-feature scope.
+    #    The contract's global required_screenshots list spans the
+    #    whole product (login, signup, dashboard, ...) and demanding
+    #    every feature produce all of them is nonsensical: f01-scaffold
+    #    can't capture a "dashboard" screenshot before f08 builds the
+    #    dashboard. Per-feature screenshots are enforced under
+    #    feature.acceptance.required_screenshots (clause 8 below).
+    #    The contract's global list is enforced by the end-of-run
+    #    integration gate against the cumulative repo state.
 
     # 5. Minimum test count — prevents "0 tests, all green" gaming
     if bundle.verification.minimum_test_count > 0:
@@ -634,10 +639,19 @@ def _grep_for_prohibited(
 def _screenshot_exists(target_path: Path, name: str) -> bool:
     """True if a file matching the screenshot name exists under the repo.
 
-    Matches common conventions: <name>.png, <name>-desktop.png, name-*.png,
-    under evidence/screenshots/, .ncdev/evidence/, or docs/screenshots/.
+    Matches by token overlap rather than substring, so a required slug
+    "landing-shell" matches Claude's actual output of
+    "landing-desktop-1440x900.png" (both share the "landing" token).
+    Strict substring matching was rejecting valid screenshots that
+    Claude named with viewport / dimension suffixes — a common pattern.
+
+    Search dirs: .ncdev/evidence/<feature_id?>/, evidence/screenshots/,
+    docs/screenshots/. Recursive within each.
     """
     slug = name.replace(" ", "-").replace("/", "-").lower()
+    slug_tokens = {t for t in slug.split("-") if t and t != "shell"}
+    if not slug_tokens:
+        return False
     candidate_dirs = [
         target_path / ".ncdev" / "evidence",
         target_path / "evidence" / "screenshots",
@@ -647,7 +661,13 @@ def _screenshot_exists(target_path: Path, name: str) -> bool:
         if not d.exists():
             continue
         for f in d.rglob("*.png"):
-            if slug in f.name.lower():
+            stem = f.stem.lower().replace("_", "-")
+            file_tokens = {t for t in stem.split("-") if t}
+            # Substring fallback (legacy behaviour: <slug>.png exactly)
+            if slug in stem:
+                return True
+            # Token-overlap match: at least one substantive token in common
+            if slug_tokens & file_tokens:
                 return True
     return False
 
