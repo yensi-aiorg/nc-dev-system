@@ -1,7 +1,7 @@
 """Unified AI session runner — dispatches on mode.
 
 ``run_ai_session()`` is the single entry point every phase of NC Dev
-calls when it needs an AI-driven session. It reads ``NCDevV2Config.mode``
+calls when it needs an AI-driven session. It reads ``NCDevConfig.mode``
 and dispatches to the right concrete runner:
 
     * ``claude_plan_codex_build`` → Claude session, Codex protocol
@@ -38,7 +38,7 @@ from ncdev.claude_session import (
     ClaudeSessionResult,
     run_claude_session,
 )
-from ncdev.v2.config import NCDevV2Config, load_v2_config
+from ncdev.core.config import NCDevConfig, load_config
 
 _IS_POSIX = sys.platform != "win32"
 
@@ -71,10 +71,10 @@ MODE_IMPLEMENTER: dict[str, str] = {
 }
 
 
-def _resolve_custom_providers(cfg: NCDevV2Config) -> tuple[str, str]:
+def _resolve_custom_providers(cfg: NCDevConfig) -> tuple[str, str]:
     """For ``mode=custom``, read orchestrator + implementer from routing.
 
-    Honours the contract stated in v2/config.py: ``custom`` preserves
+    Honours the contract stated in core/config.py: ``custom`` preserves
     the user's hand-tuned ``routing:`` block. We use routing.review to
     pick the orchestrator (review is the "who reasons about code" task)
     and routing.implementation to pick the implementer.
@@ -93,24 +93,24 @@ def _resolve_custom_providers(cfg: NCDevV2Config) -> tuple[str, str]:
 
 
 def _resolve_config(
-    config: NCDevV2Config | None,
+    config: NCDevConfig | None,
     workspace: Path | None,
-) -> NCDevV2Config:
+) -> NCDevConfig:
     if config is not None:
         return config
     if workspace is not None:
         try:
-            return load_v2_config(workspace)
+            return load_config(workspace)
         except Exception:  # noqa: BLE001
             pass
-    return NCDevV2Config()
+    return NCDevConfig()
 
 
 def run_ai_session(
     prompt: str,
     *,
     cwd: Path,
-    config: NCDevV2Config | None = None,
+    config: NCDevConfig | None = None,
     workspace: Path | None = None,
     tools: Iterable[str] = DEFAULT_BUILD_TOOLS,
     model: str | None = None,
@@ -146,7 +146,7 @@ def run_ai_session(
                 error=(
                     f"custom mode config error: {exc}. "
                     "Check `routing.review` and `routing.implementation` "
-                    "in .nc-dev/v2/config.yaml — allowed values are "
+                    "in .nc-dev/config.yaml — allowed values are "
                     "'anthropic_claude_code', 'openai_codex', 'openrouter', "
                     "or the short aliases 'claude' / 'codex'."
                 ),

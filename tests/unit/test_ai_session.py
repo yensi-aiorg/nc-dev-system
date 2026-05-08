@@ -15,7 +15,7 @@ from ncdev.ai_session import (
     run_codex_session,
 )
 from ncdev.claude_session import ClaudeSessionResult
-from ncdev.v2.config import NCDevV2Config
+from ncdev.core.config import NCDevConfig
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ def test_mode_tables_cover_every_preset_except_custom():
     """Every non-custom preset must have an orchestrator/implementer
     entry. 'custom' is deliberately absent — it's resolved from the
     user's hand-tuned routing via _resolve_custom_providers."""
-    from ncdev.v2.config import MODE_PRESETS
+    from ncdev.core.config import MODE_PRESETS
     expected = set(MODE_PRESETS.keys()) - {"custom"}
     assert set(MODE_ORCHESTRATOR.keys()) == expected
     assert set(MODE_IMPLEMENTER.keys()) == expected
@@ -62,7 +62,7 @@ def _codex_result() -> ClaudeSessionResult:
 
 
 def test_claude_plan_codex_build_routes_to_claude_with_protocol(tmp_path: Path):
-    cfg = NCDevV2Config(mode="claude_plan_codex_build")
+    cfg = NCDevConfig(mode="claude_plan_codex_build")
     captured: dict = {}
 
     def fake_claude(prompt, **kwargs):
@@ -79,7 +79,7 @@ def test_claude_plan_codex_build_routes_to_claude_with_protocol(tmp_path: Path):
 
 
 def test_claude_only_routes_to_claude_without_protocol(tmp_path: Path):
-    cfg = NCDevV2Config(mode="claude_only")
+    cfg = NCDevConfig(mode="claude_only")
     captured: dict = {}
 
     def fake_claude(prompt, **kwargs):
@@ -94,7 +94,7 @@ def test_claude_only_routes_to_claude_without_protocol(tmp_path: Path):
 
 
 def test_codex_only_routes_to_codex(tmp_path: Path):
-    cfg = NCDevV2Config(mode="codex_only")
+    cfg = NCDevConfig(mode="codex_only")
     captured: dict = {}
 
     def fake_codex(prompt, **kwargs):
@@ -111,7 +111,7 @@ def test_codex_only_routes_to_codex(tmp_path: Path):
 
 def test_codex_only_does_not_call_claude(tmp_path: Path):
     """codex_only must not spawn a Claude session under any circumstances."""
-    cfg = NCDevV2Config(mode="codex_only")
+    cfg = NCDevConfig(mode="codex_only")
 
     def fake_claude(*a, **k):  # noqa: ARG001
         raise AssertionError("Claude must not be invoked in codex_only mode")
@@ -122,7 +122,7 @@ def test_codex_only_does_not_call_claude(tmp_path: Path):
 
 
 def test_claude_only_does_not_call_codex(tmp_path: Path):
-    cfg = NCDevV2Config(mode="claude_only")
+    cfg = NCDevConfig(mode="claude_only")
 
     def fake_codex(*a, **k):  # noqa: ARG001
         raise AssertionError("Codex session must not be invoked in claude_only mode")
@@ -133,7 +133,7 @@ def test_claude_only_does_not_call_codex(tmp_path: Path):
 
 
 def test_openrouter_raises_not_implemented(tmp_path: Path):
-    cfg = NCDevV2Config(mode="openrouter")
+    cfg = NCDevConfig(mode="openrouter")
     with pytest.raises(NotImplementedError, match="API-only"):
         run_ai_session("x", cwd=tmp_path, config=cfg)
 
@@ -143,7 +143,7 @@ def test_custom_mode_honours_hand_tuned_routing_claude_everywhere(tmp_path: Path
     the user's routing: block. Verify: user routes everything to
     anthropic_claude_code → Claude orchestrator, Claude implementer,
     protocol OFF (Claude isn't delegating)."""
-    cfg = NCDevV2Config(
+    cfg = NCDevConfig(
         mode="custom",
         routing={
             "review": ["anthropic_claude_code"],
@@ -166,7 +166,7 @@ def test_custom_mode_honours_hand_tuned_routing_claude_everywhere(tmp_path: Path
 def test_custom_mode_routes_to_codex_when_user_requests_it(tmp_path: Path):
     """User flips everything to codex via custom — must actually route
     to codex runner, not fall back to Claude."""
-    cfg = NCDevV2Config(
+    cfg = NCDevConfig(
         mode="custom",
         routing={
             "review": ["openai_codex"],
@@ -195,7 +195,7 @@ def test_custom_mode_unknown_provider_returns_structured_failure(tmp_path: Path)
     """Codex R3: an unknown provider name in routing used to raise
     ValueError uncaught mid-run. Now must surface as a structured
     ClaudeSessionResult with success=False + actionable error."""
-    cfg = NCDevV2Config(
+    cfg = NCDevConfig(
         mode="custom",
         routing={
             "review": ["something_weird"],
@@ -214,7 +214,7 @@ def test_custom_mode_unknown_provider_returns_structured_failure(tmp_path: Path)
 def test_custom_mode_plan_codex_build_like_routing(tmp_path: Path):
     """User configures custom to mimic claude_plan_codex_build: review=
     claude, implementation=codex → Claude orch WITH codex protocol."""
-    cfg = NCDevV2Config(
+    cfg = NCDevConfig(
         mode="custom",
         routing={
             "review": ["anthropic_claude_code"],
@@ -236,7 +236,7 @@ def test_custom_mode_plan_codex_build_like_routing(tmp_path: Path):
 
 def test_explicit_include_codex_protocol_wins_over_mode_default(tmp_path: Path):
     """Caller can override the mode-inferred default."""
-    cfg = NCDevV2Config(mode="claude_plan_codex_build")  # would default True
+    cfg = NCDevConfig(mode="claude_plan_codex_build")  # would default True
     captured: dict = {}
 
     def fake_claude(prompt, **kwargs):

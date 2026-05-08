@@ -3,7 +3,7 @@ from __future__ import annotations
 from ncdev.adapters.anthropic_claude_code import AnthropicClaudeCodeAdapter
 from ncdev.adapters.base import ProviderAdapter
 from ncdev.adapters.openai_codex import OpenAICodexAdapter
-from ncdev.v2.models import CapabilitySnapshotDoc, ProviderCapabilitySnapshot
+from ncdev.core.models import CapabilitySnapshotDoc, ProviderCapabilitySnapshot
 
 
 def build_provider_registry() -> dict[str, ProviderAdapter]:
@@ -30,4 +30,4 @@ def probe_registry_capabilities(registry: dict[str, ProviderAdapter]) -> Capabil
                     notes=[],
                 )
             )
-    return CapabilitySnapshotDoc(generator="ncdev.v2.adapters.registry", source_inputs=[], snapshots=snapshots)
+    return CapabilitySnapshotDoc(generator="ncdev.core.adapters.registry", source_inputs=[], snapshots=snapshots)

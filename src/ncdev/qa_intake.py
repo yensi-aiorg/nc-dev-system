@@ -51,7 +51,7 @@ def import_manual_qa_report(
 
     project_name = project or target_repo.name
     run_id = f"manual-qa-{_slug(project_name)}-{_utc_stamp()}"
-    intake_dir = workspace / ".nc-dev" / "v2" / "manual-qa" / _slug(project_name) / run_id
+    intake_dir = workspace / ".nc-dev" / "manual-qa" / _slug(project_name) / run_id
     intake_dir.mkdir(parents=True, exist_ok=True)
 
     report_copy = intake_dir / report_path.name
@@ -113,7 +113,7 @@ tests and repeat the production-style QA checks.
 
 
 def list_manual_qa_imports(*, workspace: Path, project: str | None = None) -> list[dict]:
-    root = workspace.resolve() / ".nc-dev" / "v2" / "manual-qa"
+    root = workspace.resolve() / ".nc-dev" / "manual-qa"
     if project:
         roots = [root / _slug(project)]
     else:
@@ -147,7 +147,6 @@ def update_manual_qa_status(
     metadata_path = (
         workspace.resolve()
         / ".nc-dev"
-        / "v2"
         / "manual-qa"
         / _slug(project)
         / run_id

@@ -9,13 +9,13 @@ from unittest.mock import patch
 import pytest
 
 from ncdev.claude_session import ClaudeSessionResult
-from ncdev.v3.charter import (
+from ncdev.pipeline.charter import (
     build_charter_prompt,
     generate_charter,
     load_charter,
     write_charter,
 )
-from ncdev.v3.models import (
+from ncdev.pipeline.models import (
     CharterBundle,
     FeatureQueueDoc,
     FeatureStep,
@@ -157,7 +157,7 @@ def test_generate_charter_success_loads_bundle(tmp_path: Path):
             exit_code=0, duration_seconds=1.0,
         )
 
-    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.charter.run_ai_session", side_effect=fake_session):
         result_bundle, session = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -182,7 +182,7 @@ def test_generate_charter_hard_fails_on_charter_error_file(tmp_path: Path):
             exit_code=0, duration_seconds=0.5,
         )
 
-    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.charter.run_ai_session", side_effect=fake_session):
         result_bundle, session = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -201,7 +201,7 @@ def test_generate_charter_returns_none_when_session_fails(tmp_path: Path):
             error="something broke",
         )
 
-    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.charter.run_ai_session", side_effect=fake_session):
         result_bundle, session = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -222,7 +222,7 @@ def test_generate_charter_returns_none_on_invalid_json(tmp_path: Path):
             success=True, final_text="done", exit_code=0,
         )
 
-    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.charter.run_ai_session", side_effect=fake_session):
         result_bundle, _ = generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",
@@ -240,7 +240,7 @@ def test_generate_charter_uses_plan_tools_only(tmp_path: Path):
         write_charter(_fake_charter_bundle(), kwargs["cwd"])
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.v3.charter.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.charter.run_ai_session", side_effect=fake_session):
         generate_charter(
             prd_path=tmp_path / "prd.md",
             output_dir=tmp_path / "outputs",

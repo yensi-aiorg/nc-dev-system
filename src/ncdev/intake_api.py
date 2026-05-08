@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from ncdev.v2.models import SentinelFailureReport, _utc_now
+from ncdev.core.models import SentinelFailureReport, _utc_now
 
 
 def create_app(

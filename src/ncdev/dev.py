@@ -18,7 +18,7 @@ NC Dev's only responsibilities in this file:
    committing (recoverability guarantee).
 6. Store a short run summary in Citex.
 
-For PRD-scale work, use :mod:`ncdev.v3.engine` (full pipeline) or the
+For PRD-scale work, use :mod:`ncdev.pipeline.engine` (full pipeline) or the
 ``ncdev full`` command. This ``dev`` command is the freeform
 ``--task "whatever"`` entry point.
 """
@@ -37,7 +37,7 @@ from rich.panel import Panel
 from ncdev.ai_session import run_ai_session
 from ncdev.claude_session import DEFAULT_BUILD_TOOLS
 from ncdev.preflight import require_citex
-from ncdev.v2.config import NCDevV2Config, load_v2_config
+from ncdev.core.config import NCDevConfig, load_config
 
 console = Console()
 
@@ -159,7 +159,7 @@ def _commit_broken_leftovers(project_path: Path, task: str) -> str:
     return _git_head(project_path)
 
 
-def _mode_expects_codex_implementer(cfg: NCDevV2Config) -> bool:
+def _mode_expects_codex_implementer(cfg: NCDevConfig) -> bool:
     """Return True iff the effective mode's implementer is Codex.
 
     Resolution mirrors :func:`ai_session._resolve_custom_providers`:
@@ -301,7 +301,7 @@ def run_dev(
     model: str | None = None,
     timeout: int = 3600,
     max_budget_usd: float | None = None,
-    config: NCDevV2Config | None = None,
+    config: NCDevConfig | None = None,
 ) -> dict[str, Any]:
     """Run a single ncdev dev session.
 
@@ -332,9 +332,9 @@ def run_dev(
     effective_config = config
     if effective_config is None:
         try:
-            effective_config = load_v2_config(project_path)
+            effective_config = load_config(project_path)
         except Exception:  # noqa: BLE001
-            effective_config = NCDevV2Config()
+            effective_config = NCDevConfig()
     console.print(f"\n[bold]Running session (mode={effective_config.mode})...[/bold]")
     log_path = project_path / ".ncdev" / "runs" / run_id / "session.jsonl"
     prompt = _build_task_prompt(task, project_path, project_id, mode)

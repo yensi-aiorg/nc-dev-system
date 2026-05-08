@@ -103,7 +103,7 @@ def test_cli_full_reports_completed_not_passed(tmp_path: Path) -> None:
         run_dir="/tmp/run",
     )
 
-    with patch("ncdev.cli.run_v3_full", return_value=state):
+    with patch("ncdev.cli.run_pipeline", return_value=state):
         with patch("ncdev.cli.console.print", side_effect=lambda *args, **kwargs: printed.append(str(args[0]))):
             with patch("sys.argv", ["ncdev", "full", "--source", str(source), "--dry-run"]):
                 assert main() == 0

@@ -8,7 +8,7 @@ from typing import Any
 
 from ncdev.adapters.base import ProviderAdapter, ProviderVersionInfo, TaskExecutionResult
 from ncdev.utils import write_json
-from ncdev.v2.models import CapabilityDescriptor, TaskRequestDoc, TaskType
+from ncdev.core.models import CapabilityDescriptor, TaskRequestDoc, TaskType
 
 
 TASK_REQUEST_TITLES: dict[TaskType, str] = {

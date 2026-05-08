@@ -67,7 +67,7 @@ ncdev full --source prd.md
 
 ## Mode switch — the budget lever
 
-`.nc-dev/v2/config.yaml` has a single `mode:` field that flips who does what. Flip one line, no code change:
+`.nc-dev/config.yaml` has a single `mode:` field that flips who does what. Flip one line, no code change:
 
 | mode                        | planning | review  | implementation | tests   |
 |-----------------------------|----------|---------|----------------|---------|
@@ -84,12 +84,12 @@ ncdev full --source prd.md
 | `src/ncdev/claude_session.py`       | The primitive — `run_claude_session()` spawns Claude with stream-json + hooks + cost ceiling |
 | `src/ncdev/ai_provider.py`          | CLI/API adapters: `CodexCLIProvider`, `ClaudeCLIProvider`, `OpenRouterProvider` |
 | `src/ncdev/provider_dispatch.py`    | Maps routing task keys → providers, honouring `mode` |
-| `src/ncdev/v2/config.py`            | `NCDevV2Config`, `MODE_PRESETS`, `RoutingConfig` |
-| `src/ncdev/v3/charter.py`           | Phase B — generates the 3 charter artifacts |
-| `src/ncdev/v3/design_phase.py`      | Phase C — Stitch / existing / claude_generated / hard-fail |
-| `src/ncdev/v3/asset_manifest.py`    | Phase D — schema, scan, verify |
-| `src/ncdev/v3/claude_executor.py`   | Phase E — per-feature Claude session |
-| `src/ncdev/v3/engine.py`            | Phase 1–6 — top-level orchestrator |
+| `src/ncdev/core/config.py`          | `NCDevConfig`, `MODE_PRESETS`, `RoutingConfig` |
+| `src/ncdev/pipeline/charter.py`     | Phase B — generates the 3 charter artifacts |
+| `src/ncdev/pipeline/design_phase.py`| Phase C — Stitch / existing / claude_generated / hard-fail |
+| `src/ncdev/pipeline/asset_manifest.py` | Phase D — schema, scan, verify |
+| `src/ncdev/pipeline/claude_executor.py` | Phase E — per-feature Claude session |
+| `src/ncdev/pipeline/engine.py`      | Phase 1–6 — top-level orchestrator |
 | `src/ncdev/dev.py`                  | `ncdev dev` — thin single-task orchestrator |
 | `prompts/protocols/codex-via-bash.md` | Protocol Claude reads at session init |
 | `scripts/ncdev-hooks/`              | PreToolUse hook — Conventional Commits, prohibited patterns, force-push guard |

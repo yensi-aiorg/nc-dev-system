@@ -9,11 +9,11 @@ from pathlib import Path
 from rich.console import Console
 
 from ncdev.preflight import run_preflight, require_citex
-from ncdev.v2.engine import (
-    run_v2_fix,
-    summarize_v2_status,
+from ncdev.core.engine import (
+    run_sentinel_fix,
+    summarize_sentinel_status,
 )
-from ncdev.v3.engine import run_v3_full
+from ncdev.pipeline.engine import run_pipeline
 
 console = Console()
 
@@ -126,7 +126,7 @@ async def _run_quality_gate_fixes(manifest, config=None) -> int:
 
     # Query Citex for Test Craftr's findings (required for all fix flows)
     require_citex()
-    from ncdev.v3.citex_client import CitexClient
+    from ncdev.pipeline.citex_client import CitexClient
     project_id = Path(manifest.target_path).name
     citex = CitexClient(project_id=project_id)
 
@@ -372,7 +372,7 @@ def main() -> int:
     if args.command == "full":
         workspace = _workspace(args.workspace)
         target_repo = _resolve_target_repo(args.target_repo, workspace)
-        state = run_v3_full(
+        state = run_pipeline(
             workspace=workspace,
             source_path=Path(args.source).resolve(),
             base_url=args.base_url,
@@ -436,7 +436,7 @@ def main() -> int:
             return 1
 
         if report_path:
-            fix_state = run_v2_fix(
+            fix_state = run_sentinel_fix(
                 workspace=workspace,
                 report_path=report_path,
                 target_repo_path=target,
@@ -445,7 +445,7 @@ def main() -> int:
                 max_attempts=args.max_attempts,
                 run_id=args.run_id,
             )
-            print(summarize_v2_status(fix_state))
+            print(summarize_sentinel_status(fix_state))
         return 0
 
     if args.command == "serve":

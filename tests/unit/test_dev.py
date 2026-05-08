@@ -10,7 +10,7 @@ import pytest
 
 from ncdev import dev
 from ncdev.claude_session import ClaudeSessionResult
-from ncdev.v2.config import NCDevV2Config, RoutingConfig
+from ncdev.core.config import NCDevConfig, RoutingConfig
 
 
 def _init_git(path: Path) -> None:
@@ -244,7 +244,7 @@ def test_empty_task_yields_fallback_autocommit_subject(tmp_path: Path):
     assert subject == "chore(ncdev): uncommitted session work", repr(subject)
 
 
-def _cfg(mode: str, impl: list[str] | None = None) -> NCDevV2Config:
+def _cfg(mode: str, impl: list[str] | None = None) -> NCDevConfig:
     """Build a config without triggering the mode preset's routing override.
 
     The ``custom`` mode preserves whatever routing the user set; other modes
@@ -253,7 +253,7 @@ def _cfg(mode: str, impl: list[str] | None = None) -> NCDevV2Config:
     test purposes.
     """
     routing = RoutingConfig(implementation=impl) if impl is not None else RoutingConfig()
-    return NCDevV2Config.model_construct(mode=mode, routing=routing)
+    return NCDevConfig.model_construct(mode=mode, routing=routing)
 
 
 def test_expected_codex_claude_plan_codex_build_preset():

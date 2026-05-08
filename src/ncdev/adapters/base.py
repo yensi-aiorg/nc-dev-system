@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ncdev.v2.models import (
+from ncdev.core.models import (
     CapabilityDescriptor,
     TaskExecutionRecord,
     TaskRequestDoc,

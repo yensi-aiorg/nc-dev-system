@@ -9,12 +9,12 @@ from unittest.mock import patch
 
 
 from ncdev.claude_session import ClaudeSessionResult
-from ncdev.v3.asset_manifest import save_feature_manifest
-from ncdev.v3.claude_executor import (
+from ncdev.pipeline.asset_manifest import save_feature_manifest
+from ncdev.pipeline.claude_executor import (
     build_feature_prompt,
     execute_feature_claude_driven,
 )
-from ncdev.v3.models import (
+from ncdev.pipeline.models import (
     AssetManifest,
     CharterBundle,
     FeatureQueueDoc,
@@ -154,7 +154,7 @@ def test_passed_when_session_succeeds_and_commits(tmp_path: Path):
         )
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -189,7 +189,7 @@ def test_failed_when_no_commit_made(tmp_path: Path):
         )
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -213,7 +213,7 @@ def test_dirty_working_tree_committed_as_broken(tmp_path: Path):
         return ClaudeSessionResult(success=False, final_text="gave up", exit_code=1)
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -248,7 +248,7 @@ def test_missing_asset_manifest_causes_verification_failure(tmp_path: Path):
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle()
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -278,7 +278,7 @@ def test_prohibited_patterns_block_pass(tmp_path: Path):
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle()  # prohibited_patterns=["TODO"]
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -318,7 +318,7 @@ def test_legacy_prohibited_pattern_outside_touched_files_does_not_block_pass(tmp
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle()  # prohibited_patterns=["TODO"]
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -349,7 +349,7 @@ def test_verification_runs_backend_test_command_when_configured(tmp_path: Path):
     # Contract declares a test command that deliberately fails
     bundle.verification.backend_test_command = "false"  # exit 1
 
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -367,7 +367,7 @@ def test_verification_runs_backend_test_command_when_configured(tmp_path: Path):
 def test_health_probe_polls_until_app_comes_up(monkeypatch):
     """Codex R3 blocker: probe was single-shot; now it must poll and
     accept the app when it comes up within boot_timeout_seconds."""
-    from ncdev.v3 import claude_executor as ex
+    from ncdev.pipeline import claude_executor as ex
 
     attempts = {"count": 0}
 
@@ -397,7 +397,7 @@ def test_health_probe_polls_until_app_comes_up(monkeypatch):
 
 def test_health_probe_returns_false_when_budget_exhausted(monkeypatch):
     """Apps that never come up within the budget fail cleanly."""
-    from ncdev.v3 import claude_executor as ex
+    from ncdev.pipeline import claude_executor as ex
 
     def fake_get(url, timeout=None):  # noqa: ARG001
         raise ConnectionError("never up")
@@ -421,7 +421,7 @@ def test_health_probe_returns_false_when_budget_exhausted(monkeypatch):
 
 def test_health_probe_early_success_returns_immediately(monkeypatch):
     """If the app is already up, don't waste the budget polling."""
-    from ncdev.v3 import claude_executor as ex
+    from ncdev.pipeline import claude_executor as ex
 
     class FakeResp:
         status_code = 200
@@ -464,7 +464,7 @@ def test_health_probe_failure_blocks_pass_when_url_set(tmp_path: Path):
     bundle.verification.backend_health_url = "http://127.0.0.1:1/health"
     bundle.verification.boot_timeout_seconds = 1
 
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -496,7 +496,7 @@ def test_health_probe_not_run_when_url_empty(tmp_path: Path):
     bundle = _make_bundle()  # backend_health_url="" by default in _make_bundle
     assert bundle.verification.backend_health_url == ""
 
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -524,7 +524,7 @@ def test_verification_enforces_minimum_test_count(tmp_path: Path):
 
     bundle = _make_bundle()
     bundle.verification.minimum_test_count = 1
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -554,7 +554,7 @@ def test_verification_regex_prohibited_pattern_matches(tmp_path: Path):
 
     bundle = _make_bundle()
     bundle.verification.prohibited_patterns = [r"except:\s*pass"]
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,
@@ -581,7 +581,7 @@ def test_required_files_missing_blocks_pass(tmp_path: Path):
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle(required_files=["docker-compose.yml", "README.md"])
-    with patch("ncdev.v3.claude_executor.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
             feature=_make_feature(),
             target_path=target,

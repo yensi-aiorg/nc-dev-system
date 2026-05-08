@@ -8,13 +8,13 @@ from unittest.mock import patch
 
 
 from ncdev.claude_session import ClaudeSessionResult
-from ncdev.v3.design_phase import (
+from ncdev.pipeline.design_phase import (
     existing_design_system_present,
     is_ui_project,
     run_design_phase,
     stitch_available,
 )
-from ncdev.v3.models import DesignSystemDoc, TargetProjectContract
+from ncdev.pipeline.models import DesignSystemDoc, TargetProjectContract
 
 
 def _web_contract(**overrides) -> TargetProjectContract:
@@ -250,7 +250,7 @@ def test_brownfield_with_design_system_runs_summariser(tmp_path: Path):
         )
         return ClaudeSessionResult(success=True, final_text="summarised", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,   # doesn't matter, existing wins
@@ -288,7 +288,7 @@ def test_greenfield_with_stitch_runs_stitch_prompt(tmp_path: Path):
         )
         return ClaudeSessionResult(success=True, final_text="stitch done", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: True,
@@ -314,7 +314,7 @@ def test_stitch_phase_that_writes_error_file_is_hard_failed(tmp_path: Path):
         )
         return ClaudeSessionResult(success=True, final_text="stitch unreachable", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: True,
@@ -346,7 +346,7 @@ def test_brownfield_without_designs_and_no_stitch_lets_claude_decide(tmp_path: P
         )
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,
@@ -373,7 +373,7 @@ def test_design_phase_fails_loud_when_session_succeeds_but_no_doc_produced(tmp_p
         # "Claude" exits clean but forgets to write design-system.json
         return ClaudeSessionResult(success=True, final_text="I forgot", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,
@@ -403,7 +403,7 @@ def test_design_phase_fails_when_session_exits_unsuccessfully(tmp_path: Path):
         return ClaudeSessionResult(success=False, final_text="crashed", exit_code=1,
                                     error="session timed out")
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         result = run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,
@@ -429,7 +429,7 @@ def test_brownfield_summariser_uses_read_only_tools(tmp_path: Path):
         (output_dir / "design-system.json").write_text(doc.model_dump_json(), encoding="utf-8")
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         run_design_phase(contract, tmp_path, output_dir, stitch_probe=lambda: False)
 
     tools = list(captured["tools"])
@@ -456,7 +456,7 @@ def test_design_session_does_not_include_codex_protocol(tmp_path: Path):
         (output_dir / "design-system.json").write_text(doc.model_dump_json(), encoding="utf-8")
         return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
 
-    with patch("ncdev.v3.design_phase.run_ai_session", side_effect=fake_session):
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
         run_design_phase(
             contract, tmp_path, output_dir,
             stitch_probe=lambda: False,

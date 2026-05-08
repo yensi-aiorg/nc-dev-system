@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-from ncdev.v3.asset_manifest import (
+from ncdev.pipeline.asset_manifest import (
     ASSETS_DIR,
     aggregate_manifests,
     load_feature_manifest,
@@ -14,7 +14,7 @@ from ncdev.v3.asset_manifest import (
     scan_code_for_asset_references,
     verify_manifest_covers_references,
 )
-from ncdev.v3.models import AssetManifest, AssetManifestEntry
+from ncdev.pipeline.models import AssetManifest, AssetManifestEntry
 
 
 def _mk_manifest(feature_id: str, *entries: AssetManifestEntry) -> AssetManifest:

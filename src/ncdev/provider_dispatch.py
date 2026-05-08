@@ -1,9 +1,9 @@
 """Config-driven AI provider dispatch.
 
-Bridges :mod:`ncdev.v2.config` routing (keys like ``design_brief``,
+Bridges :mod:`ncdev.core.config` routing (keys like ``design_brief``,
 ``implementation``) to :mod:`ncdev.ai_provider` (short names like ``claude``,
 ``codex``, ``openrouter``). Callers ask for a provider by task key — the
-preset/routing in ``.nc-dev/v2/config.yaml`` decides which CLI or API backs it.
+preset/routing in ``.nc-dev/config.yaml`` decides which CLI or API backs it.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from ncdev.ai_provider import AIProvider, get_provider
-from ncdev.v2.config import NCDevV2Config, load_v2_config
+from ncdev.core.config import NCDevConfig, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ PROVIDER_ALIASES: dict[str, str] = {
     "codex": "codex",
 }
 
-_config_cache: dict[str, NCDevV2Config] = {}
+_config_cache: dict[str, NCDevConfig] = {}
 
 
 def _workspace_root(workspace: Path | None) -> Path:
@@ -40,14 +40,14 @@ def _workspace_root(workspace: Path | None) -> Path:
     return Path.cwd()
 
 
-def load_config(workspace: Path | None = None) -> NCDevV2Config:
-    """Load (and cache) the v2 config for the given workspace."""
+def _load_cached_config(workspace: Path | None = None) -> NCDevConfig:
+    """Load (and cache) the core config for the given workspace."""
     root = _workspace_root(workspace)
     key = str(root.resolve())
     cached = _config_cache.get(key)
     if cached is not None:
         return cached
-    cfg = load_v2_config(root)
+    cfg = load_config(root)
     _config_cache[key] = cfg
     return cfg
 
@@ -58,7 +58,7 @@ def reset_cache() -> None:
 
 
 def resolve_provider_name(routing_name: str) -> str:
-    """Translate a v2 routing provider name (or short alias) to registry key."""
+    """Translate a core routing provider name (or short alias) to registry key."""
     short = PROVIDER_ALIASES.get(routing_name)
     if short is None:
         raise ValueError(
@@ -72,10 +72,10 @@ def provider_name_for(
     task_key: str,
     *,
     workspace: Path | None = None,
-    config: NCDevV2Config | None = None,
+    config: NCDevConfig | None = None,
 ) -> str:
     """Return the registry short name of the provider for ``task_key``."""
-    cfg = config if config is not None else load_config(workspace)
+    cfg = config if config is not None else _load_cached_config(workspace)
     routing = getattr(cfg.routing, task_key, None)
     if not routing:
         raise ValueError(
@@ -88,7 +88,7 @@ def get_provider_for(
     task_key: str,
     *,
     workspace: Path | None = None,
-    config: NCDevV2Config | None = None,
+    config: NCDevConfig | None = None,
 ) -> AIProvider:
     """Return the :class:`AIProvider` assigned to ``task_key`` by routing."""
     short = provider_name_for(task_key, workspace=workspace, config=config)
@@ -100,14 +100,14 @@ def preferred_model_for(
     model_key: str,
     *,
     workspace: Path | None = None,
-    config: NCDevV2Config | None = None,
+    config: NCDevConfig | None = None,
 ) -> Optional[str]:
     """Look up the preferred model name for a task on its assigned provider.
 
     Example: ``preferred_model_for("design_brief", "planning")``.
     Returns ``None`` if no preference is configured.
     """
-    cfg = config if config is not None else load_config(workspace)
+    cfg = config if config is not None else _load_cached_config(workspace)
     routing = getattr(cfg.routing, task_key, None)
     if not routing:
         return None
