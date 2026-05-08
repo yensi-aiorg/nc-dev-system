@@ -200,38 +200,43 @@ def test_cli_project_skips_design_phase(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_greenfield_ui_without_stitch_falls_back_to_claude_generated(
-    tmp_path: Path, monkeypatch
-):
-    """Greenfield UI projects without Stitch must NOT hard-fail anymore;
-    they should run the frontend-design fallback so a missing MCP
-    integration on the developer's machine doesn't block every run."""
-    from ncdev.claude_session import ClaudeSessionResult
-    from ncdev.pipeline.models import DesignSystemDoc
-
-    contract = _web_contract(is_brownfield=False)
+def test_greenfield_ui_without_stitch_uses_deterministic_seed(tmp_path: Path):
+    """Greenfield UI projects without Stitch must NOT hard-fail and must
+    NOT depend on Claude for the fallback. The deterministic seed
+    writes a complete archetype token bundle so Phase 5 can proceed."""
+    contract = _web_contract(is_brownfield=False, design_archetype="Warm Playfulness")
     output_dir = tmp_path / "out"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    captured_prompts: list[str] = []
-
-    def fake_session(prompt, **kwargs):  # noqa: ARG001
-        captured_prompts.append(prompt)
-        # Simulate Claude writing a valid design-system.json via the
-        # frontend-design skill.
-        doc = DesignSystemDoc(
-            project_name=contract.project_name,
-            design_archetype=contract.design_archetype or "Cinematic Minimalism",
-            source="claude_generated",
-        )
-        (output_dir / "design-system.json").write_text(
-            doc.model_dump_json(indent=2), encoding="utf-8",
-        )
-        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
-
-    monkeypatch.setattr(
-        "ncdev.pipeline.design_phase.run_ai_session", fake_session,
+    result = run_design_phase(
+        contract, tmp_path, output_dir,
+        stitch_probe=lambda: False,
     )
+
+    assert result.hard_failed is False
+    assert result.skipped is False
+    assert result.design_doc is not None
+    assert result.design_doc.source == "claude_generated"
+    assert not (output_dir / "design-phase-error.json").exists()
+    # Four token files must exist on disk
+    ds = tmp_path / "docs" / "design-system"
+    assert (ds / "tokens.json").exists()
+    assert (ds / "tokens.css").exists()
+    assert (ds / "tailwind-preset.js").exists()
+    assert (ds / "components.md").exists()
+    assert (output_dir / "design-system.json").exists()
+    # Tokens reflect the requested archetype
+    import json as _j
+    tokens = _j.loads((ds / "tokens.json").read_text())
+    assert tokens["archetype"] == "Warm Playfulness"
+    assert "primary" in tokens["colors"]
+
+
+def test_brownfield_ui_without_stitch_uses_deterministic_seed(tmp_path: Path):
+    """Same path covers brownfield-without-Stitch-and-without-existing-designs."""
+    contract = _web_contract(is_brownfield=True, design_archetype="Opinionated Darkness")
+    output_dir = tmp_path / "out"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     result = run_design_phase(
         contract, tmp_path, output_dir,
@@ -240,17 +245,7 @@ def test_greenfield_ui_without_stitch_falls_back_to_claude_generated(
 
     assert result.hard_failed is False
     assert result.design_doc is not None
-    assert result.design_doc.source == "claude_generated"
-    # Error file must NOT have been written by the engine itself
-    assert not (output_dir / "design-phase-error.json").exists()
-    # Prompt must drive Claude to use the frontend-design skill and emit
-    # the four design-system files
-    assert len(captured_prompts) == 1
-    assert "frontend-design" in captured_prompts[0]
-    assert "tokens.json" in captured_prompts[0]
-    assert "tokens.css" in captured_prompts[0]
-    assert "tailwind-preset" in captured_prompts[0]
-    assert "components.md" in captured_prompts[0]
+    assert result.design_doc.design_archetype == "Opinionated Darkness"
 
 
 # ---------------------------------------------------------------------------
@@ -361,35 +356,8 @@ def test_stitch_phase_that_writes_error_file_is_hard_failed(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_brownfield_without_designs_and_no_stitch_lets_claude_decide(tmp_path: Path):
-    contract = _web_contract(is_brownfield=True)
-    output_dir = tmp_path / "out"
-    captured: dict = {}
-
-    def fake_session(prompt, **kwargs):
-        captured["prompt"] = prompt
-        doc = DesignSystemDoc(
-            project_name="myapp",
-            design_archetype="Technical Elegance",
-            source="claude_generated",
-        )
-        (output_dir / "design-system.json").write_text(
-            doc.model_dump_json(indent=2), encoding="utf-8",
-        )
-        return ClaudeSessionResult(success=True, final_text="ok", exit_code=0)
-
-    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
-        result = run_design_phase(
-            contract, tmp_path, output_dir,
-            stitch_probe=lambda: False,
-        )
-
-    assert result.hard_failed is False
-    assert result.design_doc is not None
-    assert result.design_doc.source == "claude_generated"
-    # Prompt instructs Claude it MAY hard-fail itself if it thinks Stitch needed
-    assert "frontend-design" in captured["prompt"]
-    assert "design-phase-error.json" in captured["prompt"]
+# (Earlier "lets Claude decide" path replaced by deterministic seed;
+# coverage handled by test_brownfield_ui_without_stitch_uses_deterministic_seed.)
 
 
 def test_design_phase_fails_loud_when_session_succeeds_but_no_doc_produced(tmp_path: Path):

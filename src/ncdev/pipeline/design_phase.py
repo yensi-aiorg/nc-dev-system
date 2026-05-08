@@ -367,59 +367,25 @@ def run_design_phase(
         )
         return _finalise_design_phase(session, output_dir)
 
-    # --- No Stitch + no existing designs: Claude generates them ------------
-    # The previous behaviour hard-failed greenfield UI projects when Stitch
-    # was unavailable. That's safe but blocks every greenfield run on a
-    # machine without the Stitch MCP installed. The pragmatic fallback uses
-    # Claude's `frontend-design` skill to produce on-brand tokens aligned
-    # with the contract's `design_archetype`, then writes them to
-    # docs/design-system/ for downstream features to consume. The
-    # integration gate still enforces working pages later, so a poor
-    # design will surface as visual regression rather than silently
-    # ship.
-    field_hint = (
-        "brownfield" if contract.is_brownfield else "greenfield"
+    # --- No Stitch + no existing designs: deterministic seed ---------------
+    # Previously this branch invoked Claude with the frontend-design skill
+    # to generate tokens. In practice Claude tends to refuse when the
+    # user's global CLAUDE.md mandates Stitch-first design — the design
+    # phase would hard-fail the run for a self-imposed reason. The
+    # deterministic seed sidesteps that: it writes a complete archetype-
+    # appropriate token bundle from a hand-tuned template, populates
+    # design-system.json, and lets Phase 5 proceed. Quality is the floor,
+    # not the ceiling — the user can refine docs/design-system/ later
+    # without blocking a build.
+    from ncdev.pipeline.design_seed import seed_design_system
+
+    doc = seed_design_system(
+        target_path=target_path,
+        output_dir=output_dir,
+        project_name=contract.project_name,
+        archetype=contract.design_archetype or "Warm Playfulness",
     )
-    prompt = (
-        f"This is a {field_hint} project '{contract.project_name}' "
-        f"without a pre-existing design system and without Stitch MCP "
-        f"available. Use the `frontend-design` skill to produce a "
-        f"complete production-quality design token set aligned with the "
-        f"'{contract.design_archetype}' archetype: colors, typography "
-        f"scale, spacing, border-radius, shadows, motion timings, and a "
-        f"starter component library covering buttons, inputs, cards, "
-        f"tables, navbars, and modals.\n\n"
-        f"Write the tokens to "
-        f"{target_path}/docs/design-system/tokens.json (typed JSON), "
-        f"a CSS variables export to "
-        f"{target_path}/docs/design-system/tokens.css, "
-        f"a Tailwind preset (ESM) to "
-        f"{target_path}/docs/design-system/tailwind-preset.js, "
-        f"and a component-spec note covering the 6 starter components "
-        f"to {target_path}/docs/design-system/components.md.\n\n"
-        f"Then write {output_dir}/design-system.json with "
-        f"source='claude_generated', list the four files above under "
-        f"`screens` (treating each file as a deliverable), and include "
-        f"a brief paragraph summarising the archetype interpretation.\n\n"
-        f"If — and ONLY if — you genuinely cannot produce a design "
-        f"system because the archetype is contradictory or the project "
-        f"is fundamentally non-visual, write "
-        f"{output_dir}/design-phase-error.json with a structured "
-        f"explanation. Do not write the error file just because Stitch "
-        f"is missing — the frontend-design skill handles that case."
-    )
-    session = run_ai_session(
-        prompt,
-        cwd=target_path,
-        config=config,
-        tools=STITCH_DESIGN_TOOLS,
-        model=model,
-        timeout=timeout,
-        include_codex_protocol=False,
-        max_budget_usd=max_budget_usd,
-        log_path=log_path,
-    )
-    return _finalise_design_phase(session, output_dir)
+    return DesignPhaseResult(skipped=False, hard_failed=False, design_doc=doc)
 
 
 def _finalise_design_phase(session, output_dir: Path) -> DesignPhaseResult:
