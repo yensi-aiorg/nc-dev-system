@@ -122,6 +122,13 @@ For each feature, populate:
   `login-page`). Empty for backend-only features.
 - `must_mention_feature_id`: keep `true` unless the feature is shared
   infra that legitimately can't reference its own id.
+- `verify_app_boots`: default `false`. Set `true` ONLY for features
+  that explicitly bring up the application daemon and leave it
+  reachable at the end of their session — typically the f01-scaffold
+  feature when it includes a "the app boots and serves /health"
+  acceptance criterion. Other features must leave this `false`
+  because Claude sessions don't keep daemons up between sessions
+  and a True here would always fail the per-feature boot probe.
 
 For non-UI projects (CLI / library), populate `required_files` and
 `required_tests` only and leave `required_routes` /
@@ -182,6 +189,10 @@ FeatureAcceptance = {                 # per-feature production-readiness gate
   required_tests: array<str>          # repo-relative test files that MUST
                                        #   exist, mention feature_id, and pass
   required_screenshots: array<str>    # filenames under .ncdev/evidence/
+  verify_app_boots: bool              # default False — set True ONLY for
+                                       #   scaffold/boot features that leave
+                                       #   the app reachable at session end.
+                                       #   Other features should leave it False.
   must_mention_feature_id: bool       # default True — keep True
 }"""
 
