@@ -66,12 +66,20 @@ def build_feature_prompt(
     prior_feature_ids: list[str],
     project_id: str,
     citex_url: str = "http://localhost:20161",
+    implementer_mode: str = "codex",
 ) -> str:
     """Compose the single prompt handed to Claude for this feature.
 
     Deliberately terse. Heavy reference material (contract, verification,
     design system) stays on disk — Claude reads it with the Read tool.
     This is a departure from the old prescriptive mega-prompts.
+
+    ``implementer_mode`` adapts the workflow language. Pass "codex" when
+    the Codex protocol is in scope (Claude delegates impl to Codex via
+    Bash). Pass "claude" for claude_only mode where Claude does the
+    implementation directly without any shell-out — the Codex sections
+    of the prompt would otherwise mislead the model into a tool call
+    that won't work.
     """
     prior_block = (
         "No prior features — this is the first build in the queue."
@@ -79,13 +87,50 @@ def build_feature_prompt(
         else f"Prior features already built and verified: {', '.join(prior_feature_ids)}"
     )
 
+    accept = feature.acceptance
+    accept_block = "\n".join(
+        [
+            f"- required_files (must exist AND mention `{feature.feature_id}` "
+            f"in path or content): {accept.required_files or '(none)'}",
+            f"- required_routes (must respond 2xx at integration gate): "
+            f"{accept.required_routes or '(none)'}",
+            f"- required_tests (must exist, mention `{feature.feature_id}`, "
+            f"and pass): {accept.required_tests or '(none)'}",
+            f"- required_screenshots (under .ncdev/evidence/): "
+            f"{accept.required_screenshots or '(none)'}",
+            f"- verify_app_boots: {accept.verify_app_boots} "
+            f"(when True, the per-feature verifier probes the contract's "
+            f"backend_health_url at the end of this session — leave the app running)",
+            f"- must_mention_feature_id: {accept.must_mention_feature_id}",
+        ]
+    )
+
+    if implementer_mode == "claude":
+        impl_paragraph = (
+            "You are running in claude_only mode — there is NO Codex peer in "
+            "this session. Do all implementation and test writing yourself "
+            "with Edit/Write/Bash. Do not invoke `codex exec`."
+        )
+        impl_step = (
+            "**Implement directly.** Use Edit/Write to author production code "
+            "and tests. Run tests with Bash."
+        )
+    else:
+        impl_paragraph = (
+            "You have the Claude skill machinery available; use it. Codex is "
+            "your implementation peer (see the Codex protocol in your system "
+            "prompt) — delegate raw implementation and test writing to Codex "
+            "via Bash, keep judgment and review yourself."
+        )
+        impl_step = (
+            "**Delegate implementation to Codex via Bash.** One well-scoped "
+            "Codex call per sub-task is better than five vague ones. Review "
+            "Codex's output yourself before moving on."
+        )
+
     return f"""# Feature: {feature.feature_id} — {feature.title}
 
-You are the engineer for this feature. You have the Claude skill
-machinery available; use it. Codex is your implementation peer
-(see the Codex protocol in your system prompt) — delegate raw
-implementation and test writing to Codex via Bash, keep judgment
-and review yourself.
+{impl_paragraph}
 
 ## Context
 
@@ -95,7 +140,7 @@ and review yourself.
 - Feature queue:          {charter_dir}/feature-queue.json
 - Target repository:      {target_path}
 - Citex project ID:       {project_id}
-- Citex URL:              {citex_url}
+- Citex URL:              {citex_url}  (optional — query if reachable; skip if not)
 
 {prior_block}
 
@@ -107,8 +152,16 @@ and review yourself.
 - Complexity:  {feature.estimated_complexity}
 - Priority:    {feature.priority}
 
-### Acceptance criteria
+### Acceptance criteria (free-form, for your understanding)
 {chr(10).join(f"- {c}" for c in feature.acceptance_criteria) or "- (none specified — infer from description)"}
+
+### Structured acceptance (ENFORCED by the verifier)
+
+The following bag is checked by NC Dev's automated verifier after your
+session ends. Failing any clause marks the feature FAILED and halts
+the run by default. Plan your work so each clause is satisfied.
+
+{accept_block}
 
 ### Test requirements
 {chr(10).join(f"- {t}" for t in feature.test_requirements) or "- (use your judgment — tests MUST exist and verify behaviour, not just syntax)"}
@@ -120,34 +173,39 @@ and review yourself.
 
 1. **Read** the charter artifacts listed above. They are the hard
    constraints for stack, ports, auth, deployment. Do not override them.
-2. **Query Citex** (the RAG system at `{citex_url}`) for anything you
-   need to know about prior features, data models, or existing code.
-   Use Bash if Citex exposes a CLI, or read the local `.ncdev/` cache.
+2. **Query Citex** at `{citex_url}` if it is reachable, for context on
+   prior features and data models. If Citex is not running, skip this
+   step rather than retrying — it is optional infrastructure.
 3. **Use the `writing-plans` skill** if this is a high-complexity
    feature. For low complexity, go straight to step 4.
 4. **Use the `test-driven-development` skill**. Write failing tests
-   first (you may delegate the test file content to Codex via Bash).
-5. **Delegate implementation to Codex via Bash**. One well-scoped
-   Codex call per sub-task is better than five vague ones. Review
-   Codex's output yourself before moving on.
+   first that target the structured acceptance above (each
+   `required_test` file must exist, mention the feature_id, and
+   eventually pass).
+5. {impl_step}
 6. **Emit the asset manifest** as you build — see the schema below.
 7. **Use the `verification-before-completion` skill** before you
    claim done. Run the verification contract's test commands yourself.
-   Run the app and probe its health endpoint. Capture the required
-   screenshots listed in the verification contract.
+   Capture the required screenshots listed in the structured
+   acceptance.
 8. **If verification fails**, use the `systematic-debugging` skill.
    Do not loop blindly — identify root cause, fix narrowly, re-verify.
 9. **Commit the work** once verification passes. Use Conventional
-   Commits (feat/fix/test) referencing the feature_id. Leave the
-   working tree clean.
+   Commits (`feat({feature.feature_id}): <subject>` or
+   `fix({feature.feature_id}): <subject>`). Leave the working tree
+   clean.
 
 {manifest_prompt_section(feature.feature_id)}
 
 ## What success looks like
 
 - Working tree is clean (all changes committed).
-- The feature's tests exist, run, and pass.
-- Verification contract is satisfied (boot, tests, screenshots, files).
+- Every entry in `required_files` exists AND mentions
+  `{feature.feature_id}` literally (path or content).
+- Every entry in `required_tests` exists, mentions
+  `{feature.feature_id}`, and passes when run in isolation.
+- Verification contract is satisfied (boot probe, test commands,
+  screenshots, files).
 - Asset manifest file exists at
   `.ncdev/assets-needed/{feature.feature_id}.json`.
 - Your final response summarises what was built in <= 5 sentences.
@@ -157,6 +215,8 @@ and review yourself.
 - "Implemented, but tests are still failing — here's what I tried."
   → Not done. Use systematic-debugging.
 - Working tree dirty when you're "done." → Commit or revert.
+- A `required_file` that exists but doesn't mention `{feature.feature_id}`.
+  → The verifier will reject. Add a docstring/header line that names it.
 - Asset manifest missing. → Write it before committing.
 - Any of the `prohibited_patterns` in the verification contract
   landed in a commit. → Those are pre-commit-hook blockers; fix.
@@ -196,6 +256,12 @@ def execute_feature_claude_driven(
     charter_dir = run_dir / "outputs"
     prior_ids = [r.feature_id for r in prior_results if r.status == StepStatus.PASSED]
 
+    # Adapt the prompt to whether Codex is in scope for this run. In
+    # claude_only mode, telling Claude to "delegate to Codex via Bash"
+    # is a footgun — codex isn't available and the workflow stalls.
+    cfg_mode = config.mode if config is not None else "claude_plan_codex_build"
+    implementer_mode = "claude" if cfg_mode in {"claude_only"} else "codex"
+
     prompt = build_feature_prompt(
         feature=feature,
         target_path=target_path,
@@ -203,6 +269,7 @@ def execute_feature_claude_driven(
         prior_feature_ids=prior_ids,
         project_id=project_id,
         citex_url=citex_url,
+        implementer_mode=implementer_mode,
     )
     (step_dir / "prompt.md").write_text(prompt, encoding="utf-8")
 
