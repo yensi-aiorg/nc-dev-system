@@ -4,7 +4,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from ncdev.v2.models import (
     ChainNode,

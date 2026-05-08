@@ -8,7 +8,7 @@ from typing import Any, Iterable
 
 from rich.console import Console
 
-from ncdev.v3.citex_client import CitexClient, CITEX_DEFAULT_URL
+from ncdev.v3.citex_client import CitexClient
 from ncdev.v3.models import (
     FeatureQueueDoc,
     FeatureStep,

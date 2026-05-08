@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel, Field, model_validator
 
 from ncdev.v2.models import TaskType

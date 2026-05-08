@@ -49,13 +49,15 @@ def resolve_routing_plan(config: NCDevV2Config, registry: dict[str, ProviderAdap
 ]
     decisions: list[RoutingDecision] = []
 
+    def _is_available(provider_name: str) -> bool:
+        if provider_name not in registry:
+            return False
+        cfg = config.providers.get(provider_name)
+        return cfg is not None and cfg.enabled
+
     for task_type in task_types:
         configured = config.routing.providers_for(task_type)
-        available = [
-            provider_name
-            for provider_name in configured
-            if provider_name in registry and config.providers.get(provider_name, None) and config.providers[provider_name].enabled
-        ]
+        available = [name for name in configured if _is_available(name)]
         if not available:
             decisions.append(
                 RoutingDecision(

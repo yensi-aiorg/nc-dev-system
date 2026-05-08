@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ncdev.ai_session import run_ai_session
 from ncdev.claude_session import ClaudeSessionResult
@@ -105,7 +106,6 @@ def stitch_available() -> bool:
     place to report it.
     """
     import os
-    import json
 
     override = os.environ.get("NCDEV_STITCH_MCP_CONFIG")
     if override:
@@ -318,7 +318,7 @@ def run_design_phase(
     timeout: int = 1200,
     max_budget_usd: float | None = None,
     log_path: Path | None = None,
-    stitch_probe: callable = stitch_available,
+    stitch_probe: Callable[[], bool] = stitch_available,
     config: NCDevV2Config | None = None,
 ) -> DesignPhaseResult:
     """Resolve the design system for this project.

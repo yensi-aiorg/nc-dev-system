@@ -18,7 +18,6 @@ import sys
 import tempfile
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)

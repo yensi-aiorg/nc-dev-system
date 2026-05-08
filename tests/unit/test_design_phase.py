@@ -6,12 +6,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from ncdev.claude_session import ClaudeSessionResult
 from ncdev.v3.design_phase import (
-    DESIGN_TOOLS,
-    DesignPhaseResult,
     existing_design_system_present,
     is_ui_project,
     run_design_phase,

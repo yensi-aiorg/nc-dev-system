@@ -1,7 +1,7 @@
 """Tests for quality gate Redis events publisher."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 

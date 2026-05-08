@@ -1,6 +1,4 @@
 import subprocess
-from pathlib import Path
-from unittest.mock import patch
 
 from ncdev.v3.models import FeatureStep, StepStatus
 from ncdev.v3.state_scanner import (

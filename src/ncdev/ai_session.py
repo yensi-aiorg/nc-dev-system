@@ -33,21 +33,19 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable
 
+from ncdev.claude_session import (
+    DEFAULT_BUILD_TOOLS,
+    ClaudeSessionResult,
+    run_claude_session,
+)
+from ncdev.v2.config import NCDevV2Config, load_v2_config
+
 _IS_POSIX = sys.platform != "win32"
 
 # Upper bound per stream for run_codex_session capture. A chatty codex
 # run can produce a lot — we keep the tail (recent output is more
 # useful than the head) and note truncation.
 _CODEX_CAPTURE_MAX_BYTES = 4 * 1024 * 1024   # 4 MB per stream
-
-from ncdev.claude_session import (
-    DEFAULT_BUILD_TOOLS,
-    ClaudeSessionResult,
-    NCDEV_HOOKS_DIR,
-    NCDEV_HOOKS_SETTINGS,
-    run_claude_session,
-)
-from ncdev.v2.config import NCDevV2Config, load_v2_config
 
 logger = logging.getLogger(__name__)
 

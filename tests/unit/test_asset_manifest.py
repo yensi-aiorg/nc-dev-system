@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
 
 from ncdev.v3.asset_manifest import (
     ASSETS_DIR,

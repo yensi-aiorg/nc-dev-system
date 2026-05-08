@@ -15,11 +15,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
-from ncdev import claude_session
 from ncdev.claude_session import (
-    ClaudeSessionResult,
     DEFAULT_BUILD_TOOLS,
     DEFAULT_PLAN_TOOLS,
     run_claude_session,

@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from ncdev.claude_session import ClaudeSessionResult
 from ncdev.v3.asset_manifest import save_feature_manifest
@@ -17,11 +16,9 @@ from ncdev.v3.claude_executor import (
 )
 from ncdev.v3.models import (
     AssetManifest,
-    AssetManifestEntry,
     CharterBundle,
     FeatureQueueDoc,
     FeatureStep,
-    StepResult,
     StepStatus,
     TargetProjectContract,
     VerificationContract,

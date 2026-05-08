@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from ncdev import ai_session
 from ncdev.ai_session import (
     MODE_IMPLEMENTER,
     MODE_ORCHESTRATOR,

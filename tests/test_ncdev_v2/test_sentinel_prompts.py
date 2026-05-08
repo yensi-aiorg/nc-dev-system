@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from ncdev.v2.models import (
-    ErrorContext,
-    ErrorDetail,
-    ErrorFrequency,
-    ErrorSeverity,
-    ErrorSource,
-    FrontendContext,
     SentinelFailureReport,
-    ServiceInfo,
 )
-from ncdev.v2.sentinel_prompts import build_fix_prompt, build_reproduction_prompt
+from ncdev.v2.sentinel_prompts import (
+    build_fix_prompt,
+    build_reproduction_prompt,
+    detect_frontend_test_type,
+    detect_monorepo_subdir,
+)
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "sentinel_reports"
 
@@ -184,9 +181,6 @@ class TestBuildFixPrompt:
             test_failure_output="some failure output",
         )
         assert "minimal change" in prompt
-
-
-from ncdev.v2.sentinel_prompts import detect_frontend_test_type, detect_monorepo_subdir
 
 
 def test_detect_frontend_test_type_component_error() -> None:

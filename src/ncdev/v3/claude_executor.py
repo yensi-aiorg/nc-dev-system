@@ -33,12 +33,9 @@ import subprocess
 import time
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from ncdev.ai_session import run_ai_session
 from ncdev.claude_session import (
     DEFAULT_BUILD_TOOLS,
-    ClaudeSessionResult,
 )
 from ncdev.v2.config import NCDevV2Config
 from ncdev.v3.asset_manifest import (
@@ -53,6 +50,8 @@ from ncdev.v3.models import (
     StepVerification,
     TestResult,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +542,7 @@ def _run_shell(cmd: str, *, cwd: Path, timeout: int) -> tuple[bool, str]:
 
 
 def _last_line(text: str) -> str:
-    lines = [l for l in text.strip().splitlines() if l.strip()]
+    lines = [line for line in text.strip().splitlines() if line.strip()]
     return lines[-1][:200] if lines else "(no output)"
 
 

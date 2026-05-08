@@ -1,6 +1,5 @@
 """Tests for quality gate data models."""
 
-import pytest
 
 from ncdev.quality_gate.models import (
     CycleResult,

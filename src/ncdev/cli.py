@@ -10,7 +10,6 @@ from rich.console import Console
 
 from ncdev.preflight import run_preflight, require_citex
 from ncdev.v2.engine import (
-    load_v2_run_state,
     run_v2_fix,
     summarize_v2_status,
 )
@@ -48,8 +47,8 @@ Recommended flow:
 4. Autonomous dev mode
    ncdev dev --project /path/to/project --task "Build feature X"
 
-5. Generate video report
-   ncdev report --project /path/to/project
+5. Manual QA intake
+   ncdev qa-import --report ./qa-report.md --target-repo /path/to/repo
 
 Other commands:
    ncdev fix --report report.json --target /path/to/repo
@@ -214,7 +213,7 @@ Requirements:
         )
 
         if result is None:
-            console.print(f"    [red]AI provider returned no result -- reverting[/red]")
+            console.print("    [red]AI provider returned no result -- reverting[/red]")
             subprocess.run(["git", "checkout", "."], cwd=str(target), capture_output=True)
             subprocess.run(["git", "clean", "-fd"], cwd=str(target), capture_output=True)
             if stash_sha:
@@ -315,11 +314,6 @@ def build_parser() -> argparse.ArgumentParser:
     dev_parser.add_argument("--project", required=True, help="Path to the project directory")
     dev_parser.add_argument("--task", required=True, help="What to build, fix, or enhance")
     dev_parser.add_argument("--mode", default="auto", choices=["auto", "greenfield", "enhance", "bugfix"], help="Development mode")
-
-    # --- Report: generate video report for an already-built project ---
-    report_parser = sub.add_parser("report", help="Generate video report for a completed project")
-    report_parser.add_argument("--project", required=True, help="Path to the project directory")
-    report_parser.add_argument("--task", default="", help="Description of what was built (for narration)")
 
     # --- Sentinel Fix Mode ---
     fix_parser = sub.add_parser("fix", help="Fix a production error from a Sentinel report")
@@ -432,18 +426,6 @@ def main() -> int:
         )
         return 0 if result.get("status") == "passed" else 1
 
-    if args.command == "report":
-        from ncdev.dev import generate_video_report
-        project_path = Path(args.project).resolve()
-        task = args.task or "Project build"
-        console.print(f"[cyan]Generating video report for {project_path.name}...[/cyan]")
-        video_path = generate_video_report(project_path, task, "")
-        if video_path:
-            console.print(f"[green]Video: {video_path}[/green]")
-            return 0
-        console.print("[yellow]No video generated — check screenshots in .ncdev/evidence/[/yellow]")
-        return 0  # Non-fatal
-
     if args.command == "fix":
         workspace = _workspace(args.workspace)
         report_path = Path(args.report) if args.report else None
@@ -454,7 +436,7 @@ def main() -> int:
             return 1
 
         if report_path:
-            state = run_v2_fix(
+            fix_state = run_v2_fix(
                 workspace=workspace,
                 report_path=report_path,
                 target_repo_path=target,
@@ -463,7 +445,7 @@ def main() -> int:
                 max_attempts=args.max_attempts,
                 run_id=args.run_id,
             )
-            print(summarize_v2_status(state))
+            print(summarize_v2_status(fix_state))
         return 0
 
     if args.command == "serve":

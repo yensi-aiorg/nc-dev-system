@@ -25,21 +25,18 @@ command doesn't need to change.
 
 from __future__ import annotations
 
-import json
-import time
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from ncdev.utils import make_run_id, write_json
-from ncdev.v2.config import NCDevV2Config, ensure_default_v2_config, load_v2_config
-from ncdev.v3.charter import generate_charter, load_charter, write_charter
+from ncdev.utils import make_run_id
+from ncdev.v2.config import NCDevV2Config, ensure_default_v2_config
+from ncdev.v3.charter import generate_charter
 from ncdev.v3.claude_executor import execute_feature_claude_driven
 from ncdev.v3.design_phase import run_design_phase
 from ncdev.v3.models import (
-    CharterBundle,
     StepResult,
     StepStatus,
     V3RunState,
