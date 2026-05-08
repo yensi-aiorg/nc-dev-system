@@ -184,16 +184,27 @@ the run by default. Plan your work so each clause is satisfied.
    eventually pass).
 5. {impl_step}
 6. **Emit the asset manifest** as you build — see the schema below.
-7. **Use the `verification-before-completion` skill** before you
+7. **Tag every required_file with the feature_id BEFORE committing.**
+   Each entry in `required_files` MUST contain the literal string
+   `{feature.feature_id}` (in path OR in file content). For files
+   that natively support comments, add a one-line header like
+   `# Feature: {feature.feature_id}` (Python/yaml/sh) or
+   `// Feature: {feature.feature_id}` (TS/JS) or
+   `<!-- Feature: {feature.feature_id} -->` (HTML/MD). For JSON
+   files, add a sibling key like `"_owned_by_feature": "{feature.feature_id}"`
+   at the top level. The verifier will reject the feature if any
+   required_file lacks the marker — this is the single most common
+   silent-failure pattern, so do it FIRST before running tests.
+8. **Use the `verification-before-completion` skill** before you
    claim done. Run the verification contract's test commands yourself.
    Capture the required screenshots listed in the structured
    acceptance.
-8. **If verification fails**, use the `systematic-debugging` skill.
+9. **If verification fails**, use the `systematic-debugging` skill.
    Do not loop blindly — identify root cause, fix narrowly, re-verify.
-9. **Commit the work** once verification passes. Use Conventional
-   Commits (`feat({feature.feature_id}): <subject>` or
-   `fix({feature.feature_id}): <subject>`). Leave the working tree
-   clean.
+10. **Commit the work** once verification passes. Use Conventional
+    Commits (`feat({feature.feature_id}): <subject>` or
+    `fix({feature.feature_id}): <subject>`). Leave the working tree
+    clean.
 
 {manifest_prompt_section(feature.feature_id)}
 

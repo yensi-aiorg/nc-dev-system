@@ -200,6 +200,12 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
     marker directory + the runner command (with the test path made
     relative to that directory). Falls back to ``target_path`` and an
     absolute test path if no marker is found in the ancestor chain.
+
+    Detects Playwright vs vitest for .ts/.tsx/.js/.jsx by inspecting
+    the path: if the test sits under a ``tests/e2e/`` (or ``e2e/``)
+    directory, it's a Playwright spec — invoke ``npx playwright test``
+    instead of ``npx vitest run`` (vitest's default config typically
+    excludes e2e/ anyway).
     """
     suffix = test_path.suffix
     if suffix == ".py":
@@ -207,7 +213,10 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
         cmd_template = [sys.executable, "-m", "pytest", "-q", "-x"]
     elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
         marker_name = "package.json"
-        cmd_template = ["npx", "vitest", "run"]
+        if _looks_like_playwright_test(test_path):
+            cmd_template = ["npx", "playwright", "test"]
+        else:
+            cmd_template = ["npx", "vitest", "run"]
     else:
         return None, None
 
@@ -222,6 +231,26 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
 
     rel = test_path.relative_to(project_root) if test_path.is_relative_to(project_root) else test_path
     return project_root, [*cmd_template, str(rel)]
+
+
+def _looks_like_playwright_test(test_path: Path) -> bool:
+    """True if ``test_path`` sits under an e2e/ directory or a path
+    component named tests/e2e — the Playwright convention.
+
+    Also true if a ``playwright.config.{ts,js,mjs}`` exists adjacent
+    to the test or in any ancestor up to ten levels."""
+    parts = {p.lower() for p in test_path.parts}
+    if "e2e" in parts:
+        return True
+    cursor = test_path.parent
+    for _ in range(10):
+        for cfg in ("playwright.config.ts", "playwright.config.js", "playwright.config.mjs"):
+            if (cursor / cfg).exists():
+                return True
+        if cursor == cursor.parent:
+            break
+        cursor = cursor.parent
+    return False
 
 
 def _file_mentions(path: Path, token: str) -> bool:
