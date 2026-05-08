@@ -47,6 +47,8 @@ def _fake_charter_bundle() -> CharterBundle:
             frontend_url="http://localhost:23000",
             backend_test_command="cd backend && pytest -q",
             frontend_test_command="cd frontend && npm test -- --run",
+            start_command="docker compose up -d",
+            stop_command="docker compose down -v",
             required_screenshots=["homepage", "login"],
             required_files=["docker-compose.yml", "backend/app/main.py"],
         ),

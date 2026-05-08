@@ -60,6 +60,9 @@ class IntegrationResult:
     lint_output_tail: str = ""
     build_ok: bool | None = None
     build_output_tail: str = ""
+    app_started: bool | None = None
+    app_start_output_tail: str = ""
+    app_stopped: bool | None = None
 
 
 def run_integration_gate(
@@ -79,6 +82,32 @@ def run_integration_gate(
     """
     start = time.time()
     result = IntegrationResult()
+
+    # Clause 0 — bring the app up if start_command is set. The route
+    # probes and live test commands all assume the app is running; a
+    # one-shot Claude session can't keep a daemon alive between
+    # phases, so the gate orchestrates the lifecycle itself.
+    started_here = False
+    if bundle.verification.start_command and run_test_commands:
+        ok, out = _run_shell(
+            bundle.verification.start_command,
+            cwd=target_path,
+            timeout=300,
+        )
+        result.app_started = ok
+        result.app_start_output_tail = _tail(out)
+        started_here = ok
+        if not ok:
+            result.failures.append(
+                f"app start_command failed: {result.app_start_output_tail}"
+            )
+        else:
+            # Give the app a moment to come fully up before probing.
+            # The boot timeout from the contract bounds total wait.
+            _wait_for_health(
+                bundle.verification.backend_health_url,
+                timeout=bundle.verification.boot_timeout_seconds,
+            )
 
     # Clause 1 — asset manifest aggregate coverage. We only care about
     # features that actually PASSED this run; SKIPPED brownfield
@@ -211,9 +240,42 @@ def run_integration_gate(
                 f"build failed: {result.build_output_tail}"
             )
 
+    # Teardown — only if WE started it. Don't tear down a user-managed
+    # daemon. Teardown failure is logged but does not fail the gate;
+    # the asserts above are the real signal.
+    if started_here and bundle.verification.stop_command:
+        ok, out = _run_shell(
+            bundle.verification.stop_command,
+            cwd=target_path,
+            timeout=120,
+        )
+        result.app_stopped = ok
+
     result.duration_seconds = time.time() - start
     result.passed = not result.failures
     return result
+
+
+def _wait_for_health(url: str, *, timeout: int) -> bool:
+    """Poll ``url`` until it returns 2xx or budget expires. Best-effort —
+    callers don't act on the return; this is just a settle delay."""
+    if not url:
+        time.sleep(min(timeout, 5))
+        return True
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - runtime dependency
+        return False
+    deadline = time.time() + max(timeout, 5)
+    while time.time() < deadline:
+        try:
+            r = httpx.get(url, timeout=3)
+            if 200 <= r.status_code < 400:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(2)
+    return False
 
 
 # ---------------------------------------------------------------------------

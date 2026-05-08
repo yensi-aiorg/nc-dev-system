@@ -277,6 +277,16 @@ class VerificationContract(BaseModel):
     lint_command: str = ""             # e.g. "ruff check . && mypy ."
     build_command: str = ""            # e.g. "cd frontend && npm run build"
 
+    # App lifecycle commands for the integration gate. When start_command
+    # is set, the gate runs it before probing routes and runs
+    # stop_command after the test suites complete. start_command should
+    # background the app (e.g. "docker compose up -d"); stop_command
+    # should clean up ("docker compose down -v"). For library / CLI
+    # projects, leave these empty — the gate skips the lifecycle
+    # automatically when start_command is empty.
+    start_command: str = ""
+    stop_command: str = ""
+
     # Screenshots
     required_screenshots: list[str] = Field(default_factory=list)
     screenshot_viewports: list[str] = Field(default_factory=lambda: ["desktop", "mobile"])

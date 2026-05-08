@@ -82,6 +82,14 @@ Rules:
   features are built (Dockerfile, .env.example, README, etc.)
 - `required_screenshots` — list the key pages/routes that must have a
   screenshot captured.
+- `lint_command` — at least one when the stack supports it (e.g.
+  "ruff check . && cd frontend && npm run lint").
+- `build_command` — when there's a frontend bundler / typed backend,
+  set this so the integration gate proves the artifact builds.
+- `start_command` / `stop_command` — for web/api projects, populate
+  these so the integration gate can bring the app up before probing
+  routes and tear it down after. Typical: `docker compose up -d` /
+  `docker compose down -v`. Leave empty for library / CLI projects.
 - Keep `prohibited_patterns` as-is unless the PRD explicitly calls out
   additions.
 
@@ -433,6 +441,14 @@ def validate_charter_completeness(bundle: CharterBundle) -> list[str]:
             "verification-contract: backend_health_url is required for "
             f"project_type={c.project_type!r} so the integration gate can "
             "probe app readiness"
+        )
+
+    if c.project_type in {"web", "api"} and not v.start_command.strip():
+        violations.append(
+            "verification-contract: start_command is required for "
+            f"project_type={c.project_type!r} so the integration gate can "
+            "bring the app up before probing routes (typical: "
+            "'docker compose up -d')"
         )
 
     for feature in bundle.feature_queue.features:
