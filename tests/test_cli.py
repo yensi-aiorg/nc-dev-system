@@ -2,6 +2,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from ncdev.cli import _doctor_report, _quickstart_text, _resolve_target_repo, build_parser, main
 
 
@@ -65,6 +67,75 @@ def test_cli_serve_parses() -> None:
     args = parser.parse_args(["serve", "--port", "8080"])
     assert args.command == "serve"
     assert args.port == 8080
+
+
+def test_cli_qa_import_parses(tmp_path: Path) -> None:
+    parser = build_parser()
+    args = parser.parse_args([
+        "qa-import",
+        "--report", "/tmp/qa.md",
+        "--target-repo", "/tmp/repo",
+        "--project", "Keeper",
+        "--base-url", "https://example.com",
+    ])
+    assert args.command == "qa-import"
+    assert args.report == "/tmp/qa.md"
+    assert args.target_repo == "/tmp/repo"
+    assert args.project == "Keeper"
+    assert args.base_url == "https://example.com"
+
+
+def test_cli_qa_monitor_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["qa-monitor", "--project", "Keeper"])
+    assert args.command == "qa-monitor"
+    assert args.project == "Keeper"
+
+
+def test_cli_qa_update_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args([
+        "qa-update",
+        "--project", "Keeper",
+        "--run-id", "manual-qa-keeper-x",
+        "--status", "fixed",
+        "--note", "all green",
+    ])
+    assert args.command == "qa-update"
+    assert args.status == "fixed"
+    assert args.note == "all green"
+
+
+def test_cli_qa_update_rejects_unknown_status() -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args([
+            "qa-update",
+            "--project", "Keeper",
+            "--run-id", "x",
+            "--status", "bogus",
+        ])
+
+
+def test_cli_qa_import_runs_end_to_end(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    report = tmp_path / "qa.md"
+    report.write_text("# QA\n\n### P1 - Login broken")
+
+    with patch("sys.argv", [
+        "ncdev", "qa-import",
+        "--report", str(report),
+        "--target-repo", str(target),
+        "--project", "Keeper",
+        "--workspace", str(tmp_path),
+    ]):
+        assert main() == 0
+
+    intake_dirs = list((tmp_path / ".nc-dev" / "manual-qa" / "keeper").glob("*"))
+    assert len(intake_dirs) == 1
+    assert (intake_dirs[0] / "metadata.json").exists()
+    assert (intake_dirs[0] / "fix-task.md").exists()
 
 
 def test_resolve_target_repo_uses_workspace_git_repo(tmp_path: Path) -> None:
