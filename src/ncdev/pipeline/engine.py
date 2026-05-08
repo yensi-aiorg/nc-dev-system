@@ -57,6 +57,7 @@ def run_pipeline(
     max_budget_usd: float | None = None,
     config: NCDevConfig | None = None,
     strict_deps: bool = False,
+    halt_on_failed: bool = True,
     # Retained for CLI signature compat; Claude's systematic-debugging
     # skill handles repair now, so this is a no-op.
     max_repair_attempts: int | None = None,
@@ -261,6 +262,23 @@ def run_pipeline(
             status_style = "green" if result.status == StepStatus.PASSED else "red"
             console.print(f"  [{status_style}]{result.status.value}[/{status_style}] — commit {result.commit_sha[:8] or '(none)'}")
 
+            # Halt on first FAILED. The default behaviour — silently
+            # marching past a broken feature into a [BROKEN] commit
+            # while subsequent features build on top is exactly the
+            # "grossly skips features and moves on" failure mode this
+            # change exists to prevent. Pass halt_on_failed=False (CLI:
+            # --continue-on-failed) only when explicitly opting in.
+            if halt_on_failed and result.status == StepStatus.FAILED:
+                console.print(Panel(
+                    f"[bold red]HALT — feature {feature.feature_id} FAILED[/bold red]\n"
+                    f"Reason(s):\n  - " + "\n  - ".join(
+                        result.verification.failure_reasons[:5]
+                        if result.verification else ["(no verification details)"]
+                    ) + "\nRun aborted. Pass --continue-on-failed to override.",
+                    border_style="red",
+                ))
+                break
+
     # ── Phase 6: Summary ─────────────────────────────────────────────────
     state.phase = "complete"
     passed = [r for r in completed if r.status == StepStatus.PASSED]
@@ -271,12 +289,68 @@ def run_pipeline(
         r for r in completed
         if r.status in (StepStatus.FAILED, StepStatus.BLOCKED)
     ]
-    state.status = "passed" if not unsuccessful else ("partial" if passed else "failed")
+
+    # Verification regression: any feature ended BLOCKED while its
+    # declared dep was earlier reported PASSED is a verification bug —
+    # something that "passed" actually wasn't producing the artifacts a
+    # downstream feature relied on. Surface it as a hard error rather
+    # than letting it hide in a partial-pass status.
+    regressions = _detect_verification_regressions(completed)
+    if regressions:
+        state.status = "verification_regression"
+        state.metadata["verification_regressions"] = regressions
+    elif not unsuccessful:
+        state.status = "passed"
+    elif passed:
+        state.status = "partial"
+    else:
+        state.status = "failed"
 
     _print_summary_table(completed)
 
+    if regressions:
+        console.print(Panel(
+            "[bold red]Verification regression detected[/bold red]\n"
+            "Features ended BLOCKED whose declared dependencies were "
+            "earlier reported PASSED — that means an earlier feature's "
+            "verification missed a real defect. Investigate:\n  - "
+            + "\n  - ".join(regressions),
+            border_style="red",
+        ))
+
     _persist_state(state, run_dir)
     return state
+
+
+def _detect_verification_regressions(completed: list[StepResult]) -> list[str]:
+    """Return human-readable descriptions of dep-was-PASSED-now-BLOCKED cases.
+
+    A feature is BLOCKED when ``_unmet_dependencies`` returns a non-empty
+    list at gate time. If any of those deps are present in ``completed``
+    with status PASSED, the verifier signed off on something that didn't
+    actually deliver — a real bug we shouldn't quietly downgrade to
+    "partial".
+    """
+    by_id = {r.feature_id: r for r in completed}
+    regressions: list[str] = []
+    for r in completed:
+        if r.status != StepStatus.BLOCKED:
+            continue
+        # Parse the feature_ids out of the BLOCKED error_message — the
+        # engine writes them as comma-separated after the colon.
+        msg = r.error_message or ""
+        if "dependency not satisfied:" not in msg:
+            continue
+        deps_part = msg.split("dependency not satisfied:", 1)[1]
+        deps_part = deps_part.split("(", 1)[0]
+        dep_ids = [d.strip() for d in deps_part.split(",") if d.strip()]
+        for dep in dep_ids:
+            prior = by_id.get(dep)
+            if prior is not None and prior.status == StepStatus.PASSED:
+                regressions.append(
+                    f"{r.feature_id} blocked on {dep!r} which was reported PASSED earlier"
+                )
+    return regressions
 
 
 # ---------------------------------------------------------------------------

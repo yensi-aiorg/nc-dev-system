@@ -308,6 +308,18 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--quality-gate", action="store_true", default=False, help="Run quality gate loop after build completes")
     full.add_argument("--strict-deps", action="store_true", default=False,
                       help="Halt the run the moment a feature has an unmet dependency (default: skip the feature and continue).")
+    full.add_argument(
+        "--continue-on-failed",
+        action="store_true",
+        default=False,
+        help=(
+            "Continue building subsequent features after a FAILED one. "
+            "Default is to halt — the previous behaviour silently marched "
+            "past broken features into [BROKEN] commits while later features "
+            "built on top, which is exactly the gross-skip failure mode the "
+            "halt default exists to prevent."
+        ),
+    )
 
     # --- Dev Mode: The Autonomous Senior Engineer ---
     dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
@@ -383,6 +395,7 @@ def main() -> int:
             max_repair_attempts=args.max_repairs,
             max_budget_usd=getattr(args, "max_budget_usd", None),
             strict_deps=bool(getattr(args, "strict_deps", False)),
+            halt_on_failed=not bool(getattr(args, "continue_on_failed", False)),
         )
         console.print(f"run_id={state.run_id} status={state.status}")
         console.print(f"features: {state.completed_features}/{state.total_features} completed")
