@@ -405,7 +405,13 @@ def _post_session_verification(
     #    backend_health_url empty in the contract disables the probe
     #    (common for CLI/library projects). Codex R2 flagged: if the
     #    user put the URL there, they meant it.
-    if probe_health and bundle.verification.backend_health_url:
+    # Health probe is OPT-IN per feature. Default False because most
+    # feature sessions don't keep a daemon running after the session
+    # exits — probing them all would always fail. Scaffold / boot
+    # features set acceptance.verify_app_boots=True to assert that
+    # the app must be reachable after their session, and the
+    # integration gate covers the rest at end-of-run.
+    if probe_health and feature.acceptance.verify_app_boots and bundle.verification.backend_health_url:
         reachable = _probe_health(
             bundle.verification.backend_health_url,
             timeout=bundle.verification.boot_timeout_seconds,
@@ -414,8 +420,9 @@ def _post_session_verification(
         if not reachable:
             reasons.append(
                 f"backend health URL unreachable: "
-                f"{bundle.verification.backend_health_url} — the feature "
-                "must leave the app in a runnable state"
+                f"{bundle.verification.backend_health_url} — feature "
+                f"{feature.feature_id} declared verify_app_boots=True so the "
+                "app must respond at session end"
             )
 
     # 8. Per-feature acceptance — bind verification to *this feature*, not

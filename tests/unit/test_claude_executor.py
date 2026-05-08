@@ -443,10 +443,13 @@ def test_health_probe_early_success_returns_immediately(monkeypatch):
     assert elapsed < 1.0
 
 
-def test_health_probe_failure_blocks_pass_when_url_set(tmp_path: Path):
-    """Codex R2: boot probe was soft-signal only. When the contract
-    declares backend_health_url, we must enforce it — the user put
-    the URL there intentionally."""
+def test_health_probe_failure_blocks_pass_when_feature_opts_in(tmp_path: Path):
+    """A feature that declares verify_app_boots=True must reach the
+    backend_health_url after its session ends. Boot/scaffold features
+    opt in; ordinary build features do not (default False) so a missing
+    daemon doesn't fail every per-feature verifier."""
+    from ncdev.pipeline.models import FeatureAcceptance
+
     target = tmp_path / "app"
     target.mkdir()
     _init_git(target)
@@ -460,13 +463,15 @@ def test_health_probe_failure_blocks_pass_when_url_set(tmp_path: Path):
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
     bundle = _make_bundle()
-    # Set a URL that definitely doesn't respond
     bundle.verification.backend_health_url = "http://127.0.0.1:1/health"
     bundle.verification.boot_timeout_seconds = 1
 
+    feature = _make_feature()
+    feature.acceptance = FeatureAcceptance(verify_app_boots=True)
+
     with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
-            feature=_make_feature(),
+            feature=feature,
             target_path=target,
             run_dir=tmp_path / "run",
             charter_bundle=bundle,
@@ -477,6 +482,44 @@ def test_health_probe_failure_blocks_pass_when_url_set(tmp_path: Path):
     assert result.status == StepStatus.FAILED
     reasons = result.verification.failure_reasons
     assert any("health URL unreachable" in r for r in reasons)
+
+
+def test_health_probe_skipped_when_feature_does_not_opt_in(tmp_path: Path):
+    """Default verify_app_boots=False: even with a health URL set,
+    we don't probe per-feature. Most feature sessions don't keep a
+    daemon up; the integration gate handles end-of-run reachability."""
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "a.py").write_text("x=1")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): a"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    bundle = _make_bundle()
+    bundle.verification.backend_health_url = "http://127.0.0.1:1/health"
+    bundle.verification.boot_timeout_seconds = 1
+
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(),  # default acceptance, verify_app_boots=False
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.PASSED, (
+        f"failures: {result.verification.failure_reasons}"
+    )
+    assert not any(
+        "health URL unreachable" in r for r in result.verification.failure_reasons
+    )
 
 
 def test_health_probe_not_run_when_url_empty(tmp_path: Path):

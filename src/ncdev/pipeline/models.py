@@ -47,6 +47,17 @@ class FeatureAcceptance(BaseModel):
         default_factory=list,
         description="Filenames (under .ncdev/evidence/) that must be captured.",
     )
+    verify_app_boots: bool = Field(
+        default=False,
+        description=(
+            "When True, the per-feature verifier will probe the contract's "
+            "backend_health_url after this feature's session ends and require "
+            "a 2xx response. Default False — most feature sessions don't "
+            "leave a daemon running, so probing them all would always fail. "
+            "Set True for scaffold/boot features that explicitly leave "
+            "the app runnable, and let the integration gate cover the rest."
+        ),
+    )
     must_mention_feature_id: bool = Field(
         default=True,
         description=(
