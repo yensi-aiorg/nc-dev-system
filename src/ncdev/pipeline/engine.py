@@ -262,7 +262,13 @@ def run_pipeline(
             _persist_state(state, run_dir)
 
             status_style = "green" if result.status == StepStatus.PASSED else "red"
-            console.print(f"  [{status_style}]{result.status.value}[/{status_style}] — commit {result.commit_sha[:8] or '(none)'}")
+            duration_min = (result.build_duration_seconds or 0) / 60
+            console.print(
+                f"  [{status_style}]{result.status.value}[/{status_style}] "
+                f"— commit {result.commit_sha[:8] or '(none)'} "
+                f"({duration_min:.1f} min, "
+                f"{len(result.files_created) + len(result.files_modified)} files)"
+            )
 
             # Halt on first FAILED. The default behaviour — silently
             # marching past a broken feature into a [BROKEN] commit
