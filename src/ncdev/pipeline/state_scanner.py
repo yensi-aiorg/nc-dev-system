@@ -165,20 +165,23 @@ def _required_tests_pass(
 
 
 def _run_single_test(test_path: Path, cwd: Path) -> bool:
-    """Run a single test file. True iff it exits 0 and reports passes."""
-    if test_path.suffix == ".py":
-        cmd = [sys.executable, "-m", "pytest", "-q", "-x", str(test_path)]
-    elif test_path.suffix in {".ts", ".tsx", ".js", ".jsx"}:
-        cmd = ["npx", "vitest", "run", str(test_path)]
-    else:
-        # Unknown harness — treat as fail; the charter shouldn't be
-        # listing test files we can't run.
+    """Run a single test file. True iff it exits 0 and reports passes.
+
+    Resolves the right working directory for the test runner: backend
+    pytest runs from the nearest pyproject.toml ancestor; frontend
+    vitest runs from the nearest package.json ancestor. Without this,
+    a frontend test invoked from target_path fails to find
+    node_modules / vite config and reports "1/3 failed" even when the
+    test passes when invoked from frontend/.
+    """
+    project_root, runner_cmd = _runner_for_test(test_path, cwd)
+    if runner_cmd is None or project_root is None:
         return False
 
     try:
         result = subprocess.run(
-            cmd,
-            cwd=str(cwd),
+            runner_cmd,
+            cwd=str(project_root),
             capture_output=True,
             text=True,
             timeout=300,
@@ -186,11 +189,39 @@ def _run_single_test(test_path: Path, cwd: Path) -> bool:
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
 
-    if result.returncode == 0:
-        return True
-    # Don't accept "0 collected" / "no tests ran" as success — a passing
-    # state-scanner check requires real green tests, not absent ones.
-    return False
+    return result.returncode == 0
+
+
+def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, list[str] | None]:
+    """Pick the test runner + the directory to invoke it from.
+
+    Walks up from ``test_path`` looking for a project marker
+    (pyproject.toml for python, package.json for js/ts). Returns the
+    marker directory + the runner command (with the test path made
+    relative to that directory). Falls back to ``target_path`` and an
+    absolute test path if no marker is found in the ancestor chain.
+    """
+    suffix = test_path.suffix
+    if suffix == ".py":
+        marker_name = "pyproject.toml"
+        cmd_template = [sys.executable, "-m", "pytest", "-q", "-x"]
+    elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
+        marker_name = "package.json"
+        cmd_template = ["npx", "vitest", "run"]
+    else:
+        return None, None
+
+    # Walk up from the test file looking for the project marker.
+    project_root = target_path
+    cursor = test_path.parent
+    while cursor != cursor.parent and cursor.is_relative_to(target_path):
+        if (cursor / marker_name).exists():
+            project_root = cursor
+            break
+        cursor = cursor.parent
+
+    rel = test_path.relative_to(project_root) if test_path.is_relative_to(project_root) else test_path
+    return project_root, [*cmd_template, str(rel)]
 
 
 def _file_mentions(path: Path, token: str) -> bool:

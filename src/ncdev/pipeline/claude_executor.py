@@ -533,13 +533,7 @@ def _post_session_verification(
             )
             continue
         if run_test_commands:
-            ok, out = _run_shell(
-                f"python -m pytest -q -x {req_test}"
-                if req_test.endswith(".py")
-                else f"npx vitest run {req_test}",
-                cwd=target_path,
-                timeout=300,
-            )
+            ok, out = _run_test_in_project_root(target_path / req_test)
             if not ok:
                 reasons.append(
                     f"feature acceptance: required test {req_test} failed: "
@@ -556,6 +550,34 @@ def _post_session_verification(
     ver.overall_passed = not reasons
     ver.prohibited_patterns = [r for r in reasons if "prohibited" in r.lower()]
     return ver
+
+
+def _run_test_in_project_root(test_path: Path) -> tuple[bool, str]:
+    """Run a single test from the right project root.
+
+    Mirrors state_scanner._run_single_test for the per-feature
+    verifier. Frontend tests must run from frontend/ (where
+    package.json + node_modules live); backend tests from
+    backend/ (where pyproject.toml lives).
+    """
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    if not test_path.exists():
+        return False, f"test file not found: {test_path}"
+    project_root, cmd = _runner_for_test(test_path, test_path.parent.parent)
+    if cmd is None or project_root is None:
+        return False, f"no test runner for {test_path.suffix}"
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        return result.returncode == 0, (result.stdout + "\n" + result.stderr)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return False, str(exc)
 
 
 def _file_mentions_token(path: Path, token: str) -> bool:
