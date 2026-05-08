@@ -444,5 +444,12 @@ def _load_design_doc(output_dir: Path) -> DesignSystemDoc | None:
         return None
     try:
         return DesignSystemDoc.model_validate_json(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # Persist the validation error so postmortem can see WHY the
+        # doc was rejected. Previous behaviour silently swallowed the
+        # exception and the engine's panel just said "no valid doc".
+        (output_dir / "design-system.load-error.txt").write_text(
+            f"Failed to load design-system.json:\n{exc}\n",
+            encoding="utf-8",
+        )
         return None
