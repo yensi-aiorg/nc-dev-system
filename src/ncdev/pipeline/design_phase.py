@@ -217,6 +217,25 @@ def is_ui_project(contract: TargetProjectContract) -> bool:
     return contract.project_type.lower() in ("web", "webapp", "frontend", "spa", "saas")
 
 
+def _existing_design_was_seeded_by_ncdev(target_path: Path) -> bool:
+    """True if docs/design-system/tokens.json was emitted by our seed.
+
+    The deterministic seed writes a top-level ``"owned_by_feature"`` key.
+    User-authored token files won't have it. We use this to decide
+    whether to re-run the seed (overwriting our output) or invoke the
+    Claude summariser (preserving the user's tokens).
+    """
+    tokens_path = target_path / "docs" / "design-system" / "tokens.json"
+    if not tokens_path.exists():
+        return False
+    try:
+        import json as _j
+        data = _j.loads(tokens_path.read_text(encoding="utf-8"))
+        return isinstance(data, dict) and "owned_by_feature" in data
+    except (OSError, ValueError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Prompt builders
 # ---------------------------------------------------------------------------
@@ -335,9 +354,15 @@ def run_design_phase(
 
     has_existing = existing_design_system_present(target_path)
     has_stitch = stitch_probe()
+    is_our_seed = _existing_design_was_seeded_by_ncdev(target_path)
 
-    # --- Brownfield with existing design system ----------------------------
-    if has_existing:
+    # --- Brownfield with existing user-provided design system --------------
+    # Only run the summariser when the existing files were authored by the
+    # user. Files we previously emitted via the deterministic seed get
+    # regenerated freshly so we don't depend on the summariser's
+    # interpretation of our own JSON (which has historically tripped on
+    # the dict[str, str] schema for typography).
+    if has_existing and not is_our_seed:
         prompt = _brownfield_prompt(contract, target_path, output_dir)
         session = run_ai_session(
             prompt,
