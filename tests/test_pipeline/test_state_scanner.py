@@ -257,3 +257,59 @@ def test_build_skip_results_emits_skipped_status() -> None:
     assert [r.feature_id for r in results] == ["f1", "f3"]
     assert all(r.status == StepStatus.SKIPPED for r in results)
     assert all("acceptance verified" in r.error_message for r in results)
+
+
+# ---------------------------------------------------------------------------
+# _runner_for_test — project-root resolver for single-test execution
+# ---------------------------------------------------------------------------
+
+
+def test_runner_for_test_python_finds_pyproject(tmp_path: Path) -> None:
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "backend" / "tests").mkdir()
+    test_file = tmp_path / "backend" / "tests" / "test_x.py"
+    test_file.write_text("def test_x(): pass\n")
+
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+    assert project_root == tmp_path / "backend"
+    assert cmd is not None
+    assert cmd[0].endswith("python") or cmd[0].endswith("python3")
+    assert cmd[-1] == "tests/test_x.py"
+
+
+def test_runner_for_test_frontend_finds_package_json(tmp_path: Path) -> None:
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    (tmp_path / "frontend").mkdir()
+    (tmp_path / "frontend" / "package.json").write_text('{"name": "x"}')
+    (tmp_path / "frontend" / "src" / "__tests__").mkdir(parents=True)
+    test_file = tmp_path / "frontend" / "src" / "__tests__" / "smoke.test.tsx"
+    test_file.write_text("test('x', () => {});\n")
+
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+    assert project_root == tmp_path / "frontend"
+    assert cmd == ["npx", "vitest", "run", "src/__tests__/smoke.test.tsx"]
+
+
+def test_runner_for_test_falls_back_when_no_marker(tmp_path: Path) -> None:
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    test_file = tmp_path / "test_x.py"
+    test_file.write_text("def test_x(): pass\n")
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+    # No marker → root falls back to target_path; absolute test path used
+    assert project_root == tmp_path
+    assert cmd is not None
+
+
+def test_runner_for_test_returns_none_for_unknown_suffix(tmp_path: Path) -> None:
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    test_file = tmp_path / "test.go"
+    test_file.touch()
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+    assert project_root is None
+    assert cmd is None
