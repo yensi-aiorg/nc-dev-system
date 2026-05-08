@@ -533,7 +533,7 @@ def _post_session_verification(
             )
             continue
         if run_test_commands:
-            ok, out = _run_test_in_project_root(target_path / req_test)
+            ok, out = _run_test_in_project_root(target_path / req_test, target_path)
             if not ok:
                 reasons.append(
                     f"feature acceptance: required test {req_test} failed: "
@@ -552,19 +552,24 @@ def _post_session_verification(
     return ver
 
 
-def _run_test_in_project_root(test_path: Path) -> tuple[bool, str]:
+def _run_test_in_project_root(test_path: Path, target_path: Path) -> tuple[bool, str]:
     """Run a single test from the right project root.
 
     Mirrors state_scanner._run_single_test for the per-feature
     verifier. Frontend tests must run from frontend/ (where
     package.json + node_modules live); backend tests from
     backend/ (where pyproject.toml lives).
+
+    target_path is the repo root — required so _runner_for_test can
+    walk all the way up to find package.json / pyproject.toml. Passing
+    test_path.parent stops the walk inside src/ and misses the project
+    marker.
     """
     from ncdev.pipeline.state_scanner import _runner_for_test
 
     if not test_path.exists():
         return False, f"test file not found: {test_path}"
-    project_root, cmd = _runner_for_test(test_path, test_path.parent.parent)
+    project_root, cmd = _runner_for_test(test_path, target_path)
     if cmd is None or project_root is None:
         return False, f"no test runner for {test_path.suffix}"
     try:
