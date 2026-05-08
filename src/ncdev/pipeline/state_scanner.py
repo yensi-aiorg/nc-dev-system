@@ -1,8 +1,31 @@
 """Project state scanner — determines which features are already implemented.
 
-Scans the target repo's git history, file tree, and test results to figure out
-what's already built, so the engine can skip completed work and resume from
-where the previous run left off.
+Used in brownfield runs to skip features that the existing codebase already
+satisfies. The scanner is intentionally STRICT: a feature is only marked
+SKIPPED when its declared :class:`FeatureAcceptance` is fully satisfied on
+disk and (where applicable) over the test runner. Loose keyword/stem
+heuristics — the previous implementation — silently marked features done
+based on tangentially-named files (e.g. ``node_modules/oauth-client/`` was
+enough to "complete" a User Authentication feature). That is the failure
+mode this module exists to prevent.
+
+Skip rule:
+
+    A feature is SKIPPED if and only if **all** of the following hold:
+
+    1. A Conventional Commit on the current branch names the feature_id
+       (``feat(<feature_id>):``, ``fix(<feature_id>):``, etc.).
+    2. ``feature.acceptance.required_files`` is non-empty AND every entry
+       exists in the working tree.
+    3. ``feature.acceptance.required_tests`` is non-empty AND every entry
+       exists AND, when ``must_mention_feature_id`` is True, references
+       the feature_id literally AND runs green.
+    4. The repo's smoke test (``pytest -q -x``, scoped to the test file
+       set above) actually passes — "no tests" no longer counts.
+
+Features whose acceptance bag is empty are NEVER skipped: there is no
+ground truth to verify against, and silent skips are a verification
+regression.
 """
 from __future__ import annotations
 
@@ -22,31 +45,28 @@ def scan_completed_features(
     target_path: Path,
     feature_queue: list[FeatureStep],
 ) -> list[str]:
-    """Scan the target repo and return feature_ids that are already done.
+    """Return feature_ids whose declared acceptance is already satisfied.
 
-    A feature is considered done if:
-    1. It appears in a git commit message (feat(feature_id): ...), OR
-    2. Key files described by its title/description exist in the repo, AND
-    3. The project's tests pass (basic smoke check)
+    Strict by design — see module docstring. A feature with no declared
+    acceptance is never returned (we can't prove it's done).
     """
     if not (target_path / ".git").exists():
         return []
 
     git_log = _get_git_log(target_path)
-    file_tree = _get_file_set(target_path)
-    tests_pass = _run_smoke_test(target_path)
 
     completed: list[str] = []
-
     for feature in feature_queue:
-        # Check 1: Is this feature in the git history?
-        in_git = _feature_in_git_history(feature, git_log)
-
-        # Check 2: Do files related to this feature exist?
-        has_files = _feature_has_files(feature, file_tree)
-
-        if tests_pass and (in_git or has_files):
-            completed.append(feature.feature_id)
+        if not _has_enforceable_acceptance(feature):
+            continue
+        if not _feat_commit_names_feature(feature, git_log):
+            continue
+        if not _required_files_present(feature, target_path):
+            continue
+        ok, mention_violations = _required_tests_pass(feature, target_path)
+        if not ok or mention_violations:
+            continue
+        completed.append(feature.feature_id)
 
     return completed
 
@@ -55,140 +75,149 @@ def build_skip_results(
     feature_queue: list[FeatureStep],
     completed_ids: set[str],
 ) -> list[StepResult]:
-    """Create SKIPPED StepResults for already-completed brownfield features.
+    """Create SKIPPED StepResults for verified-done brownfield features.
 
-    Uses :attr:`StepStatus.SKIPPED` — these features were done before
-    this run started. The dependency gate treats SKIPPED as dep-
-    satisfying, and metrics / summary correctly exclude them from
-    PASSED / BLOCKED / FAILED counters.
+    SKIPPED is the dependency-satisfying status: features built earlier
+    runs but verified by this scanner DO unblock dependents. A FAILED or
+    BLOCKED dep does not.
     """
     return [
         StepResult(
             feature_id=f.feature_id,
             status=StepStatus.SKIPPED,
-            error_message="Already implemented in target repo (state-scanner detection)",
+            error_message=(
+                "Already implemented in target repo (acceptance verified by "
+                "state-scanner: commit + required_files + required_tests pass)"
+            ),
         )
         for f in feature_queue
         if f.feature_id in completed_ids
     ]
 
 
-def _get_git_log(target_path: Path) -> str:
-    """Get full git log with commit messages."""
-    try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", "--all", "-200"],
-            cwd=str(target_path),
-            capture_output=True, text=True, timeout=10,
-        )
-        return result.stdout.lower() if result.returncode == 0 else ""
-    except Exception:
-        return ""
+# ---------------------------------------------------------------------------
+# Strict acceptance checks
+# ---------------------------------------------------------------------------
 
 
-def _get_file_set(target_path: Path) -> set[str]:
-    """Get set of all file paths in the repo (relative, lowercase)."""
-    try:
-        result = subprocess.run(
-            ["git", "ls-files"],
-            cwd=str(target_path),
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            return {line.strip().lower() for line in result.stdout.splitlines() if line.strip()}
-    except Exception:
-        pass
-    return set()
+def _has_enforceable_acceptance(feature: FeatureStep) -> bool:
+    """True if the feature has at least one required_file or required_test.
+
+    Without one or the other we have nothing concrete to verify; the
+    scanner refuses to declare such a feature done.
+    """
+    accept = feature.acceptance
+    return bool(accept.required_files) or bool(accept.required_tests)
 
 
-def _run_smoke_test(target_path: Path) -> bool:
-    """Quick check: do backend tests pass? (or at least not crash)"""
-    backend = target_path / "backend"
-    if not backend.exists():
-        # Maybe tests are at root level
-        backend = target_path
+def _feat_commit_names_feature(feature: FeatureStep, git_log: str) -> bool:
+    """True if a Conventional Commit on this branch names the feature_id.
 
-    has_tests = any(backend.rglob("test_*.py")) or any(backend.rglob("*_test.py"))
-    if not has_tests:
-        return True
+    Looks for ``<type>(<feature_id>):`` where type is one of the
+    Conventional Commit types we accept. Plain mentions of the
+    feature_id elsewhere in the log don't count — those are too easy
+    to hit accidentally.
+    """
+    fid = re.escape(feature.feature_id)
+    pattern = rf"\b(feat|fix|chore|refactor|perf|test|build|ci|docs|style|revert)\({fid}\)"
+    return re.search(pattern, git_log) is not None
 
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "-x", "--no-header"],
-            cwd=str(backend),
-            capture_output=True, text=True, timeout=60,
-        )
-        # Accept green runs and partially green runs that still discovered passing tests.
-        if result.returncode == 0 or "passed" in result.stdout:
-            return True
 
-        combined_output = f"{result.stdout}\n{result.stderr}".lower()
+def _required_files_present(feature: FeatureStep, target_path: Path) -> bool:
+    """Every required_file must exist; with must_mention_feature_id, must
+    also reference the feature_id."""
+    accept = feature.acceptance
+    for rel in accept.required_files:
+        fp = target_path / rel
+        if not fp.exists():
+            return False
+        if accept.must_mention_feature_id and not _file_mentions(fp, feature.feature_id):
+            return False
+    return True
 
-        # Brownfield repos often do not have pytest wired yet. That should not block
-        # feature detection entirely.
-        non_blocking_markers = [
-            "no tests ran",
-            "collected 0 items",
-            "unrecognized arguments: --timeout=30",
-            "module named pytest",
-        ]
-        return any(marker in combined_output for marker in non_blocking_markers)
-    except Exception:
+
+def _required_tests_pass(
+    feature: FeatureStep,
+    target_path: Path,
+) -> tuple[bool, bool]:
+    """Run each required_test. Return (all_passed, had_mention_violation).
+
+    When ``must_mention_feature_id`` is True, a test that exists and
+    passes but doesn't mention the feature_id is a mention violation —
+    we surface it as a separate signal so callers can distinguish
+    "test failed" from "test passed but is generic".
+    """
+    accept = feature.acceptance
+    if not accept.required_tests:
+        return True, False
+
+    mention_violation = False
+    for rel in accept.required_tests:
+        tp = target_path / rel
+        if not tp.exists():
+            return False, mention_violation
+        if accept.must_mention_feature_id and not _file_mentions(tp, feature.feature_id):
+            mention_violation = True
+            continue
+        if not _run_single_test(tp, target_path):
+            return False, mention_violation
+    return True, mention_violation
+
+
+def _run_single_test(test_path: Path, cwd: Path) -> bool:
+    """Run a single test file. True iff it exits 0 and reports passes."""
+    if test_path.suffix == ".py":
+        cmd = [sys.executable, "-m", "pytest", "-q", "-x", str(test_path)]
+    elif test_path.suffix in {".ts", ".tsx", ".js", ".jsx"}:
+        cmd = ["npx", "vitest", "run", str(test_path)]
+    else:
+        # Unknown harness — treat as fail; the charter shouldn't be
+        # listing test files we can't run.
         return False
 
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
 
-def _feature_in_git_history(feature: FeatureStep, git_log: str) -> bool:
-    """Check if a feature appears in git commit messages."""
-    feature_id_lower = feature.feature_id.lower()
-    title_lower = feature.title.lower()
-
-    # Direct feature ID match: feat(sprint-0):, feat(feature-01):, [feature-01]
-    if feature_id_lower in git_log:
+    if result.returncode == 0:
         return True
-
-    # Title keywords match (at least 3 significant words from title in same commit line)
-    title_words = [w for w in re.split(r'\W+', title_lower) if len(w) > 3]
-    if len(title_words) >= 2:
-        for line in git_log.splitlines():
-            matches = sum(1 for w in title_words if w in line)
-            if matches >= min(3, len(title_words)):
-                return True
-
+    # Don't accept "0 collected" / "no tests ran" as success — a passing
+    # state-scanner check requires real green tests, not absent ones.
     return False
 
 
-def _feature_has_files(feature: FeatureStep, file_tree: set[str]) -> bool:
-    """Check if files related to the feature exist in the repo.
-
-    For sprint-0 (scaffold): check for fundamental files.
-    For other features: check for feature-specific files using title keywords.
-    """
-    fid = feature.feature_id.lower()
-
-    # Sprint-0: scaffold is done if basic project structure exists
-    if "sprint-0" in fid or "scaffold" in feature.title.lower():
-        scaffold_markers = [
-            "backend/app/main.py",
-            "backend/requirements.txt",
-            "docker-compose.yml",
-        ]
-        found = sum(1 for m in scaffold_markers if m in file_tree)
-        return found >= 2
-
-    # For other features: extract keywords from title and check file tree
-    title_words = [w.lower() for w in re.split(r'\W+', feature.title) if len(w) > 3]
-    if not title_words:
+def _file_mentions(path: Path, token: str) -> bool:
+    """Cheap content scan capped at 1 MB; falls back to filename match."""
+    try:
+        if path.stat().st_size > 1_000_000:
+            return token in path.name
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        return token in text or token in path.name
+    except OSError:
         return False
 
-    # Check if any file path contains feature keywords (prefix match for stems)
-    keyword_hits = 0
-    for word in title_words:
-        # Use first 4+ chars as stem to match "auth" in path against "authentication" in title
-        stem = word[:4] if len(word) > 4 else word
-        for fpath in file_tree:
-            if stem in fpath:
-                keyword_hits += 1
-                break
 
-    # Need at least 1 keyword match to consider the feature has files
-    return keyword_hits >= 1
+# ---------------------------------------------------------------------------
+# Git helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_git_log(target_path: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "log", "--pretty=%s", "--all", "-500"],
+            cwd=str(target_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.stdout if result.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
