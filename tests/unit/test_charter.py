@@ -13,10 +13,12 @@ from ncdev.pipeline.charter import (
     build_charter_prompt,
     generate_charter,
     load_charter,
+    validate_charter_completeness,
     write_charter,
 )
 from ncdev.pipeline.models import (
     CharterBundle,
+    FeatureAcceptance,
     FeatureQueueDoc,
     FeatureStep,
     TargetProjectContract,
@@ -56,6 +58,11 @@ def _fake_charter_bundle() -> CharterBundle:
                     title="Scaffold project",
                     description="Boot skeleton + health endpoint",
                     acceptance_criteria=["Health endpoint returns 200"],
+                    acceptance=FeatureAcceptance(
+                        required_files=["docker-compose.yml", "backend/app/main.py"],
+                        required_tests=["backend/tests/test_health.py"],
+                        required_routes=["/api/health"],
+                    ),
                 ),
                 FeatureStep(
                     feature_id="f02-auth",
@@ -63,6 +70,11 @@ def _fake_charter_bundle() -> CharterBundle:
                     description="Keycloak integration",
                     acceptance_criteria=["Login works"],
                     depends_on_features=["f01-scaffold"],
+                    acceptance=FeatureAcceptance(
+                        required_files=["backend/app/auth.py"],
+                        required_tests=["backend/tests/test_auth_f02.py"],
+                        required_routes=["/api/auth/login"],
+                    ),
                 ),
             ],
         ),
@@ -252,3 +264,106 @@ def test_generate_charter_uses_plan_tools_only(tmp_path: Path):
     assert "Read" in tools
     assert "Write" in tools
     assert captured["include_codex_protocol"] is False
+
+
+# ---------------------------------------------------------------------------
+# validate_charter_completeness — production-readiness gate
+# ---------------------------------------------------------------------------
+
+
+def test_validate_completeness_passes_for_full_bundle() -> None:
+    bundle = _fake_charter_bundle()
+    assert validate_charter_completeness(bundle) == []
+
+
+def test_validate_completeness_rejects_empty_test_commands() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.verification.backend_test_command = ""
+    bundle.verification.frontend_test_command = ""
+    violations = validate_charter_completeness(bundle)
+    assert any("backend_test_command or frontend_test_command" in v for v in violations)
+
+
+def test_validate_completeness_rejects_missing_health_url_for_web() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.contract.project_type = "web"
+    bundle.verification.backend_health_url = ""
+    violations = validate_charter_completeness(bundle)
+    assert any("backend_health_url" in v for v in violations)
+
+
+def test_validate_completeness_does_not_require_health_url_for_library() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.contract.project_type = "library"
+    bundle.verification.backend_health_url = ""
+    violations = validate_charter_completeness(bundle)
+    # Health URL is not required for libraries; backend_test_command is still set
+    assert not any("backend_health_url" in v for v in violations)
+
+
+def test_validate_completeness_rejects_feature_without_acceptance() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features.append(
+        FeatureStep(
+            feature_id="f99-empty",
+            title="Empty",
+            description="No acceptance",
+            acceptance_criteria=["x"],
+            # acceptance defaults to empty FeatureAcceptance
+        )
+    )
+    violations = validate_charter_completeness(bundle)
+    assert any("'f99-empty'" in v and "empty acceptance" in v for v in violations)
+
+
+def test_load_charter_strict_raises_on_incomplete(tmp_path: Path) -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[0].acceptance = FeatureAcceptance()
+    out = tmp_path / "outputs"
+    write_charter(bundle, out)
+    with pytest.raises(ValueError, match="Charter rejected"):
+        load_charter(out, strict=True)
+
+
+def test_load_charter_non_strict_skips_validation(tmp_path: Path) -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[0].acceptance = FeatureAcceptance()
+    out = tmp_path / "outputs"
+    write_charter(bundle, out)
+    loaded = load_charter(out, strict=False)
+    assert loaded.feature_queue.features[0].feature_id == "f01-scaffold"
+
+
+def test_generate_charter_writes_error_file_on_validation_failure(tmp_path: Path) -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[0].acceptance = FeatureAcceptance()
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        write_charter(bundle, kwargs["cwd"])
+        return ClaudeSessionResult(success=True, final_text="x", exit_code=0)
+
+    with patch("ncdev.pipeline.charter.run_ai_session", side_effect=fake_session):
+        result_bundle, _ = generate_charter(
+            prd_path=tmp_path / "prd.md",
+            output_dir=tmp_path / "outputs",
+        )
+
+    assert result_bundle is None
+    err = tmp_path / "outputs" / "charter-error.json"
+    assert err.exists()
+    err_data = json.loads(err.read_text())
+    assert "Charter rejected" in err_data["error"]
+
+
+def test_charter_prompt_documents_acceptance_field() -> None:
+    prompt = build_charter_prompt(
+        prd_path=Path("/tmp/prd.md"),
+        target_repo=None,
+        output_dir=Path("/tmp/out"),
+        project_type_hint="web",
+    )
+    # The prompt must teach Claude to populate acceptance
+    assert "acceptance" in prompt
+    assert "required_files" in prompt
+    assert "required_tests" in prompt
+    assert "MANDATORY" in prompt

@@ -102,6 +102,31 @@ Rules:
 - Target 4–12 features for most PRDs. If the PRD is huge, group into
   logical features rather than listing every sub-task.
 
+### `acceptance` is MANDATORY per feature — no exceptions
+
+Every FeatureStep MUST have a populated `acceptance` block with at
+least ONE of `required_files` or `required_tests`, and ideally both.
+This is the production-readiness gate the verifier enforces — leaving
+it empty silently marks the feature done without proof, which the
+charter validator now rejects.
+
+For each feature, populate:
+- `required_files`: 1–5 repo-relative paths the feature MUST create or
+  meaningfully edit (e.g. `backend/app/routes/auth.py`,
+  `frontend/src/pages/Dashboard.tsx`, `docs/design-system/tokens.json`).
+- `required_routes`: HTTP routes the app must expose for this feature
+  (e.g. `/api/auth/login`, `/dashboard`). Empty for non-web features.
+- `required_tests`: 1–3 test files that MUST exist and pass and
+  reference the feature_id (e.g. `tests/test_auth_f02.py`).
+- `required_screenshots`: short slug per page (e.g. `dashboard`,
+  `login-page`). Empty for backend-only features.
+- `must_mention_feature_id`: keep `true` unless the feature is shared
+  infra that legitimately can't reference its own id.
+
+For non-UI projects (CLI / library), populate `required_files` and
+`required_tests` only and leave `required_routes` /
+`required_screenshots` empty.
+
 ## Output format
 
 Use the `Write` tool to create each file. Validate with `Read` that you
@@ -141,11 +166,23 @@ FeatureStep = {
   feature_id: str            # "fNN-slug"
   title: str
   description: str
-  acceptance_criteria: array<str>
+  acceptance_criteria: array<str>     # free-form prose for Claude
   test_requirements: array<str>
   depends_on_features: array<str>
   priority: int
   estimated_complexity: "low" | "medium" | "high"
+  acceptance: FeatureAcceptance       # REQUIRED — see below
+}
+
+FeatureAcceptance = {                 # per-feature production-readiness gate
+  required_files: array<str>          # repo-relative paths that MUST exist
+                                       #   AND mention <feature_id>
+  required_routes: array<str>         # URLs that MUST 200 when app is booted
+                                       #   (consumed by integration gate)
+  required_tests: array<str>          # repo-relative test files that MUST
+                                       #   exist, mention feature_id, and pass
+  required_screenshots: array<str>    # filenames under .ncdev/evidence/
+  must_mention_feature_id: bool       # default True — keep True
 }"""
 
 
@@ -208,15 +245,29 @@ def generate_charter(
         return None, session
 
     try:
-        bundle = load_charter(output_dir)
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        bundle = load_charter(output_dir, strict=True)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+        # Persist a charter-error.json so the engine can surface a clear
+        # reason for the run-level failure instead of just "no bundle".
+        (output_dir / "charter-error.json").write_text(
+            json.dumps({"error": str(exc)}, indent=2),
+            encoding="utf-8",
+        )
         return None, session
 
     return bundle, session
 
 
-def load_charter(output_dir: Path) -> CharterBundle:
-    """Load the three charter artifacts from disk. Raises on missing/invalid."""
+def load_charter(output_dir: Path, *, strict: bool = True) -> CharterBundle:
+    """Load the three charter artifacts from disk.
+
+    Raises on missing/invalid files. When ``strict=True`` (default), also
+    runs :func:`validate_charter_completeness` and refuses to return a
+    bundle whose verification contract or feature acceptance is empty —
+    those are the silent-skip configurations we explicitly outlawed.
+    Pass ``strict=False`` only for test fixtures or backwards-compat
+    inspection of legacy charters.
+    """
     contract_path = output_dir / "target-project-contract.json"
     verification_path = output_dir / "verification-contract.json"
     feature_queue_path = output_dir / "feature-queue.json"
@@ -235,11 +286,71 @@ def load_charter(output_dir: Path) -> CharterBundle:
         feature_queue_path.read_text(encoding="utf-8"),
     )
 
-    return CharterBundle(
+    bundle = CharterBundle(
         contract=contract,
         verification=verification,
         feature_queue=feature_queue,
     )
+
+    if strict:
+        violations = validate_charter_completeness(bundle)
+        if violations:
+            raise ValueError(
+                "Charter rejected — production-readiness gates are not "
+                "configured. Fix the following and rerun the charter "
+                "phase:\n  - " + "\n  - ".join(violations)
+            )
+
+    return bundle
+
+
+def validate_charter_completeness(bundle: CharterBundle) -> list[str]:
+    """Return a list of completeness violations. Empty list = charter is OK.
+
+    Enforces the rules that prevent silent skips:
+
+    1. ``verification.backend_test_command`` must be set, OR
+       ``verification.frontend_test_command`` must be set, OR
+       ``contract.project_type`` is "library" (libraries may use
+       ``backend_test_command`` only — checked separately). At least one
+       executable test command is required so the integration gate has
+       something to run.
+    2. For web/api projects, ``verification.backend_health_url`` must be
+       set — without it we can't probe whether the app boots.
+    3. Every feature must have at least one ``required_file`` or
+       ``required_test`` in its acceptance bag. The state-scanner and
+       per-feature verifier need ground truth to check against.
+    """
+    violations: list[str] = []
+    v = bundle.verification
+    c = bundle.contract
+
+    has_test_cmd = bool(v.backend_test_command.strip()) or bool(
+        v.frontend_test_command.strip()
+    )
+    if not has_test_cmd:
+        violations.append(
+            "verification-contract: at least one of backend_test_command "
+            "or frontend_test_command must be set so the verifier can "
+            "actually run tests"
+        )
+
+    if c.project_type in {"web", "api"} and not v.backend_health_url.strip():
+        violations.append(
+            "verification-contract: backend_health_url is required for "
+            f"project_type={c.project_type!r} so the integration gate can "
+            "probe app readiness"
+        )
+
+    for feature in bundle.feature_queue.features:
+        accept = feature.acceptance
+        if not accept.required_files and not accept.required_tests:
+            violations.append(
+                f"feature {feature.feature_id!r} has empty acceptance: "
+                "populate at least one of required_files / required_tests"
+            )
+
+    return violations
 
 
 def write_charter(bundle: CharterBundle, output_dir: Path) -> None:
