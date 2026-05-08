@@ -206,10 +206,18 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
     directory, it's a Playwright spec — invoke ``npx playwright test``
     instead of ``npx vitest run`` (vitest's default config typically
     excludes e2e/ anyway).
+
+    For Python tests, prefers the project's own venv python (so
+    project-installed packages like sqlalchemy are visible) over
+    NC Dev's interpreter. Looks for .venv/bin/python or
+    venv/bin/python in the marker directory and ancestors up to the
+    target_path.
     """
     suffix = test_path.suffix
     if suffix == ".py":
         marker_name = "pyproject.toml"
+        # Default to NC Dev's interpreter; we may switch to the project's
+        # venv python below once we've located the marker directory.
         cmd_template = [sys.executable, "-m", "pytest", "-q", "-x"]
     elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
         marker_name = "package.json"
@@ -229,8 +237,36 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
             break
         cursor = cursor.parent
 
+    # If we found a python project, swap NC Dev's interpreter for the
+    # project's venv python when one exists. Without this, project deps
+    # (sqlalchemy, fastapi, etc.) fail to import and every test errors
+    # with ModuleNotFoundError even when the project itself works.
+    if suffix == ".py":
+        venv_py = _find_project_python(project_root, target_path)
+        if venv_py is not None:
+            cmd_template = [str(venv_py), "-m", "pytest", "-q", "-x"]
+
     rel = test_path.relative_to(project_root) if test_path.is_relative_to(project_root) else test_path
     return project_root, [*cmd_template, str(rel)]
+
+
+def _find_project_python(project_root: Path, target_path: Path) -> Path | None:
+    """Look for .venv/bin/python or venv/bin/python in project_root or
+    any ancestor up to target_path. Returns the first one found."""
+    cursor = project_root
+    while cursor.is_relative_to(target_path) or cursor == target_path:
+        for venv_name in (".venv", "venv"):
+            for bin_dir in ("bin", "Scripts"):
+                candidate = cursor / venv_name / bin_dir / "python"
+                if candidate.exists():
+                    return candidate
+                candidate_exe = cursor / venv_name / bin_dir / "python.exe"
+                if candidate_exe.exists():
+                    return candidate_exe
+        if cursor == cursor.parent or cursor == target_path:
+            break
+        cursor = cursor.parent
+    return None
 
 
 def _looks_like_playwright_test(test_path: Path) -> bool:
