@@ -313,3 +313,33 @@ def test_runner_for_test_returns_none_for_unknown_suffix(tmp_path: Path) -> None
     project_root, cmd = _runner_for_test(test_file, tmp_path)
     assert project_root is None
     assert cmd is None
+
+
+def test_runner_for_test_picks_playwright_for_e2e_dir(tmp_path: Path) -> None:
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    (tmp_path / "frontend").mkdir()
+    (tmp_path / "frontend" / "package.json").write_text('{"name": "x"}')
+    (tmp_path / "frontend" / "tests" / "e2e").mkdir(parents=True)
+    test_file = tmp_path / "frontend" / "tests" / "e2e" / "landing.spec.ts"
+    test_file.write_text("import { test } from '@playwright/test';\n")
+
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+    assert project_root == tmp_path / "frontend"
+    assert cmd is not None
+    assert cmd[:3] == ["npx", "playwright", "test"]
+
+
+def test_runner_for_test_picks_playwright_when_config_present(tmp_path: Path) -> None:
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    (tmp_path / "frontend").mkdir()
+    (tmp_path / "frontend" / "package.json").write_text('{"name": "x"}')
+    (tmp_path / "frontend" / "playwright.config.ts").write_text("export default {};")
+    (tmp_path / "frontend" / "specs").mkdir()
+    test_file = tmp_path / "frontend" / "specs" / "checkout.spec.ts"
+    test_file.write_text("test('x', () => {});")
+
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+    assert cmd is not None
+    assert cmd[:3] == ["npx", "playwright", "test"]
