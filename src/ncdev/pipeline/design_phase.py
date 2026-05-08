@@ -24,6 +24,7 @@ Hard-fail rule (enforces the user's ask):
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -352,7 +353,14 @@ def run_design_phase(
         return _finalise_design_phase(session, output_dir)
 
     # --- Greenfield (or brownfield without designs) + Stitch available ----
-    if has_stitch:
+    # The Stitch path only fires when the user explicitly opts in via
+    # NCDEV_USE_STITCH=1. Without the opt-in, even a configured Stitch
+    # MCP server is bypassed because the spawned Claude session's
+    # --allowedTools allowlist excludes mcp__stitch__* by default — so
+    # the session detects "Stitch not available" and writes the
+    # design-phase-error.json that hard-fails the run. Defaulting to
+    # the deterministic seed keeps NC Dev unblocked on every machine.
+    if has_stitch and os.environ.get("NCDEV_USE_STITCH") == "1":
         prompt = _stitch_prompt(contract, target_path, output_dir)
         session = run_ai_session(
             prompt,
@@ -365,7 +373,16 @@ def run_design_phase(
             max_budget_usd=max_budget_usd,
             log_path=log_path,
         )
-        return _finalise_design_phase(session, output_dir)
+        result = _finalise_design_phase(session, output_dir)
+        # If the Stitch session hard-failed (because the spawned
+        # session couldn't actually invoke Stitch tools), fall through
+        # to the deterministic seed instead of bubbling up the failure.
+        if not result.hard_failed:
+            return result
+        # Clear the error artifact so the seed branch can proceed cleanly.
+        err_path = output_dir / "design-phase-error.json"
+        if err_path.exists():
+            err_path.rename(output_dir / "design-phase-error.stitch-attempt.json")
 
     # --- No Stitch + no existing designs: deterministic seed ---------------
     # Previously this branch invoked Claude with the frontend-design skill

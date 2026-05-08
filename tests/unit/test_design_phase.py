@@ -296,7 +296,12 @@ def test_brownfield_with_design_system_runs_summariser(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_greenfield_with_stitch_runs_stitch_prompt(tmp_path: Path):
+def test_greenfield_with_stitch_runs_stitch_prompt_when_opted_in(tmp_path: Path, monkeypatch):
+    """The Stitch path is OPT-IN via NCDEV_USE_STITCH=1. Without the env
+    var, NC Dev defaults to the deterministic seed even when a Stitch
+    MCP server is configured — the spawned Claude session can't actually
+    use it through the build allowlist, so the path would hard-fail."""
+    monkeypatch.setenv("NCDEV_USE_STITCH", "1")
     contract = _web_contract(is_brownfield=False)
     output_dir = tmp_path / "out"
     captured: dict = {}
@@ -330,8 +335,40 @@ def test_greenfield_with_stitch_runs_stitch_prompt(tmp_path: Path):
     assert "MCP" in captured["prompt"]
 
 
-def test_stitch_phase_that_writes_error_file_is_hard_failed(tmp_path: Path):
-    contract = _web_contract(is_brownfield=False)
+def test_stitch_path_skipped_without_opt_in_env(tmp_path: Path, monkeypatch):
+    """Without NCDEV_USE_STITCH=1, even has_stitch=True falls through to
+    the deterministic seed. This is the default that keeps NC Dev
+    unblocked on every machine."""
+    monkeypatch.delenv("NCDEV_USE_STITCH", raising=False)
+    contract = _web_contract(is_brownfield=False, design_archetype="Warm Playfulness")
+    output_dir = tmp_path / "out"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    invoked = {"called": False}
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        invoked["called"] = True
+        return ClaudeSessionResult(success=True, final_text="should not run", exit_code=0)
+
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
+        result = run_design_phase(
+            contract, tmp_path, output_dir,
+            stitch_probe=lambda: True,   # Stitch IS available, but opt-in is OFF
+        )
+
+    assert invoked["called"] is False
+    assert result.hard_failed is False
+    assert result.design_doc is not None
+    assert result.design_doc.source == "claude_generated"
+
+
+def test_stitch_phase_that_writes_error_falls_back_to_seed(tmp_path: Path, monkeypatch):
+    """When the user explicitly opts into Stitch but the spawned session
+    can't actually invoke Stitch (writes design-phase-error.json), we
+    rescue by falling back to the deterministic seed instead of hard-
+    failing the run."""
+    monkeypatch.setenv("NCDEV_USE_STITCH", "1")
+    contract = _web_contract(is_brownfield=False, design_archetype="Cinematic Minimalism")
     output_dir = tmp_path / "out"
 
     def fake_session(prompt, **kwargs):  # noqa: ARG001
@@ -347,8 +384,12 @@ def test_stitch_phase_that_writes_error_file_is_hard_failed(tmp_path: Path):
             stitch_probe=lambda: True,
         )
 
-    assert result.hard_failed is True
-    assert "error artifact" in (result.error or "")
+    assert result.hard_failed is False  # rescued by seed
+    assert result.design_doc is not None
+    assert result.design_doc.source == "claude_generated"
+    # Original Stitch error preserved for postmortem under a different name
+    assert (output_dir / "design-phase-error.stitch-attempt.json").exists()
+    assert not (output_dir / "design-phase-error.json").exists()
 
 
 # ---------------------------------------------------------------------------
