@@ -594,3 +594,227 @@ def test_required_files_missing_blocks_pass(tmp_path: Path):
     assert result.status == StepStatus.FAILED
     reasons = result.verification.failure_reasons
     assert any("docker-compose.yml" in r for r in reasons)
+
+
+# ---------------------------------------------------------------------------
+# Per-feature acceptance (clause 8) — production-readiness gate
+# ---------------------------------------------------------------------------
+
+
+def _make_feature_with_acceptance(
+    fid: str = "f01-scaffold",
+    *,
+    required_files: list[str] | None = None,
+    required_tests: list[str] | None = None,
+    required_screenshots: list[str] | None = None,
+    must_mention_feature_id: bool = True,
+) -> FeatureStep:
+    from ncdev.pipeline.models import FeatureAcceptance
+
+    return FeatureStep(
+        feature_id=fid,
+        title="Scaffold",
+        description="Boot skeleton + health endpoint",
+        acceptance_criteria=["Health endpoint returns 200"],
+        test_requirements=[],
+        acceptance=FeatureAcceptance(
+            required_files=required_files or [],
+            required_tests=required_tests or [],
+            required_screenshots=required_screenshots or [],
+            must_mention_feature_id=must_mention_feature_id,
+        ),
+    )
+
+
+def _commit_session(
+    target: Path,
+    files: dict[str, str],
+    commit_msg: str = "feat(f01): work",
+    feature_id: str = "f01-scaffold",
+):
+    """Returns a fake_session callable that writes files and commits."""
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, feature_id)
+        for rel, content in files.items():
+            fp = target / rel
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(content)
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", commit_msg],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    return fake_session
+
+
+def test_acceptance_required_file_missing_blocks_pass(tmp_path: Path):
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+    feature = _make_feature_with_acceptance(
+        required_files=["src/auth/login.py"],
+    )
+    bundle = _make_bundle()
+
+    with patch(
+        "ncdev.pipeline.claude_executor.run_ai_session",
+        side_effect=_commit_session(target, {"unrelated.py": "x=1"}),
+    ):
+        result = execute_feature_claude_driven(
+            feature=feature,
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.FAILED
+    assert any(
+        "feature acceptance: required file missing: src/auth/login.py" in r
+        for r in result.verification.failure_reasons
+    )
+
+
+def test_acceptance_required_file_must_mention_feature_id(tmp_path: Path):
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+    feature = _make_feature_with_acceptance(
+        fid="f01-auth",
+        required_files=["src/auth.py"],
+        must_mention_feature_id=True,
+    )
+    bundle = _make_bundle()
+
+    # File exists but doesn't mention "f01-auth" anywhere
+    with patch(
+        "ncdev.pipeline.claude_executor.run_ai_session",
+        side_effect=_commit_session(
+            target, {"src/auth.py": "def login(): pass\n"}, "feat(f01-auth): work"
+        ),
+    ):
+        result = execute_feature_claude_driven(
+            feature=feature,
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.FAILED
+    assert any(
+        "does not mention feature_id 'f01-auth'" in r
+        for r in result.verification.failure_reasons
+    )
+
+
+def test_acceptance_passes_when_file_mentions_feature_id_in_content(tmp_path: Path):
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+    feature = _make_feature_with_acceptance(
+        fid="f01-auth",
+        required_files=["src/auth.py"],
+        must_mention_feature_id=True,
+    )
+    bundle = _make_bundle()
+
+    with patch(
+        "ncdev.pipeline.claude_executor.run_ai_session",
+        side_effect=_commit_session(
+            target,
+            {"src/auth.py": "# implements f01-auth\ndef login(): pass\n"},
+            "feat(f01-auth): work",
+            feature_id="f01-auth",
+        ),
+    ):
+        result = execute_feature_claude_driven(
+            feature=feature,
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.PASSED, (
+        f"failures: {result.verification.failure_reasons}"
+    )
+
+
+def test_acceptance_required_test_must_exist(tmp_path: Path):
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+    feature = _make_feature_with_acceptance(
+        required_tests=["tests/test_login.py"],
+    )
+    bundle = _make_bundle()
+
+    with patch(
+        "ncdev.pipeline.claude_executor.run_ai_session",
+        side_effect=_commit_session(target, {"src/login.py": "f01-scaffold"}),
+    ):
+        result = execute_feature_claude_driven(
+            feature=feature,
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.FAILED
+    assert any(
+        "required test missing: tests/test_login.py" in r
+        for r in result.verification.failure_reasons
+    )
+
+
+def test_acceptance_required_screenshot_must_exist(tmp_path: Path):
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+    feature = _make_feature_with_acceptance(
+        required_files=["src/page.tsx"],
+        required_screenshots=["dashboard"],
+    )
+    bundle = _make_bundle()
+
+    with patch(
+        "ncdev.pipeline.claude_executor.run_ai_session",
+        side_effect=_commit_session(
+            target, {"src/page.tsx": "// f01-scaffold dashboard"},
+        ),
+    ):
+        result = execute_feature_claude_driven(
+            feature=feature,
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+        )
+
+    assert result.status == StepStatus.FAILED
+    assert any(
+        "required screenshot not captured: dashboard" in r
+        for r in result.verification.failure_reasons
+    )
+
+
+def test_file_mentions_token_helper_handles_path_match(tmp_path: Path):
+    from ncdev.pipeline.claude_executor import _file_mentions_token
+
+    p = tmp_path / "test_f01_auth.py"
+    p.write_text("def test_thing(): pass\n")
+    assert _file_mentions_token(p, "f01")
+    assert not _file_mentions_token(p, "f99")
+
+
+def test_file_mentions_token_helper_returns_false_on_oserror(tmp_path: Path):
+    from ncdev.pipeline.claude_executor import _file_mentions_token
+    assert _file_mentions_token(tmp_path / "missing.py", "anything") is False

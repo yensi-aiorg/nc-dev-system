@@ -418,10 +418,81 @@ def _post_session_verification(
                 "must leave the app in a runnable state"
             )
 
+    # 8. Per-feature acceptance — bind verification to *this feature*, not
+    #    just the global contract. Closes the silent-skip path where a
+    #    feature could PASS by satisfying a globally-empty contract while
+    #    its own required files / tests / screenshots are missing.
+    accept = feature.acceptance
+    for req_file in accept.required_files:
+        fp = target_path / req_file
+        if not fp.exists():
+            reasons.append(
+                f"feature acceptance: required file missing: {req_file}"
+            )
+            continue
+        if accept.must_mention_feature_id and not _file_mentions_token(
+            fp, feature.feature_id
+        ):
+            reasons.append(
+                f"feature acceptance: {req_file} does not mention "
+                f"feature_id '{feature.feature_id}' (must_mention_feature_id=True)"
+            )
+
+    for req_test in accept.required_tests:
+        tp = target_path / req_test
+        if not tp.exists():
+            reasons.append(
+                f"feature acceptance: required test missing: {req_test}"
+            )
+            continue
+        if accept.must_mention_feature_id and not _file_mentions_token(
+            tp, feature.feature_id
+        ):
+            reasons.append(
+                f"feature acceptance: test {req_test} does not reference "
+                f"feature_id '{feature.feature_id}'"
+            )
+            continue
+        if run_test_commands:
+            ok, out = _run_shell(
+                f"python -m pytest -q -x {req_test}"
+                if req_test.endswith(".py")
+                else f"npx vitest run {req_test}",
+                cwd=target_path,
+                timeout=300,
+            )
+            if not ok:
+                reasons.append(
+                    f"feature acceptance: required test {req_test} failed: "
+                    f"{_last_line(out)}"
+                )
+
+    for req_shot in accept.required_screenshots:
+        if not _screenshot_exists(target_path, req_shot):
+            reasons.append(
+                f"feature acceptance: required screenshot not captured: {req_shot}"
+            )
+
     ver.failure_reasons = reasons
     ver.overall_passed = not reasons
     ver.prohibited_patterns = [r for r in reasons if "prohibited" in r.lower()]
     return ver
+
+
+def _file_mentions_token(path: Path, token: str) -> bool:
+    """True if ``path`` (a small text file) references ``token`` literally.
+
+    Reads up to 1 MB to keep verification cheap on large files. Returns
+    False on any read error — callers treat that as "doesn't mention",
+    which is the safe default for an acceptance gate.
+    """
+    try:
+        if path.stat().st_size > 1_000_000:
+            return token in path.name
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        return token in text or token in path.name
+    except OSError:
+        return False
 
 
 def _grep_for_prohibited(

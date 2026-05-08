@@ -9,6 +9,54 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class FeatureAcceptance(BaseModel):
+    """Production-readiness criteria for a single feature — all enforced.
+
+    The free-form ``acceptance_criteria`` field on :class:`FeatureStep`
+    tells Claude *what to build*. This structured bag tells the verifier
+    *what to check on disk and over the wire* before declaring the
+    feature done. Empty lists are allowed only when the charter has
+    explicitly waived the dimension; the charter validator (see
+    :mod:`ncdev.pipeline.charter`) refuses queues whose features have
+    no ``required_files`` and no ``required_tests`` at all — silently
+    "done" features were the #1 source of grossly skipped work.
+    """
+
+    required_files: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Repo-relative paths that MUST exist after the feature is built."
+        ),
+    )
+    required_routes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "URLs (relative paths or full URLs) that MUST respond 2xx when the "
+            "app is booted. Used both during per-feature verification and the "
+            "end-of-run integration gate."
+        ),
+    )
+    required_tests: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Repo-relative test files that MUST exist AND pass. Each must "
+            "mention the feature_id when must_mention_feature_id=True."
+        ),
+    )
+    required_screenshots: list[str] = Field(
+        default_factory=list,
+        description="Filenames (under .ncdev/evidence/) that must be captured.",
+    )
+    must_mention_feature_id: bool = Field(
+        default=True,
+        description=(
+            "When True, required_files and required_tests must reference "
+            "the feature_id literally (in path or in content). Prevents "
+            "drive-by edits to unrelated files from satisfying acceptance."
+        ),
+    )
+
+
 class FeatureStep(BaseModel):
     """A single feature to implement in sequence."""
 
@@ -20,6 +68,15 @@ class FeatureStep(BaseModel):
     depends_on_features: list[str] = Field(default_factory=list)
     priority: int = 0
     estimated_complexity: str = "medium"  # low, medium, high
+    acceptance: FeatureAcceptance = Field(
+        default_factory=FeatureAcceptance,
+        description=(
+            "Structured production-readiness criteria enforced by the "
+            "verifier. Distinct from acceptance_criteria (free-form prose "
+            "for Claude). The charter is REQUIRED to populate this with "
+            "at least one required_file or required_test per feature."
+        ),
+    )
 
 
 class FeatureQueueDoc(BaseModel):
