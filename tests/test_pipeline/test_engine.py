@@ -170,6 +170,7 @@ def test_continue_on_failed_keeps_building(tmp_path: Path, monkeypatch):
         source_path=source,
         target_repo_path=target,
         halt_on_failed=False,
+        skip_integration_gate=True,
     )
 
     assert call_log == ["f1", "f2"]
@@ -218,6 +219,7 @@ def test_verification_regression_when_blocked_dep_was_passed(tmp_path: Path, mon
         source_path=source,
         target_repo_path=target,
         halt_on_failed=False,
+        skip_integration_gate=True,
     )
 
     assert state.status == "verification_regression"

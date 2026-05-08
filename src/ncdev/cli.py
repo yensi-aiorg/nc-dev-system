@@ -320,6 +320,17 @@ def build_parser() -> argparse.ArgumentParser:
             "halt default exists to prevent."
         ),
     )
+    full.add_argument(
+        "--skip-integration-gate",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the end-of-run integration gate (boot probe + full test "
+            "suite + e2e + asset manifest aggregate). Default is to run "
+            "it; per-feature PASS does not prove the product works as a "
+            "unit, so skipping this is escape-hatch territory."
+        ),
+    )
 
     # --- Dev Mode: The Autonomous Senior Engineer ---
     dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
@@ -396,6 +407,7 @@ def main() -> int:
             max_budget_usd=getattr(args, "max_budget_usd", None),
             strict_deps=bool(getattr(args, "strict_deps", False)),
             halt_on_failed=not bool(getattr(args, "continue_on_failed", False)),
+            skip_integration_gate=bool(getattr(args, "skip_integration_gate", False)),
         )
         console.print(f"run_id={state.run_id} status={state.status}")
         console.print(f"features: {state.completed_features}/{state.total_features} completed")

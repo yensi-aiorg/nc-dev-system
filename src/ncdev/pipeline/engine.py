@@ -36,6 +36,7 @@ from ncdev.core.config import NCDevConfig, ensure_default_config
 from ncdev.pipeline.charter import generate_charter
 from ncdev.pipeline.claude_executor import execute_feature_claude_driven
 from ncdev.pipeline.design_phase import run_design_phase
+from ncdev.pipeline.integration_gate import IntegrationResult, run_integration_gate
 from ncdev.pipeline.models import (
     StepResult,
     StepStatus,
@@ -58,6 +59,7 @@ def run_pipeline(
     config: NCDevConfig | None = None,
     strict_deps: bool = False,
     halt_on_failed: bool = True,
+    skip_integration_gate: bool = False,
     # Retained for CLI signature compat; Claude's systematic-debugging
     # skill handles repair now, so this is a no-op.
     max_repair_attempts: int | None = None,
@@ -279,6 +281,33 @@ def run_pipeline(
                 ))
                 break
 
+    # ── Phase 5b: Integration gate ───────────────────────────────────────
+    integration: IntegrationResult | None = None
+    if not dry_run and bundle is not None and not skip_integration_gate:
+        any_passed = any(r.status == StepStatus.PASSED for r in completed)
+        if any_passed:
+            state.phase = "integration"
+            console.print("\n[bold]Phase 5b: Integration gate[/bold]")
+            integration = run_integration_gate(
+                bundle=bundle,
+                target_path=target_path,
+                completed=completed,
+            )
+            state.metadata["integration"] = integration.__dict__.copy()
+            _persist_state(state, run_dir)
+            if integration.passed:
+                console.print(
+                    f"  [green]✓[/green] Integration gate passed in "
+                    f"{integration.duration_seconds:.1f}s "
+                    f"({integration.routes_probed} routes probed)"
+                )
+            else:
+                console.print(Panel(
+                    "[bold red]Integration gate FAILED[/bold red]\n"
+                    + "\n".join(f"  - {f}" for f in integration.failures[:10]),
+                    border_style="red",
+                ))
+
     # ── Phase 6: Summary ─────────────────────────────────────────────────
     state.phase = "complete"
     passed = [r for r in completed if r.status == StepStatus.PASSED]
@@ -299,6 +328,11 @@ def run_pipeline(
     if regressions:
         state.status = "verification_regression"
         state.metadata["verification_regressions"] = regressions
+    elif integration is not None and not integration.passed:
+        # The whole product must work as a unit. Per-feature PASSED is
+        # necessary but not sufficient — if integration fails, the run
+        # is integration_failed regardless of feature counts.
+        state.status = "integration_failed"
     elif not unsuccessful:
         state.status = "passed"
     elif passed:
