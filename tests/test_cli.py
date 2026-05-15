@@ -180,3 +180,46 @@ def test_cli_full_reports_completed_not_passed(tmp_path: Path) -> None:
                 assert main() == 0
 
     assert any("features: 2/3 completed" in line for line in printed)
+
+
+def test_cli_parses_factory_subcommand():
+    from ncdev.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args([
+        "factory", "--source", "/tmp/prd.md",
+        "--workspace", "/tmp/ws",
+        "--max-cycles", "5",
+    ])
+    assert args.command == "factory"
+    assert args.source == "/tmp/prd.md"
+    assert args.max_cycles == 5
+
+
+def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
+    from ncdev import cli
+    from ncdev.factory import FactoryRunState, FactoryStopReason
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+
+    captured = {}
+
+    def fake_run_factory(**kwargs):
+        captured.update(kwargs)
+        return FactoryRunState(
+            workspace=tmp_path,
+            source_path=prd,
+            cycles_run=1,
+            stop_reason=FactoryStopReason.STEWARD_CONTINUE_AT_END,
+        )
+
+    monkeypatch.setattr(cli, "_factory_runner", fake_run_factory, raising=False)
+
+    rc = cli.main([
+        "factory", "--source", str(prd),
+        "--workspace", str(tmp_path),
+        "--max-cycles", "2",
+    ])
+    assert rc == 0
+    assert captured["max_cycles"] == 2
+    assert captured["source_path"] == prd.resolve()

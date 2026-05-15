@@ -13,9 +13,14 @@ from ncdev.core.engine import (
     run_sentinel_fix,
     summarize_sentinel_status,
 )
+from ncdev.factory import FactoryStopReason
+from ncdev.factory import run_factory as _factory_runner_default
 from ncdev.pipeline.engine import run_pipeline
 
 console = Console()
+
+# Indirection so tests can monkey-patch easily.
+_factory_runner = _factory_runner_default
 
 
 def _workspace(path: str | None) -> Path:
@@ -332,6 +337,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    factory = sub.add_parser(
+        "factory",
+        help=(
+            "Run the autonomous closed-loop factory: build → judge → "
+            "repeat until the product is complete or budget runs out."
+        ),
+    )
+    factory.add_argument("--source", required=True,
+                         help="Path to PRD / source spec")
+    factory.add_argument("--target-repo", default=None,
+                         help="Existing target repository (brownfield)")
+    factory.add_argument("--workspace", default=None)
+    factory.add_argument("--max-cycles", type=int, default=5,
+                         help="Stop after this many build→judge cycles")
+    factory.add_argument("--model", default="claude-opus-4-6")
+    factory.add_argument("--timeout", type=int, default=3600,
+                         help="Per-feature builder timeout (seconds)")
+    factory.add_argument("--max-budget-usd", type=float, default=None)
+
     # --- Dev Mode: The Autonomous Senior Engineer ---
     dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
     dev_parser.add_argument("--project", required=True, help="Path to the project directory")
@@ -378,9 +402,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command == "quickstart":
         console.print(_quickstart_text())
@@ -440,6 +464,26 @@ def main() -> int:
             return 0 if qg_state.phase == "passed" else 1
 
         return 0
+
+    if args.command == "factory":
+        workspace = _workspace(args.workspace)
+        target_repo = _resolve_target_repo(args.target_repo, workspace)
+        result = _factory_runner(
+            workspace=workspace,
+            source_path=Path(args.source).resolve(),
+            target_repo_path=target_repo,
+            max_cycles=args.max_cycles,
+            builder_model=args.model,
+            builder_timeout=args.timeout,
+            max_budget_usd=args.max_budget_usd,
+        )
+        console.print(
+            f"factory: cycles={result.cycles_run} "
+            f"stop_reason={result.stop_reason.value if result.stop_reason else 'none'}"
+        )
+        return 0 if result.stop_reason in {
+            FactoryStopReason.STEWARD_CONTINUE_AT_END,
+        } else 1
 
     if args.command == "dev":
         from ncdev.dev import run_dev

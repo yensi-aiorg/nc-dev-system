@@ -30,6 +30,7 @@ regression.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -216,9 +217,9 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
     suffix = test_path.suffix
     if suffix == ".py":
         marker_name = "pyproject.toml"
-        # Default to NC Dev's interpreter; we may switch to the project's
+        # Default to a stable Python launcher; we may switch to the project's
         # venv python below once we've located the marker directory.
-        cmd_template = [sys.executable, "-m", "pytest", "-q", "-x"]
+        cmd_template = [_default_python_runner(), "-m", "pytest", "-q", "-x"]
     elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
         marker_name = "package.json"
         if _looks_like_playwright_test(test_path):
@@ -248,6 +249,15 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
 
     rel = test_path.relative_to(project_root) if test_path.is_relative_to(project_root) else test_path
     return project_root, [*cmd_template, str(rel)]
+
+
+def _default_python_runner() -> str:
+    """Return a portable Python command for target-project tests."""
+    if shutil.which("python3"):
+        return "python3"
+    if shutil.which("python"):
+        return "python"
+    return sys.executable
 
 
 def _find_project_python(project_root: Path, target_path: Path) -> Path | None:
