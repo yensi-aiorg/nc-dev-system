@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ncdev.ai_session import run_ai_session
-from ncdev.claude_session import DEFAULT_PLAN_TOOLS, ClaudeSessionResult
+from ncdev.claude_session import DEFAULT_PLAN_TOOLS
 from ncdev.core.config import NCDevConfig
 from ncdev.pipeline.models import (
     CharterBundle,

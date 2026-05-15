@@ -3,7 +3,6 @@ import json
 from ncdev.claude_session import ClaudeSessionResult
 from ncdev.pipeline.product_steward import (
     Disposition,
-    StewardDecision,
     parse_steward_response,
 )
 

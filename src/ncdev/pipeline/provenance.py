@@ -6,7 +6,6 @@ query this instead of demanding string markers in the source files.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ncdev.pipeline.models import ProvenanceRecord
