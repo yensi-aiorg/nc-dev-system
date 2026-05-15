@@ -128,8 +128,9 @@ For each feature, populate:
   reference the feature_id (e.g. `tests/test_auth_f02.py`).
 - `required_screenshots`: short slug per page (e.g. `dashboard`,
   `login-page`). Empty for backend-only features.
-- `must_mention_feature_id`: keep `true` unless the feature is shared
-  infra that legitimately can't reference its own id.
+- `must_mention_feature_id`: keep `false` (the default). The engine
+  records feature→file provenance automatically. Set `true` only as a
+  belt-and-braces check for unreliable models.
 - `verify_app_boots`: default `false`. Set `true` ONLY for features
   that explicitly bring up the application daemon and leave it
   reachable at the end of their session — typically the f01-scaffold
@@ -201,7 +202,11 @@ FeatureAcceptance = {                 # per-feature production-readiness gate
                                        #   scaffold/boot features that leave
                                        #   the app reachable at session end.
                                        #   Other features should leave it False.
-  must_mention_feature_id: bool       # default True — keep True
+  must_mention_feature_id: bool      # default False — leave False unless
+                                      #   the model has trouble managing
+                                      #   provenance on its own (engine
+                                      #   records what each session touched
+                                      #   in provenance.jsonl)
 }"""
 
 

@@ -639,6 +639,58 @@ def test_required_files_missing_blocks_pass(tmp_path: Path):
     assert any("docker-compose.yml" in r for r in reasons)
 
 
+def test_must_mention_default_false_does_not_fail(tmp_path):
+    """A feature with the default acceptance should not fail merely
+    because its required_files don't mention the feature_id."""
+    from ncdev.pipeline.claude_executor import _post_session_verification
+    from ncdev.pipeline.models import (
+        CharterBundle, FeatureStep, FeatureQueueDoc, FeatureAcceptance,
+        TargetProjectContract, VerificationContract,
+    )
+    import subprocess
+
+    # Set up a minimal git repo so verification helpers don't crash
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "--allow-empty", "-m", "init"],
+                   cwd=tmp_path, check=True)
+    (tmp_path / "src.py").write_text("print('hello')\n")   # NO feature marker
+
+    feature = FeatureStep(
+        feature_id="f99-thing",
+        title="t",
+        description="d",
+        acceptance_criteria=[],
+        acceptance=FeatureAcceptance(required_files=["src.py"]),
+    )
+    bundle = CharterBundle(
+        contract=TargetProjectContract(
+            project_name="p", project_type="library",
+            language="python", database="none", auth="none",
+            ports={}, design_archetype="Developer Brutalism",
+            design_system_source="claude_generated", uses_citex=False,
+            is_brownfield=False, existing_repo_path="",
+        ),
+        verification=VerificationContract(
+            backend_test_command="",
+            frontend_test_command="",
+            required_files=[],
+            backend_health_url="",
+            start_command="",
+            assets_manifest_required=False,
+            minimum_test_count=0,
+        ),
+        feature_queue=FeatureQueueDoc(project_name="p", features=[feature]),
+    )
+
+    ver = _post_session_verification(
+        tmp_path, feature, bundle,
+        run_test_commands=False, probe_health=False,
+    )
+    # File exists, default is False -> no marker requirement -> must pass.
+    assert ver.overall_passed, f"unexpected failures: {ver.failure_reasons}"
+
+
 # ---------------------------------------------------------------------------
 # Per-feature acceptance (clause 8) — production-readiness gate
 # ---------------------------------------------------------------------------
