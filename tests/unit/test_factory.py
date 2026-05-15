@@ -364,17 +364,160 @@ def test_factory_probe_test_craftr_passes_debt_to_steward(monkeypatch, tmp_path)
     assert captured_steward_kwargs["last_test_craftr_scores"] == {"core_flow": 80}
 
 
-def test_factory_captures_baseline_before_cycle_1(monkeypatch, tmp_path):
-    """With TestCraftr probing and baseline capture, baseline is pinned first."""
+def test_pin_per_feature_uses_single_probe_for_all_features(monkeypatch, tmp_path):
     from ncdev import factory as fac
+
+    probe_calls = []
+
+    def fake_probe(**kw):
+        probe_calls.append(kw)
+        return "tc-baseline-run", [], {}
+
+    monkeypatch.setattr(fac, "_probe_test_craftr", fake_probe)
 
     pin_calls = []
 
-    def fake_pin(**kw):
-        pin_calls.append(kw)
-        return "tc-baseline-1"
+    def fake_pin_http(url, payload):
+        pin_calls.append((url, payload))
+        return True
 
-    monkeypatch.setattr(fac, "_pin_test_craftr_baseline", fake_pin)
+    monkeypatch.setattr(fac, "_post_baseline_pin", fake_pin_http)
+
+    result = fac._pin_test_craftr_baseline_per_feature(
+        target_url="http://localhost:3000",
+        source_path=tmp_path / "x",
+        project_id="myproj",
+        feature_ids=["f01-scaffold", "f02-auth", "f03-dashboard"],
+        test_craftr_url="http://localhost:16630",
+    )
+
+    assert len(probe_calls) == 1, "expected exactly ONE probe call for all features"
+    assert len(pin_calls) == 3, "expected one pin per feature"
+    assert result == {
+        "f01-scaffold": "tc-baseline-run",
+        "f02-auth": "tc-baseline-run",
+        "f03-dashboard": "tc-baseline-run",
+    }
+
+
+def test_pin_per_feature_handles_individual_failures(monkeypatch, tmp_path):
+    from ncdev import factory as fac
+
+    monkeypatch.setattr(fac, "_probe_test_craftr", lambda **kw: ("run-1", [], {}))
+
+    call_count = [0]
+
+    def fake_pin_http(url, payload):
+        call_count[0] += 1
+        return call_count[0] != 2
+
+    monkeypatch.setattr(fac, "_post_baseline_pin", fake_pin_http)
+
+    result = fac._pin_test_craftr_baseline_per_feature(
+        target_url="x",
+        source_path=tmp_path / "x",
+        project_id="p",
+        feature_ids=["f01", "f02", "f03"],
+        test_craftr_url="x",
+    )
+
+    assert "f01" in result and "f03" in result and "f02" not in result
+
+
+def test_factory_pins_baseline_per_feature_after_cycle_1(monkeypatch, tmp_path):
+    """With capture_baseline=True, per-feature baselines are populated after cycle 1."""
+    from ncdev import factory as fac
+
+    probe_calls = []
+
+    def fake_probe(**kw):
+        probe_calls.append(kw)
+        return "tc-cycle-probe", [], {}
+
+    monkeypatch.setattr(fac, "_probe_test_craftr", fake_probe)
+
+    pin_calls = []
+
+    def fake_pin_per_feature(**kw):
+        pin_calls.append(kw)
+        return {fid: "tc-baseline-77" for fid in kw["feature_ids"]}
+
+    monkeypatch.setattr(
+        fac,
+        "_pin_test_craftr_baseline_per_feature",
+        fake_pin_per_feature,
+    )
+
+    mock_bundle = MagicMock()
+    mock_bundle.feature_queue.features = [
+        FeatureStep(
+            feature_id="f01",
+            title="t1",
+            description="d",
+            acceptance_criteria=[],
+        ),
+        FeatureStep(
+            feature_id="f02",
+            title="t2",
+            description="d",
+            acceptance_criteria=[],
+        ),
+    ]
+    monkeypatch.setattr(fac, "load_charter_bundle_from_run", lambda run_dir: mock_bundle)
+    monkeypatch.setattr(
+        fac,
+        "run_pipeline",
+        lambda **kw: _factory_pipeline_state(tmp_path, "passed"),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="ok",
+        ),
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        probe_test_craftr=True,
+        capture_baseline=True,
+    )
+
+    assert result.baseline_per_feature == {
+        "f01": "tc-baseline-77",
+        "f02": "tc-baseline-77",
+    }
+    assert len(pin_calls) == 1
+    assert sorted(pin_calls[0]["feature_ids"]) == ["f01", "f02"]
+    assert pin_calls[0]["baseline_run_id"] == "tc-cycle-probe"
+
+    cycle_probes = [kw for kw in probe_calls if kw["cycle"] == 1]
+    assert cycle_probes[0]["baseline_run_id"] == "tc-cycle-probe"
+    assert cycle_probes[0]["baseline_per_feature"] == {
+        "f01": "tc-baseline-77",
+        "f02": "tc-baseline-77",
+    }
+
+
+def test_factory_captures_baseline_before_cycle_1(monkeypatch, tmp_path):
+    """With TestCraftr probing and baseline capture, baseline is probed first."""
+    from ncdev import factory as fac
+
+    probe_calls = []
+
+    def fake_probe(**kw):
+        probe_calls.append(kw)
+        if kw["cycle"] == 0:
+            return "tc-baseline-1", [], {}
+        return "tc-cycle-1", [], {}
+
+    monkeypatch.setattr(fac, "_probe_test_craftr", fake_probe)
+    monkeypatch.setattr(fac, "_post_baseline_pin", lambda url, payload: True)
     monkeypatch.setattr(
         fac,
         "run_pipeline",
@@ -393,8 +536,6 @@ def test_factory_captures_baseline_before_cycle_1(monkeypatch, tmp_path):
             reasoning="ok",
         ),
     )
-    monkeypatch.setattr(fac, "_probe_test_craftr", lambda **kw: ("tc-cycle-1", [], {}))
-
     prd = tmp_path / "prd.md"
     prd.write_text("# x")
     result = run_factory(
@@ -405,18 +546,18 @@ def test_factory_captures_baseline_before_cycle_1(monkeypatch, tmp_path):
         capture_baseline=True,
     )
     assert result.baseline_run_id == "tc-baseline-1"
-    assert len(pin_calls) == 1
+    assert probe_calls[0]["cycle"] == 0
 
 
 def test_factory_baseline_without_probe_is_noop(monkeypatch, tmp_path, caplog):
     """capture_baseline=True but probe_test_craftr=False warns and skips pinning."""
     from ncdev import factory as fac
 
-    pin_called = []
+    probe_called = []
     monkeypatch.setattr(
         fac,
-        "_pin_test_craftr_baseline",
-        lambda **kw: pin_called.append(1) or "x",
+        "_probe_test_craftr",
+        lambda **kw: probe_called.append(1) or ("x", [], {}),
     )
     monkeypatch.setattr(
         fac,
@@ -446,7 +587,7 @@ def test_factory_baseline_without_probe_is_noop(monkeypatch, tmp_path, caplog):
         probe_test_craftr=False,
         capture_baseline=True,
     )
-    assert pin_called == []
+    assert probe_called == []
     assert result.baseline_run_id is None
     assert "baseline capture" in caplog.text
 
@@ -455,19 +596,16 @@ def test_factory_passes_baseline_to_probe(monkeypatch, tmp_path):
     """When baseline_run_id is set, subsequent probes receive it."""
     from ncdev import factory as fac
 
-    monkeypatch.setattr(
-        fac,
-        "_pin_test_craftr_baseline",
-        lambda **kw: "tc-baseline-99",
-    )
-
     probe_kwargs = []
 
     def fake_probe(**kw):
         probe_kwargs.append(kw)
+        if kw["cycle"] == 0:
+            return "tc-baseline-99", [], {}
         return "tc-run", [], {}
 
     monkeypatch.setattr(fac, "_probe_test_craftr", fake_probe)
+    monkeypatch.setattr(fac, "_post_baseline_pin", lambda url, payload: True)
     monkeypatch.setattr(
         fac,
         "run_pipeline",

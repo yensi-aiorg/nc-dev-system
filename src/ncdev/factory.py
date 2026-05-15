@@ -71,6 +71,7 @@ class FactoryRunState:
     run_dirs: list[str] = field(default_factory=list)
     test_craftr_runs: list[str] = field(default_factory=list)
     baseline_run_id: str | None = None
+    baseline_per_feature: dict[str, str] = field(default_factory=dict)
     last_product_debt: list[ProductDebt] = field(default_factory=list)
 
 
@@ -87,6 +88,7 @@ async def _probe_test_craftr_async(
     project_id: str,
     test_craftr_url: str,
     baseline_run_id: str | None = None,
+    baseline_per_feature: dict[str, str] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     config = QualityGateConfig(test_craftr_url=test_craftr_url)
     orchestrator = QualityGateOrchestrator(config)
@@ -97,6 +99,7 @@ async def _probe_test_craftr_async(
         cycle=cycle,
         project_id=project_id,
         baseline_run_id=baseline_run_id,
+        baseline_per_feature=baseline_per_feature,
     )
     result_data = await orchestrator.wait_for_results(run_id)
     issues = await orchestrator.fetch_issues(run_id)
@@ -111,6 +114,7 @@ def _probe_test_craftr(
     project_id: str,
     test_craftr_url: str,
     baseline_run_id: str | None = None,
+    baseline_per_feature: dict[str, str] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Run one TestCraftr probe without making the factory depend on it."""
     try:
@@ -122,11 +126,28 @@ def _probe_test_craftr(
                 project_id=project_id,
                 test_craftr_url=test_craftr_url,
                 baseline_run_id=baseline_run_id,
+                baseline_per_feature=baseline_per_feature,
             )
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("TestCraftr probe failed: %s", exc)
         return None, [], {}
+
+
+def _post_baseline_pin(test_craftr_url: str, payload: dict[str, Any]) -> bool:
+    import httpx
+
+    async def _pin() -> None:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{test_craftr_url}/api/baselines/pin",
+                json=payload,
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+
+    asyncio.run(_pin())
+    return True
 
 
 def _pin_test_craftr_baseline(
@@ -153,22 +174,86 @@ def _pin_test_craftr_baseline(
         return None
 
     try:
-        import httpx
-
-        async def _pin() -> None:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{test_craftr_url}/api/baselines/pin",
-                    json={"project_id": project_id, "run_id": run_id},
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-
-        asyncio.run(_pin())
-        return run_id
+        if _post_baseline_pin(
+            test_craftr_url,
+            {"project_id": project_id, "run_id": run_id},
+        ):
+            return run_id
+        logger.warning("Baseline pin failed: TestCraftr returned unsuccessful status")
+        return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("Baseline pin failed: %s", exc)
         return None
+
+
+def _pin_test_craftr_baseline_per_feature(
+    *,
+    target_url: str,
+    source_path: Path,
+    project_id: str,
+    feature_ids: list[str],
+    test_craftr_url: str,
+    baseline_run_id: str | None = None,
+) -> dict[str, str]:
+    """Run one probe, then pin its run_id once per feature_id.
+
+    Returns ``{feature_id: baseline_run_id}`` for features successfully
+    pinned. Missing entries mean that pin failed (logged warning). A single
+    probe is reused unless ``baseline_run_id`` is provided by the caller.
+    """
+    run_id = baseline_run_id
+    if run_id is None:
+        run_id, _, _ = _probe_test_craftr(
+            target_url=target_url,
+            source_path=source_path,
+            cycle=0,
+            project_id=project_id,
+            test_craftr_url=test_craftr_url,
+        )
+    if run_id is None:
+        logger.warning("Feature baseline capture failed: TestCraftr returned no run_id")
+        return {}
+
+    pinned: dict[str, str] = {}
+    for feature_id in feature_ids:
+        try:
+            payload = {
+                "project_id": project_id,
+                "feature_id": feature_id,
+                "run_id": run_id,
+                "reason": "factory baseline",
+            }
+            if _post_baseline_pin(test_craftr_url, payload):
+                pinned[feature_id] = run_id
+            else:
+                logger.warning("Feature baseline pin failed for %s", feature_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Feature baseline pin failed for %s: %s", feature_id, exc)
+    return pinned
+
+
+def _pin_existing_test_craftr_project_baseline(
+    *,
+    test_craftr_url: str,
+    project_id: str,
+    run_id: str,
+) -> bool:
+    try:
+        return _post_baseline_pin(
+            test_craftr_url,
+            {"project_id": project_id, "run_id": run_id},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Project baseline pin failed: %s", exc)
+        return False
+
+
+def _feature_ids_from_bundle(bundle: CharterBundle) -> list[str]:
+    return [
+        str(feature.feature_id)
+        for feature in getattr(bundle.feature_queue, "features", [])
+        if getattr(feature, "feature_id", None)
+    ]
 
 
 def _known_routes_from_bundle(bundle: CharterBundle) -> list[str]:
@@ -221,9 +306,10 @@ def run_factory(
         )
 
     if probe_test_craftr and capture_baseline:
-        state.baseline_run_id = _pin_test_craftr_baseline(
+        state.baseline_run_id, _, _ = _probe_test_craftr(
             target_url=target_url,
             source_path=source_path,
+            cycle=0,
             project_id=project_id,
             test_craftr_url=test_craftr_url,
         )
@@ -239,6 +325,7 @@ def run_factory(
         max_budget_usd=max_budget_usd,
         config=config,
         probe_test_craftr=probe_test_craftr,
+        capture_baseline=capture_baseline,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=project_id,
@@ -289,6 +376,7 @@ def run_factory_from_issues(
         max_budget_usd=max_budget_usd,
         config=config,
         probe_test_craftr=probe_test_craftr,
+        capture_baseline=False,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
@@ -309,6 +397,7 @@ def _run_factory_cycle_loop(
     max_budget_usd: float | None,
     config: NCDevConfig | None,
     probe_test_craftr: bool,
+    capture_baseline: bool,
     test_craftr_url: str,
     target_url: str,
     project_id: str,
@@ -349,6 +438,26 @@ def _run_factory_cycle_loop(
             state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
             return state
 
+        if capture_baseline and state.baseline_run_id and not state.baseline_per_feature:
+            feature_ids = _feature_ids_from_bundle(bundle)
+            if feature_ids:
+                state.baseline_per_feature.update(
+                    _pin_test_craftr_baseline_per_feature(
+                        target_url=target_url,
+                        source_path=source_path,
+                        project_id=project_id,
+                        feature_ids=feature_ids,
+                        test_craftr_url=test_craftr_url,
+                        baseline_run_id=state.baseline_run_id,
+                    )
+                )
+            elif _pin_existing_test_craftr_project_baseline(
+                test_craftr_url=test_craftr_url,
+                project_id=project_id,
+                run_id=state.baseline_run_id,
+            ):
+                logger.info("Pinned project-level TestCraftr baseline")
+
         steward_kwargs: dict[str, Any] = {}
         if (
             probe_test_craftr
@@ -361,6 +470,7 @@ def _run_factory_cycle_loop(
                 project_id=project_id,
                 test_craftr_url=test_craftr_url,
                 baseline_run_id=state.baseline_run_id,
+                baseline_per_feature=state.baseline_per_feature or None,
             )
             debt = classify_issues_to_debt(
                 issues,

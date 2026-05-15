@@ -84,6 +84,7 @@ class QualityGateOrchestrator:
         cycle: int,
         project_id: str = "",
         baseline_run_id: str | None = None,
+        baseline_per_feature: dict[str, str] | None = None,
     ) -> str:
         """POST to Test Craftr /api/pipeline/runs, returns run_id."""
         payload = {
@@ -94,6 +95,8 @@ class QualityGateOrchestrator:
         }
         if baseline_run_id is not None:
             payload["baseline_run_id"] = baseline_run_id
+        if baseline_per_feature is not None:
+            payload["baseline_per_feature"] = baseline_per_feature
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(

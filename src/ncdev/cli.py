@@ -376,7 +376,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "Capture TestCraftr baseline before cycle 1 "
-            "(brownfield enhancement mode -- detects regressions against "
+            "(per-feature when feature_queue is available; brownfield "
+            "enhancement mode -- detects regressions against "
             "pre-build app state)."
         ),
     )
