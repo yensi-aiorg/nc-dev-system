@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
+import logging
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from ncdev.factory import run_factory as _factory_runner_default
 from ncdev.pipeline.engine import run_pipeline
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 # Indirection so tests can monkey-patch easily.
 _factory_runner = _factory_runner_default
@@ -355,6 +357,35 @@ def build_parser() -> argparse.ArgumentParser:
     factory.add_argument("--timeout", type=int, default=3600,
                          help="Per-feature builder timeout (seconds)")
     factory.add_argument("--max-budget-usd", type=float, default=None)
+    factory.add_argument(
+        "--baseline",
+        action="store_true",
+        default=False,
+        help=(
+            "Capture TestCraftr baseline before cycle 1 "
+            "(brownfield enhancement mode -- detects regressions against "
+            "pre-build app state)."
+        ),
+    )
+    factory.add_argument(
+        "--probe-test-craftr",
+        action="store_true",
+        default=False,
+        help=(
+            "Probe TestCraftr at end of each cycle and feed findings to "
+            "the Product Steward."
+        ),
+    )
+    factory.add_argument(
+        "--test-craftr-url",
+        default="http://localhost:16630",
+        help="TestCraftr base URL.",
+    )
+    factory.add_argument(
+        "--target-url",
+        default="http://localhost:23000",
+        help="URL of the running target app (for TestCraftr probes).",
+    )
 
     # --- Dev Mode: The Autonomous Senior Engineer ---
     dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
@@ -468,6 +499,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "factory":
         workspace = _workspace(args.workspace)
         target_repo = _resolve_target_repo(args.target_repo, workspace)
+        if args.baseline and not args.probe_test_craftr:
+            logger.warning(
+                "--baseline was provided without --probe-test-craftr; "
+                "baseline capture is a no-op"
+            )
         result = _factory_runner(
             workspace=workspace,
             source_path=Path(args.source).resolve(),
@@ -476,6 +512,10 @@ def main(argv: list[str] | None = None) -> int:
             builder_model=args.model,
             builder_timeout=args.timeout,
             max_budget_usd=args.max_budget_usd,
+            probe_test_craftr=args.probe_test_craftr,
+            capture_baseline=args.baseline,
+            test_craftr_url=args.test_craftr_url,
+            target_url=args.target_url,
         )
         console.print(
             f"factory: cycles={result.cycles_run} "

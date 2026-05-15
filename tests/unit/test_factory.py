@@ -26,6 +26,18 @@ def _make_pipeline_state(tmp_path: Path, cycle: int, status: str = "passed"):
     return state
 
 
+def _factory_pipeline_state(tmp_path: Path, status: str = "passed"):
+    state = MagicMock()
+    state.status = status
+    state.run_id = "test"
+    state.run_dir = str(tmp_path / "run")
+    state.target_path = str(tmp_path / "target")
+    state.completed_steps = []
+    Path(state.run_dir).mkdir(exist_ok=True)
+    Path(state.target_path).mkdir(exist_ok=True)
+    return state
+
+
 def _new_feature() -> FeatureStep:
     return FeatureStep(
         feature_id="f02-settings",
@@ -349,6 +361,143 @@ def test_factory_probe_test_craftr_passes_debt_to_steward(monkeypatch, tmp_path)
     assert result.last_product_debt == fake_debt
     assert captured_steward_kwargs["product_debt"] == fake_debt
     assert captured_steward_kwargs["last_test_craftr_scores"] == {"core_flow": 80}
+
+
+def test_factory_captures_baseline_before_cycle_1(monkeypatch, tmp_path):
+    """With TestCraftr probing and baseline capture, baseline is pinned first."""
+    from ncdev import factory as fac
+
+    pin_calls = []
+
+    def fake_pin(**kw):
+        pin_calls.append(kw)
+        return "tc-baseline-1"
+
+    monkeypatch.setattr(fac, "_pin_test_craftr_baseline", fake_pin)
+    monkeypatch.setattr(
+        fac,
+        "run_pipeline",
+        lambda **kw: _factory_pipeline_state(tmp_path, "passed"),
+    )
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="ok",
+        ),
+    )
+    monkeypatch.setattr(fac, "_probe_test_craftr", lambda **kw: ("tc-cycle-1", [], {}))
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        probe_test_craftr=True,
+        capture_baseline=True,
+    )
+    assert result.baseline_run_id == "tc-baseline-1"
+    assert len(pin_calls) == 1
+
+
+def test_factory_baseline_without_probe_is_noop(monkeypatch, tmp_path, caplog):
+    """capture_baseline=True but probe_test_craftr=False warns and skips pinning."""
+    from ncdev import factory as fac
+
+    pin_called = []
+    monkeypatch.setattr(
+        fac,
+        "_pin_test_craftr_baseline",
+        lambda **kw: pin_called.append(1) or "x",
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_pipeline",
+        lambda **kw: _factory_pipeline_state(tmp_path, "passed"),
+    )
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="ok",
+        ),
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        probe_test_craftr=False,
+        capture_baseline=True,
+    )
+    assert pin_called == []
+    assert result.baseline_run_id is None
+    assert "baseline capture" in caplog.text
+
+
+def test_factory_passes_baseline_to_probe(monkeypatch, tmp_path):
+    """When baseline_run_id is set, subsequent probes receive it."""
+    from ncdev import factory as fac
+
+    monkeypatch.setattr(
+        fac,
+        "_pin_test_craftr_baseline",
+        lambda **kw: "tc-baseline-99",
+    )
+
+    probe_kwargs = []
+
+    def fake_probe(**kw):
+        probe_kwargs.append(kw)
+        return "tc-run", [], {}
+
+    monkeypatch.setattr(fac, "_probe_test_craftr", fake_probe)
+    monkeypatch.setattr(
+        fac,
+        "run_pipeline",
+        lambda **kw: _factory_pipeline_state(tmp_path, "passed"),
+    )
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="ok",
+        ),
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        probe_test_craftr=True,
+        capture_baseline=True,
+    )
+    cycle_probes = [kw for kw in probe_kwargs if kw.get("cycle", 0) > 0]
+    assert cycle_probes, "expected at least one cycle probe"
+    assert cycle_probes[0]["baseline_run_id"] == "tc-baseline-99"
 
 
 def test_factory_probe_disabled_default(monkeypatch, tmp_path):

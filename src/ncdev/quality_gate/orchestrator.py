@@ -78,18 +78,27 @@ class QualityGateOrchestrator:
     # ------------------------------------------------------------------
 
     async def trigger_test_run(
-        self, target_url: str, prd_content: str, cycle: int, project_id: str = ""
+        self,
+        target_url: str,
+        prd_content: str,
+        cycle: int,
+        project_id: str = "",
+        baseline_run_id: str | None = None,
     ) -> str:
         """POST to Test Craftr /api/pipeline/runs, returns run_id."""
+        payload = {
+            "target_url": target_url,
+            "prd_content": prd_content,
+            "cycle": cycle,
+            "project_id": project_id,
+        }
+        if baseline_run_id is not None:
+            payload["baseline_run_id"] = baseline_run_id
+
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{self.config.test_craftr_url}/api/pipeline/runs",
-                json={
-                    "target_url": target_url,
-                    "prd_content": prd_content,
-                    "cycle": cycle,
-                    "project_id": project_id,
-                },
+                json=payload,
                 timeout=30.0,
             )
             resp.raise_for_status()

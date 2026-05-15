@@ -68,6 +68,7 @@ class FactoryRunState:
     decisions: list[StewardDecision] = field(default_factory=list)
     run_dirs: list[str] = field(default_factory=list)
     test_craftr_runs: list[str] = field(default_factory=list)
+    baseline_run_id: str | None = None
     last_product_debt: list[ProductDebt] = field(default_factory=list)
 
 
@@ -83,6 +84,7 @@ async def _probe_test_craftr_async(
     cycle: int,
     project_id: str,
     test_craftr_url: str,
+    baseline_run_id: str | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     config = QualityGateConfig(test_craftr_url=test_craftr_url)
     orchestrator = QualityGateOrchestrator(config)
@@ -92,6 +94,7 @@ async def _probe_test_craftr_async(
         prd_content=prd_content,
         cycle=cycle,
         project_id=project_id,
+        baseline_run_id=baseline_run_id,
     )
     result_data = await orchestrator.wait_for_results(run_id)
     issues = await orchestrator.fetch_issues(run_id)
@@ -105,6 +108,7 @@ def _probe_test_craftr(
     cycle: int,
     project_id: str,
     test_craftr_url: str,
+    baseline_run_id: str | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Run one TestCraftr probe without making the factory depend on it."""
     try:
@@ -115,11 +119,54 @@ def _probe_test_craftr(
                 cycle=cycle,
                 project_id=project_id,
                 test_craftr_url=test_craftr_url,
+                baseline_run_id=baseline_run_id,
             )
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("TestCraftr probe failed: %s", exc)
         return None, [], {}
+
+
+def _pin_test_craftr_baseline(
+    *,
+    target_url: str,
+    source_path: Path,
+    project_id: str,
+    test_craftr_url: str,
+) -> str | None:
+    """Capture and pin the current app state as the project baseline.
+
+    Failure is logged and returned as ``None`` so TestCraftr availability
+    never crashes the factory.
+    """
+    run_id, _, _ = _probe_test_craftr(
+        target_url=target_url,
+        source_path=source_path,
+        cycle=0,
+        project_id=project_id,
+        test_craftr_url=test_craftr_url,
+    )
+    if run_id is None:
+        logger.warning("Baseline capture failed: TestCraftr probe returned no run_id")
+        return None
+
+    try:
+        import httpx
+
+        async def _pin() -> None:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{test_craftr_url}/api/baselines/pin",
+                    json={"project_id": project_id, "run_id": run_id},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+
+        asyncio.run(_pin())
+        return run_id
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Baseline pin failed: %s", exc)
+        return None
 
 
 def _known_routes_from_bundle(bundle: CharterBundle) -> list[str]:
@@ -129,6 +176,14 @@ def _known_routes_from_bundle(bundle: CharterBundle) -> list[str]:
         required_routes = getattr(acceptance, "required_routes", []) or []
         routes.extend(str(route) for route in required_routes if route)
     return routes
+
+
+def _factory_test_craftr_project_id(
+    workspace: Path,
+    target_repo_path: Path | None,
+) -> str:
+    project_path = target_repo_path or workspace
+    return project_path.resolve().name
 
 
 def run_factory(
@@ -142,6 +197,7 @@ def run_factory(
     max_budget_usd: float | None = None,
     config: NCDevConfig | None = None,
     probe_test_craftr: bool = False,
+    capture_baseline: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -155,6 +211,20 @@ def run_factory(
         workspace=workspace.resolve(),
         source_path=source_path.resolve(),
     )
+    project_id = _factory_test_craftr_project_id(workspace, target_repo_path)
+
+    if capture_baseline and not probe_test_craftr:
+        logger.warning(
+            "Ignoring TestCraftr baseline capture because probe_test_craftr is false"
+        )
+
+    if probe_test_craftr and capture_baseline:
+        state.baseline_run_id = _pin_test_craftr_baseline(
+            target_url=target_url,
+            source_path=source_path,
+            project_id=project_id,
+            test_craftr_url=test_craftr_url,
+        )
 
     for cycle in range(1, max_cycles + 1):
         console.print(Panel(
@@ -197,8 +267,9 @@ def run_factory(
                 target_url=target_url,
                 source_path=source_path,
                 cycle=cycle,
-                project_id=pipeline_state.run_id,
+                project_id=project_id,
                 test_craftr_url=test_craftr_url,
+                baseline_run_id=state.baseline_run_id,
             )
             debt = classify_issues_to_debt(
                 issues,

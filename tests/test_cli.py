@@ -195,6 +195,26 @@ def test_cli_parses_factory_subcommand():
     assert args.max_cycles == 5
 
 
+def test_cli_parses_factory_baseline_flags():
+    from ncdev.cli import build_parser
+
+    args = build_parser().parse_args([
+        "factory",
+        "--source",
+        "/tmp/prd.md",
+        "--baseline",
+        "--probe-test-craftr",
+        "--test-craftr-url",
+        "http://localhost:16630",
+        "--target-url",
+        "http://localhost:23000",
+    ])
+    assert args.baseline is True
+    assert args.probe_test_craftr is True
+    assert args.test_craftr_url == "http://localhost:16630"
+    assert args.target_url == "http://localhost:23000"
+
+
 def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
     from ncdev import cli
     from ncdev.factory import FactoryRunState, FactoryStopReason
@@ -223,3 +243,5 @@ def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
     assert rc == 0
     assert captured["max_cycles"] == 2
     assert captured["source_path"] == prd.resolve()
+    assert captured["probe_test_craftr"] is False
+    assert captured["capture_baseline"] is False
