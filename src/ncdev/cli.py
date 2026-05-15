@@ -17,7 +17,7 @@ from ncdev.core.engine import (
 from ncdev.factory import FactoryStopReason
 from ncdev.factory import run_factory as _factory_runner_default
 from ncdev.factory import run_factory_from_issues as _factory_from_issues_runner_default
-from ncdev.pipeline.engine import run_pipeline
+from ncdev.pipeline import engine as engine_mod
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 # Indirection so tests can monkey-patch easily.
 _factory_runner = _factory_runner_default
 _factory_from_issues_runner = _factory_from_issues_runner_default
+
+
+def run_pipeline(**kwargs):
+    """Indirection point for tests while keeping engine monkeypatches effective."""
+    return engine_mod.run_pipeline(**kwargs)
 
 
 def _workspace(path: str | None) -> Path:
@@ -315,6 +320,16 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
     full.add_argument("--quality-gate", action="store_true", default=False, help="Run quality gate loop after build completes")
+    full.add_argument(
+        "--legacy-quality-gate",
+        action="store_true",
+        default=False,
+        help=(
+            "(deprecated) Use the old per-issue quality-gate loop "
+            "instead of routing through the unified factory loop. Will "
+            "be removed in a future release."
+        ),
+    )
     full.add_argument("--strict-deps", action="store_true", default=False,
                       help="Halt the run the moment a feature has an unmet dependency (default: skip the feature and continue).")
     full.add_argument(
@@ -485,28 +500,56 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         if args.quality_gate and not args.dry_run:
-            import asyncio
-            from ncdev.quality_gate.config import QualityGateConfig
-            from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
+            if args.legacy_quality_gate:
+                import asyncio
+                from ncdev.quality_gate.config import QualityGateConfig
+                from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
 
-            qg_config = QualityGateConfig(enabled=True, max_cycles=3)
-            orchestrator = QualityGateOrchestrator(qg_config)
-            prd_content = Path(args.source).resolve().read_text()
-            console.print("[cyan]Starting quality gate loop...[/cyan]")
-            qg_state = asyncio.run(
-                orchestrator.run(
-                    project_name=workspace.name,
-                    target_url=args.base_url,
-                    target_path=str(target_repo or workspace),
-                    prd_content=prd_content,
-                    fix_callback=_run_quality_gate_fixes,
+                console.print(
+                    "[yellow]Using legacy --quality-gate loop. Switch to the "
+                    "default factory routing for the unified loop. The "
+                    "--legacy-quality-gate flag will be removed.[/yellow]"
                 )
+                qg_config = QualityGateConfig(enabled=True, max_cycles=3)
+                orchestrator = QualityGateOrchestrator(qg_config)
+                prd_content = Path(args.source).resolve().read_text()
+                console.print("[cyan]Starting quality gate loop...[/cyan]")
+                qg_state = asyncio.run(
+                    orchestrator.run(
+                        project_name=workspace.name,
+                        target_url=args.base_url,
+                        target_path=str(target_repo or workspace),
+                        prd_content=prd_content,
+                        fix_callback=_run_quality_gate_fixes,
+                    )
+                )
+                console.print(f"quality_gate phase={qg_state.phase} cycles={qg_state.current_cycle}")
+                if qg_state.final_scores:
+                    s = qg_state.final_scores
+                    console.print(f"scores: core_flow={s.core_flow} resilience={s.resilience} polish={s.polish}")
+                return 0 if qg_state.phase == "passed" else 1
+
+            console.print(
+                "[cyan]Quality gate enabled → routing through factory loop "
+                "with TestCraftr probing.[/cyan]"
             )
-            console.print(f"quality_gate phase={qg_state.phase} cycles={qg_state.current_cycle}")
-            if qg_state.final_scores:
-                s = qg_state.final_scores
-                console.print(f"scores: core_flow={s.core_flow} resilience={s.resilience} polish={s.polish}")
-            return 0 if qg_state.phase == "passed" else 1
+            from ncdev.factory import run_factory
+            result = run_factory(
+                workspace=workspace,
+                source_path=Path(args.source).resolve(),
+                target_repo_path=target_repo,
+                max_cycles=3,
+                builder_model=args.model,
+                builder_timeout=args.timeout,
+                max_budget_usd=getattr(args, "max_budget_usd", None),
+                probe_test_craftr=True,
+                target_url=args.base_url,
+            )
+            console.print(
+                f"factory: cycles={result.cycles_run} "
+                f"stop_reason={result.stop_reason.value if result.stop_reason else 'none'}"
+            )
+            return 0 if result.stop_reason and result.stop_reason.value == "steward_continue_at_end" else 1
 
         return 0
 

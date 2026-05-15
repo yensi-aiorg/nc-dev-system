@@ -182,6 +182,91 @@ def test_cli_full_reports_completed_not_passed(tmp_path: Path) -> None:
     assert any("features: 2/3 completed" in line for line in printed)
 
 
+def test_full_quality_gate_routes_through_factory(monkeypatch, tmp_path):
+    """ncdev full --quality-gate (default) calls run_factory."""
+    from ncdev import cli
+    from ncdev.factory import FactoryRunState, FactoryStopReason
+
+    captured = {}
+
+    def fake_run_factory(**kwargs):
+        captured.update(kwargs)
+        return FactoryRunState(
+            workspace=tmp_path,
+            source_path=tmp_path / "x",
+            cycles_run=1,
+            stop_reason=FactoryStopReason.STEWARD_CONTINUE_AT_END,
+        )
+
+    import ncdev.factory as fac
+    monkeypatch.setattr(fac, "run_factory", fake_run_factory, raising=False)
+
+    from ncdev.pipeline import engine as engine_mod
+    fake_state = type("S", (), {
+        "run_id": "x", "status": "passed", "total_features": 1,
+        "completed_features": 1, "run_dir": str(tmp_path),
+    })()
+    monkeypatch.setattr(engine_mod, "run_pipeline", lambda **kw: fake_state)
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    rc = cli.main([
+        "full", "--source", str(prd), "--workspace", str(tmp_path),
+        "--quality-gate",
+    ])
+    assert rc == 0
+    assert captured["probe_test_craftr"] is True
+    assert captured["max_cycles"] == 3
+
+
+def test_full_legacy_quality_gate_routes_through_orchestrator(monkeypatch, tmp_path):
+    """ncdev full --quality-gate --legacy-quality-gate uses the old path."""
+    from ncdev import cli
+    from ncdev.quality_gate import orchestrator as orch_mod
+
+    factory_called = []
+    import ncdev.factory as fac
+    monkeypatch.setattr(
+        fac,
+        "run_factory",
+        lambda **kw: factory_called.append(1),
+        raising=False,
+    )
+
+    legacy_called = []
+
+    class FakeOrchestrator:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def run(self, **kw):
+            legacy_called.append(1)
+            return type(
+                "S",
+                (),
+                {"phase": "passed", "current_cycle": 1, "final_scores": None},
+            )()
+
+    monkeypatch.setattr(orch_mod, "QualityGateOrchestrator", FakeOrchestrator)
+
+    from ncdev.pipeline import engine as engine_mod
+    fake_state = type("S", (), {
+        "run_id": "x", "status": "passed", "total_features": 1,
+        "completed_features": 1, "run_dir": str(tmp_path),
+    })()
+    monkeypatch.setattr(engine_mod, "run_pipeline", lambda **kw: fake_state)
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    rc = cli.main([
+        "full", "--source", str(prd), "--workspace", str(tmp_path),
+        "--quality-gate", "--legacy-quality-gate",
+    ])
+    assert factory_called == []
+    assert legacy_called == [1]
+    assert rc == 0
+
+
 def test_cli_parses_factory_subcommand():
     from ncdev.cli import build_parser
     parser = build_parser()
