@@ -38,10 +38,12 @@ from ncdev.pipeline.claude_executor import execute_feature_claude_driven
 from ncdev.pipeline.design_phase import run_design_phase
 from ncdev.pipeline.integration_gate import IntegrationResult, run_integration_gate
 from ncdev.pipeline.models import (
+    ProvenanceRecord,
     StepResult,
     StepStatus,
     PipelineRunState,
 )
+from ncdev.pipeline.provenance import append_provenance
 
 console = Console()
 
@@ -258,6 +260,16 @@ def run_pipeline(
                 config=config,
             )
             completed.append(result)
+            # Persist provenance — what this feature session actually
+            # touched. Replaces marker-policing as the source of truth
+            # for feature→artifact mapping.
+            append_provenance(run_dir, ProvenanceRecord(
+                feature_id=result.feature_id,
+                commit_sha=result.commit_sha,
+                files_created=list(result.files_created),
+                files_modified=list(result.files_modified),
+                duration_seconds=result.build_duration_seconds or 0.0,
+            ))
             _sync_progress_state(state, completed)
             _persist_state(state, run_dir)
 
