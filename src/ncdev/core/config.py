@@ -27,6 +27,18 @@ ROUTING_TASK_KEYS: tuple[str, ...] = (
 )
 
 
+CAPABILITY_KEYS: tuple[str, ...] = (
+    "frontend_implementation",
+    "backend_implementation",
+    "test_authoring",
+    "product_coherence_review",
+    "visual_ux_judgment",
+    "cheap_boilerplate",
+    "code_review",
+    "debugging",
+)
+
+
 def _uniform_preset(provider: str) -> dict[str, list[str]]:
     return {key: [provider] for key in ROUTING_TASK_KEYS}
 
@@ -61,6 +73,73 @@ class ProviderPreferenceConfig(BaseModel):
     preferred_models: dict[str, str] = Field(default_factory=dict)
     defaults: dict[str, str] = Field(default_factory=dict)
     features: dict[str, bool] = Field(default_factory=dict)
+
+
+class CapabilityChoice(BaseModel):
+    """A single (provider, model) candidate for a capability."""
+
+    provider: str
+    model: str
+
+
+class CapabilityMatrixConfig(BaseModel):
+    """Ordered fallback chains per capability key.
+
+    Empty dict = no capability routing configured; callers fall back to the
+    legacy mode/routing config. When populated, callers requesting a capability
+    get the first available provider in the chain. "Available" means:
+      - the provider is enabled in cfg.providers
+      - (optional) the provider's binary/API is reachable
+    """
+
+    chains: dict[str, list[CapabilityChoice]] = Field(default_factory=dict)
+
+
+DEFAULT_CAPABILITY_CHAINS: dict[str, dict[str, list[CapabilityChoice]]] = {
+    "claude_plan_codex_build": {
+        "frontend_implementation": [
+            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+        ],
+        "backend_implementation": [
+            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+        ],
+        "test_authoring": [
+            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+        ],
+        "product_coherence_review": [
+            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+        ],
+        "visual_ux_judgment": [
+            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+        ],
+        "cheap_boilerplate": [
+            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+        ],
+        "code_review": [
+            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+        ],
+        "debugging": [
+            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+        ],
+    },
+    "claude_only": {
+        k: [CapabilityChoice(provider="anthropic_claude_code", model="opus")]
+        for k in CAPABILITY_KEYS
+    },
+    "codex_only": {
+        k: [CapabilityChoice(provider="openai_codex", model="gpt-5.5")]
+        for k in CAPABILITY_KEYS
+    },
+    "openrouter": {
+        k: [
+            CapabilityChoice(
+                provider="openrouter",
+                model="anthropic/claude-opus-4-6",
+            )
+        ]
+        for k in CAPABILITY_KEYS
+    },
+}
 
 
 class RoutingConfig(BaseModel):
@@ -183,6 +262,7 @@ class NCDevConfig(BaseModel):
         }
     )
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    capabilities: CapabilityMatrixConfig = Field(default_factory=CapabilityMatrixConfig)
     quality_gates: QualityGateConfig = Field(default_factory=QualityGateConfig)
     sentinel: SentinelConfig = Field(default_factory=SentinelConfig)
 
@@ -194,11 +274,16 @@ class NCDevConfig(BaseModel):
                 f"Unknown mode '{self.mode}'. Known modes: "
                 + ", ".join(sorted(MODE_PRESETS.keys()))
             )
-        if not preset:
-            # "custom" — leave RoutingConfig as declared.
-            return self
-        for field, providers in preset.items():
-            setattr(self.routing, field, list(providers))
+        if preset:
+            for field, providers in preset.items():
+                setattr(self.routing, field, list(providers))
+
+        capability_preset = DEFAULT_CAPABILITY_CHAINS.get(self.mode, {})
+        for capability, choices in capability_preset.items():
+            if not self.capabilities.chains.get(capability):
+                self.capabilities.chains[capability] = [
+                    choice.model_copy(deep=True) for choice in choices
+                ]
         return self
 
     def to_yaml_dict(self) -> dict[str, object]:
