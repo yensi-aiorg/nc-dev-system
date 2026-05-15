@@ -6,7 +6,8 @@
 **Ports:** intake_api: 16650
 **Tests:** 372 passing on `claude-orchestrator-migration` branch
 **Commands:**
-  - `ncdev full --source prd.md` — PRD-scale sequential sprint engine
+  - `ncdev factory --source prd.md` — **autonomous closed-loop factory** (build → judge → repeat until product is complete or budget runs out). The default for end-to-end product builds.
+  - `ncdev full --source prd.md` — single open-loop PRD build pass (debug / one-shot mode; no Steward).
   - `ncdev dev --project X --task Y` — single-task freeform engineering
   - `ncdev serve` — HTTP intake for Sentinel reports
   - `ncdev doctor` — preflight
@@ -64,6 +65,23 @@ ncdev full --source prd.md
     │
     └─ Phase 6: Summary + metrics
 ```
+
+## Factory mode (autonomous closed-loop)
+
+`ncdev factory` adds two layers on top of `ncdev full`:
+
+1. **Product Steward** — a Claude session that runs after each build
+   pass with the PRD, feature queue, completed results, and current
+   repo state, and emits a `Disposition`:
+   `continue | repair_current_slice | insert_features | rewrite_acceptance | rerun_charter | stop_as_unrecoverable`.
+2. **Factory loop** — repeats build→steward until the Steward says
+   `continue` at end-of-queue (product done), says
+   `stop_as_unrecoverable`, or the cycle budget runs out.
+
+The Steward holds whole-product UX coherence in its head — the role
+that was missing from `ncdev full`'s feature-local verifiers. As
+reasoning models improve, the Steward improves automatically (no
+prompt re-tuning required).
 
 ## Mode switch — the budget lever
 

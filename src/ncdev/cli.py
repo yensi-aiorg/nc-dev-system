@@ -40,14 +40,14 @@ def _quickstart_text() -> str:
 
 Recommended flow:
 
-1. Dry-run discovery
-   ncdev full --source ./docs/README.md --dry-run
+1. Autonomous closed-loop build
+   ncdev factory --source ./docs/README.md
 
-2. Full build (sequential verified sprints)
+2. Single-pass build (debug / one-shot mode)
    ncdev full --source ./docs/README.md --base-url http://localhost:23000
 
-3. Full build with explicit target repo
-   ncdev full --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000
+3. Factory build with explicit target repo
+   ncdev factory --source /path/to/docs --target-repo /path/to/repo
 
 4. Autonomous dev mode
    ncdev dev --project /path/to/project --task "Build feature X"
