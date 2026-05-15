@@ -205,3 +205,53 @@ def test_run_product_steward_falls_back_to_stop_on_invalid_response(monkeypatch,
         config=None,
     )
     assert decision.disposition == Disposition.STOP_AS_UNRECOVERABLE
+
+
+def test_run_steward_consults_capability_router(monkeypatch, tmp_path):
+    """When config has a capability chain for product_coherence_review,
+    run_product_steward picks up the chain's model name."""
+    from ncdev.core.config import (
+        CapabilityChoice,
+        CapabilityMatrixConfig,
+        NCDevConfig,
+        ProviderPreferenceConfig,
+    )
+    from ncdev.pipeline import product_steward as ps
+
+    cfg = NCDevConfig(
+        mode="custom",
+        providers={"anthropic_claude_code": ProviderPreferenceConfig(enabled=True)},
+        capabilities=CapabilityMatrixConfig(
+            chains={
+                "product_coherence_review": [
+                    CapabilityChoice(
+                        provider="anthropic_claude_code",
+                        model="opus-5",
+                    )
+                ],
+            }
+        ),
+    )
+    captured_model = []
+
+    def fake_session(prompt, **kwargs):
+        captured_model.append(kwargs.get("model"))
+        return ClaudeSessionResult(
+            success=True,
+            final_text='{"disposition":"continue","reasoning":"ok"}',
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(ps, "run_ai_session", fake_session)
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    decision = ps.run_product_steward(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        run_dir=tmp_path / ".run",
+        config=cfg,
+    )
+    assert captured_model == ["opus-5"]
+    assert decision.disposition.value == "continue"

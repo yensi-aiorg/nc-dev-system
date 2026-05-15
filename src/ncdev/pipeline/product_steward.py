@@ -250,6 +250,15 @@ def run_product_steward(
         last_test_craftr_scores=last_test_craftr_scores,
         product_debt=product_debt,
     )
+    if model is None and config is not None:
+        try:
+            from ncdev.core.capability_router import resolve_capability
+
+            resolved = resolve_capability("product_coherence_review", config=config)
+            model = resolved.model
+        except Exception:  # noqa: BLE001
+            pass
+
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "steward-prompt.md").write_text(prompt, encoding="utf-8")
 

@@ -19,10 +19,12 @@ semantics.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -36,11 +38,14 @@ from ncdev.pipeline.charter_mutation import (
 )
 from ncdev.pipeline.engine import run_pipeline
 from ncdev.pipeline.models import CharterBundle
+from ncdev.pipeline.product_debt import ProductDebt, classify_issues_to_debt
 from ncdev.pipeline.product_steward import (
     Disposition,
     StewardDecision,
     run_product_steward,
 )
+from ncdev.quality_gate.config import QualityGateConfig
+from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -62,11 +67,68 @@ class FactoryRunState:
     last_pipeline_status: str = ""
     decisions: list[StewardDecision] = field(default_factory=list)
     run_dirs: list[str] = field(default_factory=list)
+    test_craftr_runs: list[str] = field(default_factory=list)
+    last_product_debt: list[ProductDebt] = field(default_factory=list)
 
 
 def load_charter_bundle_from_run(run_dir: Path) -> CharterBundle:
     """Indirection point so tests can stub charter loading."""
     return load_charter(run_dir / "outputs", strict=False)
+
+
+async def _probe_test_craftr_async(
+    *,
+    target_url: str,
+    source_path: Path,
+    cycle: int,
+    project_id: str,
+    test_craftr_url: str,
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
+    config = QualityGateConfig(test_craftr_url=test_craftr_url)
+    orchestrator = QualityGateOrchestrator(config)
+    prd_content = source_path.read_text(encoding="utf-8")
+    run_id = await orchestrator.trigger_test_run(
+        target_url=target_url,
+        prd_content=prd_content,
+        cycle=cycle,
+        project_id=project_id,
+    )
+    result_data = await orchestrator.wait_for_results(run_id)
+    issues = await orchestrator.fetch_issues(run_id)
+    return run_id, issues, result_data.get("scores", {})
+
+
+def _probe_test_craftr(
+    *,
+    target_url: str,
+    source_path: Path,
+    cycle: int,
+    project_id: str,
+    test_craftr_url: str,
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
+    """Run one TestCraftr probe without making the factory depend on it."""
+    try:
+        return asyncio.run(
+            _probe_test_craftr_async(
+                target_url=target_url,
+                source_path=source_path,
+                cycle=cycle,
+                project_id=project_id,
+                test_craftr_url=test_craftr_url,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("TestCraftr probe failed: %s", exc)
+        return None, [], {}
+
+
+def _known_routes_from_bundle(bundle: CharterBundle) -> list[str]:
+    routes: list[str] = []
+    for feature in getattr(bundle.feature_queue, "features", []):
+        acceptance = getattr(feature, "acceptance", None)
+        required_routes = getattr(acceptance, "required_routes", []) or []
+        routes.extend(str(route) for route in required_routes if route)
+    return routes
 
 
 def run_factory(
@@ -79,6 +141,9 @@ def run_factory(
     builder_timeout: int = 3600,
     max_budget_usd: float | None = None,
     config: NCDevConfig | None = None,
+    probe_test_craftr: bool = False,
+    test_craftr_url: str = "http://localhost:16630",
+    target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
     """Run the build→judge→repeat loop.
 
@@ -123,6 +188,28 @@ def run_factory(
             state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
             return state
 
+        steward_kwargs: dict[str, Any] = {}
+        if (
+            probe_test_craftr
+            and pipeline_state.status in {"passed", "partial", "integration_failed"}
+        ):
+            run_id, issues, scores = _probe_test_craftr(
+                target_url=target_url,
+                source_path=source_path,
+                cycle=cycle,
+                project_id=pipeline_state.run_id,
+                test_craftr_url=test_craftr_url,
+            )
+            debt = classify_issues_to_debt(
+                issues,
+                known_routes=_known_routes_from_bundle(bundle),
+            )
+            if run_id:
+                state.test_craftr_runs.append(run_id)
+            state.last_product_debt = debt
+            steward_kwargs["product_debt"] = debt
+            steward_kwargs["last_test_craftr_scores"] = scores
+
         decision = run_product_steward(
             prd_path=source_path,
             bundle=bundle,
@@ -132,6 +219,7 @@ def run_factory(
             config=config,
             model=builder_model,
             max_budget_usd=max_budget_usd,
+            **steward_kwargs,
         )
         state.decisions.append(decision)
         console.print(
