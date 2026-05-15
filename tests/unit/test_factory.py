@@ -27,16 +27,26 @@ def _make_pipeline_state(tmp_path: Path, cycle: int, status: str = "passed"):
     return state
 
 
-def _factory_pipeline_state(tmp_path: Path, status: str = "passed"):
+def _factory_pipeline_state(
+    tmp_path: Path,
+    status: str = "passed",
+    target_path: Path | None = None,
+):
     state = MagicMock()
     state.status = status
     state.run_id = "test"
     state.run_dir = str(tmp_path / "run")
-    state.target_path = str(tmp_path / "target")
+    state.target_path = str(target_path or tmp_path / "target")
     state.completed_steps = []
     Path(state.run_dir).mkdir(exist_ok=True)
     Path(state.target_path).mkdir(exist_ok=True)
     return state
+
+
+def _factory_git_head(target_repo: Path) -> str | None:
+    from ncdev.factory import _git_head
+
+    return _git_head(target_repo)
 
 
 def _new_feature() -> FeatureStep:
@@ -50,6 +60,157 @@ def _new_feature() -> FeatureStep:
             required_tests=["tests/test_settings.py"],
         ),
     )
+
+
+def test_files_changed_returns_empty_when_no_change(monkeypatch, tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    sha = _factory_git_head(tmp_path)
+    from ncdev.factory import _files_changed_in_cycle
+
+    assert _files_changed_in_cycle(tmp_path, sha, sha) == []
+
+
+def test_files_changed_lists_real_diff(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "a.py").write_text("hello\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-m",
+            "first",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    from ncdev.factory import _files_changed_in_cycle, _git_head
+
+    pre = _git_head(tmp_path)
+    (tmp_path / "b.py").write_text("world\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-m",
+            "second",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    post = _git_head(tmp_path)
+    files = _files_changed_in_cycle(tmp_path, pre, post)
+    assert "b.py" in files
+
+
+def test_factory_forwards_changed_files_to_probe(monkeypatch, tmp_path):
+    import subprocess
+
+    from ncdev import factory as fac
+
+    target = tmp_path / "target"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+    (target / "x.py").write_text("a\n")
+    subprocess.run(["git", "add", "."], cwd=target, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-m",
+            "init",
+        ],
+        cwd=target,
+        check=True,
+    )
+
+    def fake_pipeline(**kw):
+        (Path(kw["target_repo_path"]) / "y.py").write_text("b\n")
+        subprocess.run(["git", "add", "."], cwd=kw["target_repo_path"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-m",
+                "cycle change",
+            ],
+            cwd=kw["target_repo_path"],
+            check=True,
+        )
+        return _factory_pipeline_state(tmp_path, "passed", target_path=target)
+
+    monkeypatch.setattr(fac, "run_pipeline", fake_pipeline)
+
+    probe_kwargs = []
+
+    def fake_probe(**kw):
+        probe_kwargs.append(kw)
+        return "run-1", [], {}
+
+    monkeypatch.setattr(fac, "_probe_test_craftr", fake_probe)
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="ok",
+        ),
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        target_repo_path=target,
+        probe_test_craftr=True,
+    )
+    cycle_probes = [k for k in probe_kwargs if k.get("cycle", 0) > 0]
+    assert cycle_probes, "expected a cycle probe"
+    assert "y.py" in (cycle_probes[0].get("changed_files") or [])
+    assert any("y.py" in row for row in result.changed_files_per_cycle)
 
 
 def test_factory_stops_when_steward_says_continue_at_end_of_queue(monkeypatch, tmp_path):

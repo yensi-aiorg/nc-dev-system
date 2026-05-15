@@ -73,11 +73,58 @@ class FactoryRunState:
     baseline_run_id: str | None = None
     baseline_per_feature: dict[str, str] = field(default_factory=dict)
     last_product_debt: list[ProductDebt] = field(default_factory=list)
+    changed_files_per_cycle: list[list[str]] = field(default_factory=list)
 
 
 def load_charter_bundle_from_run(run_dir: Path) -> CharterBundle:
     """Indirection point so tests can stub charter loading."""
     return load_charter(run_dir / "outputs", strict=False)
+
+
+def _files_changed_in_cycle(
+    target_repo: Path,
+    pre_cycle_sha: str | None,
+    post_cycle_sha: str | None,
+) -> list[str]:
+    """Return repo-relative paths changed between pre_cycle_sha and post_cycle_sha.
+
+    Returns [] when either SHA is missing/empty (first cycle of a brand-new repo)
+    or when git fails.
+    """
+    if not pre_cycle_sha or not post_cycle_sha or pre_cycle_sha == post_cycle_sha:
+        return []
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["git", "diff", "--name-only", f"{pre_cycle_sha}..{post_cycle_sha}"],
+            cwd=str(target_repo),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode != 0:
+            return []
+        return [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+
+def _git_head(target_repo: Path) -> str | None:
+    """Return current HEAD SHA, or None on failure."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(target_repo),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
 
 
 async def _probe_test_craftr_async(
@@ -89,6 +136,7 @@ async def _probe_test_craftr_async(
     test_craftr_url: str,
     baseline_run_id: str | None = None,
     baseline_per_feature: dict[str, str] | None = None,
+    changed_files: list[str] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     config = QualityGateConfig(test_craftr_url=test_craftr_url)
     orchestrator = QualityGateOrchestrator(config)
@@ -100,6 +148,7 @@ async def _probe_test_craftr_async(
         project_id=project_id,
         baseline_run_id=baseline_run_id,
         baseline_per_feature=baseline_per_feature,
+        changed_files=changed_files,
     )
     result_data = await orchestrator.wait_for_results(run_id)
     issues = await orchestrator.fetch_issues(run_id)
@@ -115,6 +164,7 @@ def _probe_test_craftr(
     test_craftr_url: str,
     baseline_run_id: str | None = None,
     baseline_per_feature: dict[str, str] | None = None,
+    changed_files: list[str] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Run one TestCraftr probe without making the factory depend on it."""
     try:
@@ -127,6 +177,7 @@ def _probe_test_craftr(
                 test_craftr_url=test_craftr_url,
                 baseline_run_id=baseline_run_id,
                 baseline_per_feature=baseline_per_feature,
+                changed_files=changed_files,
             )
         )
     except Exception as exc:  # noqa: BLE001
@@ -409,6 +460,7 @@ def _run_factory_cycle_loop(
             f"[bold cyan]Factory cycle {cycle}/{max_cycles}[/bold cyan]",
             border_style="cyan",
         ))
+        pre_cycle_sha = _git_head(target_repo_path) if target_repo_path else None
 
         # Phase A — build (or re-build)
         pipeline_state = run_pipeline(
@@ -428,6 +480,14 @@ def _run_factory_cycle_loop(
         state.cycles_run = cycle
         state.last_pipeline_status = pipeline_state.status
         state.run_dirs.append(pipeline_state.run_dir)
+        target_path = Path(pipeline_state.target_path)
+        post_cycle_sha = _git_head(target_path)
+        changed_files = _files_changed_in_cycle(
+            target_path,
+            pre_cycle_sha,
+            post_cycle_sha,
+        )
+        state.changed_files_per_cycle.append(changed_files)
 
         # Phase B — judge (Steward)
         run_dir = Path(pipeline_state.run_dir)
@@ -471,6 +531,7 @@ def _run_factory_cycle_loop(
                 test_craftr_url=test_craftr_url,
                 baseline_run_id=state.baseline_run_id,
                 baseline_per_feature=state.baseline_per_feature or None,
+                changed_files=changed_files,
             )
             debt = classify_issues_to_debt(
                 issues,
@@ -486,7 +547,7 @@ def _run_factory_cycle_loop(
             prd_path=source_path,
             bundle=bundle,
             completed=list(pipeline_state.completed_steps),
-            target_path=Path(pipeline_state.target_path),
+            target_path=target_path,
             run_dir=run_dir / "steward" / f"cycle-{cycle}",
             config=config,
             model=builder_model,
