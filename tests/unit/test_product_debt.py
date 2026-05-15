@@ -1,6 +1,7 @@
 from ncdev.pipeline.product_debt import (
     DebtType,
     SuggestedDisposition,
+    check_performance_budget,
     classify_issues_to_debt,
 )
 
@@ -13,8 +14,11 @@ def _issue(
     action: str = "",
     title: str = "Issue",
     affected_files_hint: list[str] | None = None,
+    metric_name: str | None = None,
+    metric_value: float | None = None,
+    threshold: float | None = None,
 ) -> dict:
-    return {
+    issue = {
         "id": issue_id,
         "severity": "medium",
         "category": category,
@@ -28,6 +32,13 @@ def _issue(
         },
         "affected_files_hint": affected_files_hint or [],
     }
+    if metric_name is not None:
+        issue["metric_name"] = metric_name
+    if metric_value is not None:
+        issue["metric_value"] = metric_value
+    if threshold is not None:
+        issue["threshold"] = threshold
+    return issue
 
 
 def test_classify_single_visual_issue_is_visual_polish():
@@ -103,6 +114,44 @@ def test_classify_known_url_is_not_missing_feature():
     assert debts[0].debt_type == DebtType.VISUAL_POLISH
 
 
+def test_classify_performance_routes_to_perf_type():
+    debts = classify_issues_to_debt([
+        _issue(
+            "i001",
+            category="performance",
+            title="Slow load",
+            url="/dashboard",
+        )
+    ])
+    assert len(debts) == 1
+    assert debts[0].debt_type == DebtType.PERFORMANCE
+    assert debts[0].suggested_disposition == SuggestedDisposition.DIRECT_FIX
+
+
+def test_classify_perf_evidence_includes_metric_strings():
+    """Issue with metric_name/value/threshold -> evidence has formatted string."""
+    issue = _issue("i001", category="performance", url="/x")
+    issue["metric_name"] = "lcp_ms"
+    issue["metric_value"] = 4200
+    issue["threshold"] = 2500
+    debts = classify_issues_to_debt([issue])
+    assert any(
+        "lcp_ms" in e and "4200" in e and "2500" in e
+        for e in debts[0].evidence
+    )
+
+
+def test_accessibility_still_visual_polish_for_now():
+    debts = classify_issues_to_debt([
+        _issue(
+            "i001",
+            category="accessibility",
+            title="Missing alt text",
+        )
+    ])
+    assert debts[0].debt_type == DebtType.VISUAL_POLISH
+
+
 def test_suggested_disposition_matches_debt_type():
     debts = classify_issues_to_debt([
         _issue("i001", category="visual", title="Visual issue", url="/visual"),
@@ -151,3 +200,29 @@ def test_debt_id_is_unique_and_slugged():
         "d001-save-button-does-nothing",
         "d002-save-button-does-nothing",
     ]
+
+
+def test_check_performance_budget_finds_violation():
+    measured = {"/dashboard": {"lcp_ms": 4200}}
+    budget = {"/dashboard": {"lcp_ms": 2500}}
+    violations = check_performance_budget(measured, budget)
+    assert len(violations) == 1
+    assert violations[0]["metric"] == "lcp_ms"
+    assert violations[0]["observed"] == 4200
+    assert violations[0]["severity"] == "high"
+
+
+def test_check_performance_budget_critical_when_2x():
+    v = check_performance_budget(
+        {"/x": {"lcp_ms": 6000}},
+        {"/x": {"lcp_ms": 2500}},
+    )
+    assert v[0]["severity"] == "critical"
+
+
+def test_check_performance_budget_returns_empty_when_under_budget():
+    v = check_performance_budget(
+        {"/x": {"lcp_ms": 1800}},
+        {"/x": {"lcp_ms": 2500}},
+    )
+    assert v == []

@@ -139,6 +139,37 @@ def test_steward_prompt_includes_product_debt_section(tmp_path):
     assert "new_feature_insertion" in prompt
 
 
+def test_steward_prompt_includes_perf_budget_section_when_perf_debt_present(tmp_path):
+    from ncdev.pipeline.product_debt import (
+        DebtType,
+        ProductDebt,
+        SuggestedDisposition,
+    )
+    from ncdev.pipeline.product_steward import build_steward_prompt
+
+    debt = [
+        ProductDebt(
+            debt_id="d001-slow",
+            debt_type=DebtType.PERFORMANCE,
+            title="LCP regression on /dashboard",
+            description="LCP exceeded budget",
+            evidence=["lcp_ms=4200ms (budget 2500ms)"],
+            suggested_disposition=SuggestedDisposition.DIRECT_FIX,
+        )
+    ]
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    prompt = build_steward_prompt(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        product_debt=debt,
+    )
+    assert "Performance budget status" in prompt
+    assert "lcp_ms=4200ms" in prompt
+
+
 def test_steward_prompt_omits_debt_section_when_none(tmp_path):
     from ncdev.pipeline.product_steward import build_steward_prompt
 

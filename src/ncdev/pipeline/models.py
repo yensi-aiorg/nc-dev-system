@@ -319,6 +319,17 @@ class VerificationContract(BaseModel):
     # Files that must exist
     required_files: list[str] = Field(default_factory=list)
 
+    # Performance budget per route. Maps route path -> metric name -> max value.
+    # Example:
+    #   {"/dashboard": {"lcp_ms": 2500, "ttfb_ms": 600},
+    #    "/api/users": {"p95_ms": 200}}
+    # Empty dict = no budget gating (the default for backwards compat).
+    # The integration gate doesn't directly probe these - TestCraftr
+    # does, and the Steward gets the numeric comparison via
+    # ProductDebt evidence. The contract field is the source of truth
+    # for the budget; the Steward decides what to do about violations.
+    performance_budget: dict[str, dict[str, float]] = Field(default_factory=dict)
+
     # Assets
     assets_manifest_required: bool = True
     assets_manifest_path: str = ".ncdev/assets-needed"

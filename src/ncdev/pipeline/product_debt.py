@@ -21,6 +21,7 @@ class DebtType(str, Enum):
     INCOHERENT_NAVIGATION = "incoherent_navigation"
     DEAD_CONTROL = "dead_control"
     VISUAL_POLISH = "visual_polish"
+    PERFORMANCE = "performance"
     REGRESSION = "regression"
     AMBIGUOUS_PRD = "ambiguous_prd"
 
@@ -54,6 +55,7 @@ _DEBT_DISPOSITIONS: dict[DebtType, SuggestedDisposition] = {
     DebtType.INCOHERENT_NAVIGATION: SuggestedDisposition.CHARTER_AMENDMENT,
     DebtType.DEAD_CONTROL: SuggestedDisposition.DIRECT_FIX,
     DebtType.VISUAL_POLISH: SuggestedDisposition.DIRECT_FIX,
+    DebtType.PERFORMANCE: SuggestedDisposition.DIRECT_FIX,
     DebtType.REGRESSION: SuggestedDisposition.FEATURE_RERUN,
     DebtType.AMBIGUOUS_PRD: SuggestedDisposition.CHARTER_AMENDMENT,
 }
@@ -76,9 +78,10 @@ def classify_issues_to_debt(
         missing_feature debt (the planner didn't anticipate this URL).
       - console/network issues by URL → broken_flow if same URL has a
         functionality issue, otherwise own broken_flow debt.
-      - accessibility / performance → own debt of type matching their
-        category (DebtType.VISUAL_POLISH for both for now —
-        accessibility is the next iteration).
+      - performance-only groups → performance debt with direct_fix,
+        including compact metric evidence when TestCraftr emitted it.
+      - accessibility-only groups → visual_polish debt for now
+        (accessibility is the next iteration).
 
     Confidence is a heuristic — 0.9 when classification is unambiguous
     (single issue type, clear URL), 0.5 when grouped, 0.3 when the
@@ -114,7 +117,11 @@ def classify_issues_to_debt(
             debt_type = DebtType.BROKEN_FLOW
         elif category_set == {"visual"}:
             debt_type = DebtType.VISUAL_POLISH
-        elif category_set and category_set.issubset({"performance", "accessibility"}):
+        elif category_set and "performance" in category_set and category_set.issubset(
+            {"performance", "accessibility"}
+        ):
+            debt_type = DebtType.PERFORMANCE
+        elif category_set == {"accessibility"}:
             debt_type = DebtType.VISUAL_POLISH
         elif category_set and category_set.issubset({"console", "network"}):
             debt_type = DebtType.BROKEN_FLOW
@@ -144,13 +151,46 @@ def classify_issues_to_debt(
                 source_issue_ids=[str(issue.get("id", "")) for issue in issues],
                 affected_feature_ids=affected_feature_ids,
                 affected_routes=[url_path] if url_path else [],
-                evidence=[str(issue.get("id", "")) for issue in issues],
+                evidence=_evidence(issues),
                 suggested_disposition=_DEBT_DISPOSITIONS[debt_type],
                 confidence=confidence,
             )
         )
 
     return debts
+
+
+def check_performance_budget(
+    measured_metrics: dict[str, dict[str, float]],
+    budget: dict[str, dict[str, float]],
+) -> list[dict[str, Any]]:
+    """Return budget violations as a list of dicts.
+
+    Each violation: {route, metric, observed, budget, severity}.
+    severity = 'critical' if observed > 2*budget, 'high' if > 1.5x,
+    'medium' if > 1.2x, 'low' otherwise.
+
+    Routes in budget but not in measured_metrics are skipped
+    (TestCraftr didn't probe them - not a violation, just untested).
+    Metrics in measured but not in budget are skipped (no budget set).
+    """
+    violations: list[dict[str, Any]] = []
+    for route, route_budget in budget.items():
+        route_measurements = measured_metrics.get(route)
+        if not route_measurements:
+            continue
+        for metric, max_value in route_budget.items():
+            observed = route_measurements.get(metric)
+            if observed is None or observed <= max_value:
+                continue
+            violations.append({
+                "route": route,
+                "metric": metric,
+                "observed": observed,
+                "budget": max_value,
+                "severity": _performance_severity(observed, max_value),
+            })
+    return violations
 
 
 def _issue_context(issue: dict[str, Any]) -> dict[str, Any]:
@@ -181,6 +221,38 @@ def _issue_category(issue: dict[str, Any]) -> str:
 
 def _issue_action(issue: dict[str, Any]) -> str:
     return str(_issue_context(issue).get("action_attempted", "")).lower()
+
+
+def _evidence(issues: list[dict[str, Any]]) -> list[str]:
+    evidence = [str(issue.get("id", "")) for issue in issues]
+    for issue in issues:
+        metric = _performance_metric_evidence(issue)
+        if metric:
+            evidence.append(metric)
+    return evidence
+
+
+def _performance_metric_evidence(issue: dict[str, Any]) -> str:
+    metric_name = issue.get("metric_name")
+    metric_value = issue.get("metric_value")
+    threshold = issue.get("threshold")
+    if metric_name is None or metric_value is None or threshold is None:
+        return ""
+    unit = "ms" if str(metric_name).endswith("_ms") else ""
+    return f"{metric_name}={metric_value}{unit} (budget {threshold}{unit})"
+
+
+def _performance_severity(observed: float, max_value: float) -> str:
+    if max_value <= 0:
+        return "critical"
+    ratio = observed / max_value
+    if ratio > 2:
+        return "critical"
+    if ratio > 1.5:
+        return "high"
+    if ratio > 1.2:
+        return "medium"
+    return "low"
 
 
 def _is_mixed_group(category_set: set[str]) -> bool:

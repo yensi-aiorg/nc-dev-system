@@ -28,7 +28,7 @@ from ncdev.pipeline.models import (
     FeatureStep,
     StepResult,
 )
-from ncdev.pipeline.product_debt import ProductDebt
+from ncdev.pipeline.product_debt import DebtType, ProductDebt
 
 
 class Disposition(str, Enum):
@@ -112,6 +112,40 @@ def _summarise_product_debt(product_debt: list[ProductDebt] | None) -> str:
     return "\n".join(lines)
 
 
+def _summarise_performance_status(
+    *,
+    product_debt: list[ProductDebt] | None,
+    performance_budget: dict[str, dict[str, float]],
+) -> str:
+    perf_debts = [
+        debt for debt in product_debt or []
+        if debt.debt_type == DebtType.PERFORMANCE
+    ]
+    if not perf_debts and not performance_budget:
+        return ""
+
+    lines = ["### Performance budget status", ""]
+    if performance_budget:
+        lines.extend([
+            "Configured budget:",
+            "```json",
+            json.dumps(performance_budget, indent=2, sort_keys=True),
+            "```",
+            "",
+        ])
+    if perf_debts:
+        lines.append("Observed violations:")
+        for debt in perf_debts:
+            evidence = ", ".join(debt.evidence) if debt.evidence else "(no metrics)"
+            routes = (
+                f" Routes: {', '.join(debt.affected_routes)}."
+                if debt.affected_routes
+                else ""
+            )
+            lines.append(f"  - {debt.debt_id}: {debt.title}.{routes} Evidence: {evidence}")
+    return "\n".join(lines)
+
+
 def build_steward_prompt(
     *,
     prd_path: Path,
@@ -132,6 +166,15 @@ def build_steward_prompt(
         else json.dumps(last_test_craftr_scores, indent=2)
     )
     product_debt_block = _summarise_product_debt(product_debt)
+    performance_status_block = _summarise_performance_status(
+        product_debt=product_debt,
+        performance_budget=bundle.verification.performance_budget,
+    )
+    performance_status_section = (
+        f"\n{performance_status_block}\n"
+        if performance_status_block
+        else ""
+    )
     product_debt_section = (
         f"\n{product_debt_block}\n"
         if product_debt_block
@@ -174,6 +217,7 @@ if not, what's the cheapest next move?"**
 ```json
 {tc_block}
 ```
+{performance_status_section}
 {product_debt_section}
 
 ## Your decision
