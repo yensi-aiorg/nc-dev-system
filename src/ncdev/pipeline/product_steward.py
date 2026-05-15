@@ -28,6 +28,7 @@ from ncdev.pipeline.models import (
     FeatureStep,
     StepResult,
 )
+from ncdev.pipeline.product_debt import ProductDebt
 
 
 class Disposition(str, Enum):
@@ -93,6 +94,24 @@ def _contract_stack(bundle: CharterBundle) -> str:
     return f"{language} + {contract.database or 'unspecified'}"
 
 
+def _summarise_product_debt(product_debt: list[ProductDebt] | None) -> str:
+    if not product_debt:
+        return ""
+    lines = ["### Detected product debt", ""]
+    for debt in product_debt:
+        routes = (
+            f" Affected routes: {', '.join(debt.affected_routes)}."
+            if debt.affected_routes
+            else ""
+        )
+        lines.append(
+            f"  - [{debt.debt_type.value}] {debt.debt_id} "
+            f"(confidence {debt.confidence:.1f}): {debt.description} "
+            f"Suggested: {debt.suggested_disposition.value}.{routes}"
+        )
+    return "\n".join(lines)
+
+
 def build_steward_prompt(
     *,
     prd_path: Path,
@@ -100,6 +119,7 @@ def build_steward_prompt(
     completed: list[StepResult],
     target_path: Path,
     last_test_craftr_scores: dict | None = None,
+    product_debt: list[ProductDebt] | None = None,
 ) -> str:
     prd_excerpt = prd_path.read_text(encoding="utf-8")[:8000]
     queue_summary = "\n".join(
@@ -110,6 +130,12 @@ def build_steward_prompt(
         "(no TestCraftr probe yet)"
         if last_test_craftr_scores is None
         else json.dumps(last_test_craftr_scores, indent=2)
+    )
+    product_debt_block = _summarise_product_debt(product_debt)
+    product_debt_section = (
+        f"\n{product_debt_block}\n"
+        if product_debt_block
+        else ""
     )
     return f"""# Product Steward - judgment session
 
@@ -148,6 +174,7 @@ if not, what's the cheapest next move?"**
 ```json
 {tc_block}
 ```
+{product_debt_section}
 
 ## Your decision
 
@@ -205,6 +232,7 @@ def run_product_steward(
     run_dir: Path,
     config: NCDevConfig | None,
     last_test_craftr_scores: dict | None = None,
+    product_debt: list[ProductDebt] | None = None,
     model: str | None = None,
     max_budget_usd: float | None = None,
 ) -> StewardDecision:
@@ -220,6 +248,7 @@ def run_product_steward(
         completed=completed,
         target_path=target_path,
         last_test_craftr_scores=last_test_craftr_scores,
+        product_debt=product_debt,
     )
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "steward-prompt.md").write_text(prompt, encoding="utf-8")

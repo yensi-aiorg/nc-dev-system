@@ -105,6 +105,56 @@ def test_prompt_includes_prd_and_failed_feature(tmp_path):
         assert v in prompt
 
 
+def test_steward_prompt_includes_product_debt_section(tmp_path):
+    from ncdev.pipeline.product_debt import (
+        DebtType,
+        ProductDebt,
+        SuggestedDisposition,
+    )
+    from ncdev.pipeline.product_steward import build_steward_prompt
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# Salon PRD\nUsers should configure settings.")
+    prompt = build_steward_prompt(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        product_debt=[
+            ProductDebt(
+                debt_id="d001-settings-page",
+                debt_type=DebtType.MISSING_FEATURE,
+                title="Settings page missing",
+                description="The PRD mentions settings but no feature handles it.",
+                affected_routes=["/settings"],
+                suggested_disposition=SuggestedDisposition.NEW_FEATURE_INSERTION,
+                confidence=0.9,
+            )
+        ],
+    )
+
+    assert "### Detected product debt" in prompt
+    assert "missing_feature" in prompt
+    assert "d001-settings-page" in prompt
+    assert "new_feature_insertion" in prompt
+
+
+def test_steward_prompt_omits_debt_section_when_none(tmp_path):
+    from ncdev.pipeline.product_steward import build_steward_prompt
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# Salon PRD")
+    prompt = build_steward_prompt(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        product_debt=None,
+    )
+
+    assert "Detected product debt" not in prompt
+
+
 def test_run_product_steward_returns_decision(monkeypatch, tmp_path):
     from ncdev.pipeline import product_steward as ps
 
