@@ -30,13 +30,14 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ncdev.core.config import NCDevConfig
-from ncdev.pipeline.charter import generate_charter, load_charter
+from ncdev.pipeline.charter import generate_charter, load_charter, write_charter
 from ncdev.pipeline.charter_mutation import (
     apply_amendments,
     archive_and_clear_charter,
     insert_features,
 )
 from ncdev.pipeline.engine import run_pipeline
+from ncdev.pipeline.issue_charter import synthesize_charter_from_report
 from ncdev.pipeline.models import CharterBundle
 from ncdev.pipeline.product_debt import ProductDebt, classify_issues_to_debt
 from ncdev.pipeline.product_steward import (
@@ -46,6 +47,7 @@ from ncdev.pipeline.product_steward import (
 )
 from ncdev.quality_gate.config import QualityGateConfig
 from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
+from ncdev.utils import make_run_id
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -226,6 +228,93 @@ def run_factory(
             test_craftr_url=test_craftr_url,
         )
 
+    return _run_factory_cycle_loop(
+        state=state,
+        workspace=workspace,
+        source_path=source_path,
+        target_repo_path=target_repo_path,
+        max_cycles=max_cycles,
+        builder_model=builder_model,
+        builder_timeout=builder_timeout,
+        max_budget_usd=max_budget_usd,
+        config=config,
+        probe_test_craftr=probe_test_craftr,
+        test_craftr_url=test_craftr_url,
+        target_url=target_url,
+        project_id=project_id,
+    )
+
+
+def run_factory_from_issues(
+    *,
+    workspace: Path,
+    report_path: Path,
+    target_repo_path: Path,
+    max_cycles: int = 5,
+    builder_model: str | None = None,
+    builder_timeout: int = 3600,
+    max_budget_usd: float | None = None,
+    config: NCDevConfig | None = None,
+    probe_test_craftr: bool = False,
+    test_craftr_url: str = "http://localhost:16630",
+    target_url: str = "http://localhost:23000",
+) -> FactoryRunState:
+    """Bug-fix mode entrypoint.
+
+    Synthesizes a charter from the TC report, writes it to a fresh run_dir,
+    then runs the standard factory loop against that pre-built charter.
+    """
+    workspace = workspace.resolve()
+    report_path = report_path.resolve()
+    target_repo_path = target_repo_path.resolve()
+    run_id = make_run_id("factory-issues")
+    run_dir = workspace / ".nc-dev" / "runs" / run_id
+    outputs_dir = run_dir / "outputs"
+
+    bundle = synthesize_charter_from_report(report_path, target_repo_path)
+    write_charter(bundle, outputs_dir)
+
+    state = FactoryRunState(
+        workspace=workspace,
+        source_path=report_path,
+    )
+    return _run_factory_cycle_loop(
+        state=state,
+        workspace=workspace,
+        source_path=report_path,
+        target_repo_path=target_repo_path,
+        max_cycles=max_cycles,
+        builder_model=builder_model,
+        builder_timeout=builder_timeout,
+        max_budget_usd=max_budget_usd,
+        config=config,
+        probe_test_craftr=probe_test_craftr,
+        test_craftr_url=test_craftr_url,
+        target_url=target_url,
+        project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
+        pipeline_run_id=run_id,
+        skip_charter=True,
+    )
+
+
+def _run_factory_cycle_loop(
+    *,
+    state: FactoryRunState,
+    workspace: Path,
+    source_path: Path,
+    target_repo_path: Path | None,
+    max_cycles: int,
+    builder_model: str | None,
+    builder_timeout: int,
+    max_budget_usd: float | None,
+    config: NCDevConfig | None,
+    probe_test_craftr: bool,
+    test_craftr_url: str,
+    target_url: str,
+    project_id: str,
+    pipeline_run_id: str | None = None,
+    skip_charter: bool = False,
+) -> FactoryRunState:
     for cycle in range(1, max_cycles + 1):
         console.print(Panel(
             f"[bold cyan]Factory cycle {cycle}/{max_cycles}[/bold cyan]",
@@ -241,6 +330,8 @@ def run_factory(
             builder_timeout=builder_timeout,
             max_budget_usd=max_budget_usd,
             config=config,
+            run_id=pipeline_run_id,
+            skip_charter=skip_charter,
             # Factory owns halting via Steward — engine should always
             # surface FAILED features instead of returning early.
             halt_on_failed=False,

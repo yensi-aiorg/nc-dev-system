@@ -43,6 +43,7 @@ class TestCraftrIssue:
     notes: str = ""
     possible_causes: list[str] | None = None
     recommended_action: str = ""
+    context: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -284,19 +285,20 @@ def _load_test_craftr_json(text: str, *, source_path: Path) -> TestCraftrReport:
         raise ValueError("unsupported Test Craftr JSON report shape")
     issues = [
         TestCraftrIssue(
-            issue_id=str(issue.get("issue_id", f"tc-{raw['run_id']}-{idx + 1}")),
+            issue_id=str(issue.get("issue_id", issue.get("id", f"tc-{raw['run_id']}-{idx + 1}"))),
             title=str(issue.get("title", "")),
             severity=str(issue.get("severity", "medium")).lower(),
             issue_type=str(issue.get("issue_type", issue.get("type", "functionality"))).lower(),
             status=str(issue.get("status", "open")).lower(),
-            url=str(issue.get("url", raw.get("target_url", ""))),
+            url=str(issue.get("url", _json_issue_context(issue).get("url", raw.get("target_url", "")))),
             description=str(issue.get("description", "")),
             expected_behavior=str(issue.get("expected_behavior", "")),
             actual_behavior=str(issue.get("actual_behavior", "")),
-            evidence=list(issue.get("evidence", [])),
+            evidence=list(issue.get("evidence") or []),
             notes=str(issue.get("notes", "")),
-            possible_causes=list(issue.get("possible_causes", [])),
+            possible_causes=list(issue.get("possible_causes") or []),
             recommended_action=str(issue.get("recommended_action", "")),
+            context=_json_issue_context(issue),
         )
         for idx, issue in enumerate(raw.get("issues", []))
     ]
@@ -309,6 +311,11 @@ def _load_test_craftr_json(text: str, *, source_path: Path) -> TestCraftrReport:
         issues=issues,
         source_path=str(source_path),
     )
+
+
+def _json_issue_context(issue: dict) -> dict:
+    context = issue.get("context", {})
+    return context if isinstance(context, dict) else {}
 
 
 def _metadata(markdown: str, label: str) -> str:

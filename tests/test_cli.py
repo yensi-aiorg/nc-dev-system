@@ -245,3 +245,62 @@ def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
     assert captured["source_path"] == prd.resolve()
     assert captured["probe_test_craftr"] is False
     assert captured["capture_baseline"] is False
+
+
+def test_cli_factory_from_issues_requires_target_repo(tmp_path):
+    from ncdev import cli
+
+    report = tmp_path / "tc.json"
+    report.write_text('{"run_id":"x","issues":[]}')
+
+    rc = cli.main([
+        "factory",
+        "--source",
+        str(report),
+        "--from-issues",
+        str(report),
+    ])
+
+    assert rc != 0
+
+
+def test_cli_factory_from_issues_calls_from_issues_runner(monkeypatch, tmp_path):
+    from ncdev import cli
+    from ncdev.factory import FactoryRunState, FactoryStopReason
+
+    report = tmp_path / "tc.json"
+    report.write_text('{"run_id":"x","issues":[]}')
+    target = tmp_path / "app"
+    target.mkdir()
+
+    captured = {}
+
+    def fake_from_issues(**kw):
+        captured.update(kw)
+        return FactoryRunState(
+            workspace=tmp_path,
+            source_path=report,
+            cycles_run=1,
+            stop_reason=FactoryStopReason.STEWARD_CONTINUE_AT_END,
+        )
+
+    monkeypatch.setattr(
+        cli,
+        "_factory_from_issues_runner",
+        fake_from_issues,
+        raising=False,
+    )
+
+    rc = cli.main([
+        "factory",
+        "--source",
+        str(report),
+        "--from-issues",
+        str(report),
+        "--target-repo",
+        str(target),
+    ])
+
+    assert rc == 0
+    assert captured["report_path"] == report.resolve()
+    assert captured["target_repo_path"] == target.resolve()

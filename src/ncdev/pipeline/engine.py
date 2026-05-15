@@ -33,7 +33,7 @@ from rich.table import Table
 
 from ncdev.utils import make_run_id
 from ncdev.core.config import NCDevConfig, ensure_default_config
-from ncdev.pipeline.charter import generate_charter
+from ncdev.pipeline.charter import generate_charter, load_charter
 from ncdev.pipeline.claude_executor import execute_feature_claude_driven
 from ncdev.pipeline.design_phase import run_design_phase
 from ncdev.pipeline.integration_gate import IntegrationResult, run_integration_gate
@@ -62,6 +62,7 @@ def run_pipeline(
     strict_deps: bool = False,
     halt_on_failed: bool = True,
     skip_integration_gate: bool = False,
+    skip_charter: bool = False,
     # Retained for CLI signature compat; Claude's systematic-debugging
     # skill handles repair now, so this is a no-op.
     max_repair_attempts: int | None = None,
@@ -107,6 +108,24 @@ def run_pipeline(
     if dry_run:
         console.print("  [dim]Dry run — skipping charter generation[/dim]")
         bundle = None
+    elif skip_charter:
+        try:
+            bundle = load_charter(outputs_dir, strict=False)
+        except Exception as exc:  # noqa: BLE001
+            console.print(Panel(
+                f"[bold red]Pre-built charter load failed[/bold red]\n"
+                f"{exc}\n"
+                f"Expected charter artifacts under: {outputs_dir}",
+                border_style="red",
+            ))
+            state.phase = "failed"
+            state.status = "failed"
+            _persist_state(state, run_dir)
+            return state
+        console.print(
+            f"  [green]✓[/green] Loaded pre-built charter: "
+            f"{len(bundle.feature_queue.features)} features queued"
+        )
     else:
         bundle, charter_session = generate_charter(
             prd_path=source_path,

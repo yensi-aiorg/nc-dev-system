@@ -16,6 +16,7 @@ from ncdev.core.engine import (
 )
 from ncdev.factory import FactoryStopReason
 from ncdev.factory import run_factory as _factory_runner_default
+from ncdev.factory import run_factory_from_issues as _factory_from_issues_runner_default
 from ncdev.pipeline.engine import run_pipeline
 
 console = Console()
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Indirection so tests can monkey-patch easily.
 _factory_runner = _factory_runner_default
+_factory_from_issues_runner = _factory_from_issues_runner_default
 
 
 def _workspace(path: str | None) -> Path:
@@ -348,6 +350,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     factory.add_argument("--source", required=True,
                          help="Path to PRD / source spec")
+    factory.add_argument(
+        "--from-issues",
+        default=None,
+        metavar="REPORT",
+        help=(
+            "Path to a TestCraftr issue report (JSON or Markdown). When "
+            "set, --source is ignored and the factory synthesizes its "
+            "own charter whose features are 'fix each issue'. Requires "
+            "--target-repo."
+        ),
+    )
     factory.add_argument("--target-repo", default=None,
                          help="Existing target repository (brownfield)")
     factory.add_argument("--workspace", default=None)
@@ -499,6 +512,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "factory":
         workspace = _workspace(args.workspace)
         target_repo = _resolve_target_repo(args.target_repo, workspace)
+        if args.from_issues:
+            if target_repo is None:
+                console.print("[red]factory --from-issues requires --target-repo[/red]")
+                return 1
+            result = _factory_from_issues_runner(
+                workspace=workspace,
+                report_path=Path(args.from_issues).resolve(),
+                target_repo_path=target_repo,
+                max_cycles=args.max_cycles,
+                builder_model=args.model,
+                builder_timeout=args.timeout,
+                max_budget_usd=args.max_budget_usd,
+                probe_test_craftr=args.probe_test_craftr,
+                test_craftr_url=args.test_craftr_url,
+                target_url=args.target_url,
+            )
+            console.print(
+                f"factory: cycles={result.cycles_run} "
+                f"stop_reason={result.stop_reason.value if result.stop_reason else 'none'}"
+            )
+            return 0 if result.stop_reason in {
+                FactoryStopReason.STEWARD_CONTINUE_AT_END,
+            } else 1
+
         if args.baseline and not args.probe_test_craftr:
             logger.warning(
                 "--baseline was provided without --probe-test-craftr; "

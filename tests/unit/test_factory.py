@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 from unittest.mock import MagicMock
 
 
@@ -539,3 +540,61 @@ def test_factory_probe_disabled_default(monkeypatch, tmp_path):
     assert probe_called == []
     assert result.test_craftr_runs == []
     assert captured.get("product_debt") in (None, [])
+
+
+def test_run_factory_from_issues_writes_charter_then_loops(monkeypatch, tmp_path):
+    """from_issues synthesizes a charter, writes it, then drives cycles."""
+    from ncdev import factory as fac
+
+    report = tmp_path / "tc-report.json"
+    report.write_text(json.dumps({
+        "run_id": "tc-test-1",
+        "target_url": "http://localhost:23000",
+        "issues": [{
+            "id": "i001",
+            "title": "Dashboard 500s",
+            "severity": "high",
+            "issue_type": "functionality",
+            "context": {"url": "/dashboard", "action_attempted": "navigate"},
+        }],
+    }))
+    target_repo = tmp_path / "app"
+    target_repo.mkdir()
+    (target_repo / "package.json").write_text(
+        '{"dependencies":{"react":"18.0"}}',
+    )
+
+    monkeypatch.setattr(
+        fac,
+        "run_pipeline",
+        lambda **kw: _factory_pipeline_state(tmp_path, "passed"),
+    )
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="ok",
+        ),
+    )
+
+    result = fac.run_factory_from_issues(
+        workspace=tmp_path,
+        report_path=report,
+        target_repo_path=target_repo,
+        max_cycles=1,
+    )
+
+    runs_dir = tmp_path / ".nc-dev" / "runs"
+    run_dirs = list(runs_dir.iterdir())
+    assert run_dirs, "expected at least one run_dir to be created"
+    outputs = run_dirs[0] / "outputs"
+    assert (outputs / "feature-queue.json").exists()
+    assert (outputs / "target-project-contract.json").exists()
+    assert (outputs / "verification-contract.json").exists()
+    assert result.stop_reason == FactoryStopReason.STEWARD_CONTINUE_AT_END
