@@ -27,7 +27,7 @@ PROJECTS = {
     "sentinel": {
         "description": "Production monitoring & auto-fix dispatch system",
         "ports": {"core": 16600, "dashboard": 16601, "mongodb": 16610},
-        "deployed": "London server (indeprof.com)",
+        "deployed": "London server (london1.aiyensi.com)",
         "domain": None,
         "tests": "288 passing",
         "ci": "GitHub Actions — lint + typecheck + tests",
@@ -37,7 +37,7 @@ PROJECTS = {
     "citebot": {
         "description": "AI document Q&A with visual citations — deployed as SiteBot",
         "ports": {"dashboard": 19100, "api": 19110, "mongodb": 19120, "redis": 19121},
-        "deployed": "London server (indeprof.com)",
+        "deployed": "London server (london1.aiyensi.com)",
         "domain": "sitebot.yensi.solutions",
         "tests": "63 passing",
         "ci": None,
@@ -47,7 +47,7 @@ PROJECTS = {
     "yensi-booking": {
         "description": "Virtual appointment scheduling SaaS for therapy/coaching",
         "ports": {"dashboard": 19200, "api": 19210, "mongodb": 19220, "redis": 19221},
-        "deployed": "London server (indeprof.com)",
+        "deployed": "London server (london1.aiyensi.com)",
         "domain": "booking.yensi.solutions",
         "tests": "51 passing",
         "ci": None,
