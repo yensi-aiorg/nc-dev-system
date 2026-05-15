@@ -13,9 +13,9 @@ sequence cycles and act on Steward dispositions until the product
 is done or the budget runs out.
 
 Mid-cycle mutations (insert_features / rewrite_acceptance /
-rerun_charter) are NOT YET applied in this slice — they are logged
-and downgraded to STOP_AS_UNRECOVERABLE for now. The next slice
-will wire them up. CONTINUE / REPAIR / STOP work today.
+rerun_charter) rewrite the charter artifacts on disk and then re-enter
+the build pipeline. CONTINUE / REPAIR / STOP keep their direct loop
+semantics.
 """
 from __future__ import annotations
 
@@ -28,7 +28,12 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ncdev.core.config import NCDevConfig
-from ncdev.pipeline.charter import load_charter
+from ncdev.pipeline.charter import generate_charter, load_charter
+from ncdev.pipeline.charter_mutation import (
+    apply_amendments,
+    archive_and_clear_charter,
+    insert_features,
+)
 from ncdev.pipeline.engine import run_pipeline
 from ncdev.pipeline.models import CharterBundle
 from ncdev.pipeline.product_steward import (
@@ -78,8 +83,8 @@ def run_factory(
     """Run the build→judge→repeat loop.
 
     Returns when the Steward signals CONTINUE at end-of-queue, signals
-    STOP_AS_UNRECOVERABLE, returns a not-yet-implemented disposition,
-    or ``max_cycles`` has been spent.
+    STOP_AS_UNRECOVERABLE, a charter mutation is rejected, or
+    ``max_cycles`` has been spent.
     """
     state = FactoryRunState(
         workspace=workspace.resolve(),
@@ -149,18 +154,53 @@ def run_factory(
             # only re-run target_feature_ids; for now we re-enter the
             # whole pipeline.)
             continue
-        if decision.disposition in {
-            Disposition.INSERT_FEATURES,
-            Disposition.REWRITE_ACCEPTANCE,
-            Disposition.RERUN_CHARTER,
-        }:
+        if decision.disposition == Disposition.INSERT_FEATURES:
+            try:
+                inserted = insert_features(run_dir / "outputs", decision.new_features)
+            except ValueError as exc:
+                console.print(f"[red]Steward feature insertion rejected: {exc}[/red]")
+                state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
+                return state
             console.print(
-                f"[yellow]Disposition {decision.disposition.value} "
-                "is not yet implemented in this slice — stopping. "
-                "Decision persisted for the next slice to act on.[/yellow]"
+                f"  [green]Inserted {inserted} Steward feature(s); "
+                "re-entering pipeline[/green]"
             )
-            state.stop_reason = FactoryStopReason.NOT_YET_IMPLEMENTED
-            return state
+            continue
+        if decision.disposition == Disposition.REWRITE_ACCEPTANCE:
+            try:
+                applied = apply_amendments(run_dir / "outputs", decision.amendments)
+            except (KeyError, ValueError) as exc:
+                console.print(f"[red]Steward acceptance rewrite rejected: {exc}[/red]")
+                state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
+                return state
+            console.print(
+                f"  [green]Applied {applied} Steward amendment(s); "
+                "re-entering pipeline[/green]"
+            )
+            continue
+        if decision.disposition == Disposition.RERUN_CHARTER:
+            archive_path = archive_and_clear_charter(run_dir / "outputs")
+            console.print(
+                f"  [yellow]Archived charter to {archive_path}; regenerating[/yellow]"
+            )
+            regenerated_bundle, charter_session = generate_charter(
+                prd_path=source_path,
+                output_dir=run_dir / "outputs",
+                target_repo=target_repo_path,
+                model=builder_model,
+                max_budget_usd=max_budget_usd,
+                log_path=run_dir / "logs" / f"charter-rerun-cycle-{cycle}.jsonl",
+                config=config,
+            )
+            if regenerated_bundle is None:
+                console.print(
+                    "[red]Steward charter rerun failed: "
+                    f"{charter_session.summary()}[/red]"
+                )
+                state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
+                return state
+            console.print("  [green]Charter regenerated; re-entering pipeline[/green]")
+            continue
 
     state.stop_reason = FactoryStopReason.BUDGET_EXHAUSTED
     return state

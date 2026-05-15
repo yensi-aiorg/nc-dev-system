@@ -78,29 +78,36 @@ def test_three_cycle_repair_then_continue(monkeypatch, tmp_path):
     ]
 
 
-def test_disposition_not_yet_implemented_short_circuits(monkeypatch, tmp_path):
-    """INSERT_FEATURES is logged + downgraded for now."""
-    monkeypatch.setattr(
-        fac,
-        "run_pipeline",
-        lambda **kw: _make_pipeline_state(tmp_path, "passed"),
-    )
+def test_insert_features_disposition_mutates_then_continues(monkeypatch, tmp_path):
+    """INSERT_FEATURES mutates the charter and re-enters the factory loop."""
+    pipeline_states = iter([
+        _make_pipeline_state(tmp_path, "partial"),
+        _make_pipeline_state(tmp_path, "passed"),
+    ])
+    decisions = iter([
+        StewardDecision(
+            disposition=Disposition.INSERT_FEATURES,
+            reasoning="missing settings page",
+        ),
+        StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="done",
+        ),
+    ])
+    insert_features = MagicMock(return_value=0)
+
+    monkeypatch.setattr(fac, "run_pipeline", lambda **kw: next(pipeline_states))
     monkeypatch.setattr(
         fac,
         "load_charter_bundle_from_run",
         lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
     )
-    monkeypatch.setattr(
-        fac,
-        "run_product_steward",
-        lambda **kw: StewardDecision(
-            disposition=Disposition.INSERT_FEATURES,
-            reasoning="missing settings page",
-        ),
-    )
+    monkeypatch.setattr(fac, "run_product_steward", lambda **kw: next(decisions))
+    monkeypatch.setattr(fac, "insert_features", insert_features)
 
     prd = tmp_path / "prd.md"
     prd.write_text("# fake")
     result = run_factory(workspace=tmp_path, source_path=prd, max_cycles=5)
-    assert result.stop_reason == FactoryStopReason.NOT_YET_IMPLEMENTED
-    assert result.cycles_run == 1
+    insert_features.assert_called_once()
+    assert result.stop_reason == FactoryStopReason.STEWARD_CONTINUE_AT_END
+    assert result.cycles_run == 2
