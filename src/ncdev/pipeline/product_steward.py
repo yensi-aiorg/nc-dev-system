@@ -29,6 +29,7 @@ from ncdev.pipeline.models import (
     StepResult,
 )
 from ncdev.pipeline.product_debt import DebtType, ProductDebt
+from ncdev.pipeline.provenance import load_provenance
 
 
 class Disposition(str, Enum):
@@ -112,6 +113,33 @@ def _summarise_product_debt(product_debt: list[ProductDebt] | None) -> str:
     return "\n".join(lines)
 
 
+def _summarise_feature_provenance(
+    feature_provenance: dict[str, list[str]] | None,
+) -> str:
+    if not feature_provenance:
+        return ""
+
+    lines = [
+        "### Feature provenance (which files belong to which feature)",
+        "",
+    ]
+    for feature_id in sorted(feature_provenance):
+        files = sorted(feature_provenance[feature_id])
+        lines.append(f"  - {feature_id}:")
+        for path in files[:20]:
+            lines.append(f"    - {path}")
+        remaining = len(files) - 20
+        if remaining > 0:
+            lines.append(f"    - ... {remaining} more")
+    lines.extend([
+        "",
+        "Use this to reason about which feature owns each ProductDebt:",
+        "a debt at `/dashboard` likely belongs to whichever feature touched",
+        "files matching `dashboard` or `Dashboard`.",
+    ])
+    return "\n".join(lines)
+
+
 def _summarise_performance_status(
     *,
     product_debt: list[ProductDebt] | None,
@@ -154,6 +182,7 @@ def build_steward_prompt(
     target_path: Path,
     last_test_craftr_scores: dict | None = None,
     product_debt: list[ProductDebt] | None = None,
+    feature_provenance: dict[str, list[str]] | None = None,
 ) -> str:
     prd_excerpt = prd_path.read_text(encoding="utf-8")[:8000]
     queue_summary = "\n".join(
@@ -166,6 +195,7 @@ def build_steward_prompt(
         else json.dumps(last_test_craftr_scores, indent=2)
     )
     product_debt_block = _summarise_product_debt(product_debt)
+    feature_provenance_block = _summarise_feature_provenance(feature_provenance)
     performance_status_block = _summarise_performance_status(
         product_debt=product_debt,
         performance_budget=bundle.verification.performance_budget,
@@ -178,6 +208,11 @@ def build_steward_prompt(
     product_debt_section = (
         f"\n{product_debt_block}\n"
         if product_debt_block
+        else ""
+    )
+    feature_provenance_section = (
+        f"\n{feature_provenance_block}\n"
+        if feature_provenance_block
         else ""
     )
     return f"""# Product Steward - judgment session
@@ -208,6 +243,7 @@ if not, what's the cheapest next move?"**
 
 ### Completed so far
 {_summarise_completed(completed)}
+{feature_provenance_section}
 
 ### Current repo
 - target_path: {target_path}
@@ -267,6 +303,36 @@ Return the JSON now.
 """
 
 
+def _find_provenance_dir(start: Path) -> Path | None:
+    cursor = start
+    for _ in range(5):
+        if (cursor / "provenance.jsonl").exists():
+            return cursor
+        if cursor == cursor.parent:
+            break
+        cursor = cursor.parent
+    return None
+
+
+def _load_feature_provenance(start: Path) -> dict[str, list[str]] | None:
+    provenance_dir = _find_provenance_dir(start)
+    if provenance_dir is None:
+        return None
+
+    try:
+        records = load_provenance(provenance_dir)
+    except Exception:  # noqa: BLE001
+        records = []
+
+    provenance_map: dict[str, list[str]] = {}
+    for rec in records:
+        files = set(provenance_map.get(rec.feature_id) or [])
+        files.update(rec.files_created)
+        files.update(rec.files_modified)
+        provenance_map[rec.feature_id] = sorted(files)
+    return provenance_map
+
+
 def run_product_steward(
     *,
     prd_path: Path,
@@ -286,6 +352,7 @@ def run_product_steward(
     continuing on a Steward that didn't actually emit a decision is the
     failure mode this whole feature exists to prevent.
     """
+    feature_provenance = _load_feature_provenance(run_dir)
     prompt = build_steward_prompt(
         prd_path=prd_path,
         bundle=bundle,
@@ -293,6 +360,7 @@ def run_product_steward(
         target_path=target_path,
         last_test_craftr_scores=last_test_craftr_scores,
         product_debt=product_debt,
+        feature_provenance=feature_provenance,
     )
     if model is None and config is not None:
         try:

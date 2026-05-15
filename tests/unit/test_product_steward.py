@@ -186,6 +186,59 @@ def test_steward_prompt_omits_debt_section_when_none(tmp_path):
     assert "Detected product debt" not in prompt
 
 
+def test_steward_prompt_includes_provenance_section(tmp_path):
+    from ncdev.pipeline.product_steward import build_steward_prompt
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    prompt = build_steward_prompt(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        feature_provenance={
+            "f01-scaffold": ["backend/app/main.py", "frontend/src/App.tsx"],
+            "f02-auth": ["backend/app/auth.py", "frontend/src/pages/Login.tsx"],
+        },
+    )
+    assert "Feature provenance" in prompt
+    assert "backend/app/auth.py" in prompt
+    assert "frontend/src/pages/Login.tsx" in prompt
+
+
+def test_steward_prompt_omits_provenance_when_empty(tmp_path):
+    from ncdev.pipeline.product_steward import build_steward_prompt
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    prompt = build_steward_prompt(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        feature_provenance=None,
+    )
+    assert "Feature provenance" not in prompt
+
+
+def test_steward_prompt_truncates_long_file_lists(tmp_path):
+    from ncdev.pipeline.product_steward import build_steward_prompt
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    files = [f"src/file_{i}.py" for i in range(50)]
+    prompt = build_steward_prompt(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        feature_provenance={"f01": files},
+    )
+    assert "more" in prompt
+    assert "src/file_0.py" in prompt
+    assert "src/file_49.py" not in prompt
+
+
 def test_run_product_steward_returns_decision(monkeypatch, tmp_path):
     from ncdev.pipeline import product_steward as ps
 
@@ -211,6 +264,48 @@ def test_run_product_steward_returns_decision(monkeypatch, tmp_path):
         config=None,
     )
     assert decision.disposition == Disposition.CONTINUE
+
+
+def test_run_steward_loads_provenance_from_disk(monkeypatch, tmp_path):
+    """run_product_steward reads provenance.jsonl from a sibling/ancestor."""
+    from ncdev.pipeline import product_steward as ps
+    from ncdev.pipeline.models import ProvenanceRecord
+    from ncdev.pipeline.provenance import append_provenance
+
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    append_provenance(run_dir, ProvenanceRecord(
+        feature_id="f01",
+        commit_sha="aaa",
+        files_created=["a.py"],
+        files_modified=["b.py"],
+    ))
+
+    steward_dir = run_dir / "steward" / "cycle-1"
+    captured_prompts = []
+
+    def fake_session(prompt, **kwargs):
+        captured_prompts.append(prompt)
+        return ClaudeSessionResult(
+            success=True,
+            final_text='{"disposition":"continue","reasoning":"ok"}',
+            exit_code=0,
+        )
+
+    monkeypatch.setattr(ps, "run_ai_session", fake_session)
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+    decision = ps.run_product_steward(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+        run_dir=steward_dir,
+        config=None,
+    )
+    assert "Feature provenance" in captured_prompts[0]
+    assert "a.py" in captured_prompts[0]
+    assert decision.disposition.value == "continue"
 
 
 def test_run_product_steward_falls_back_to_stop_on_invalid_response(monkeypatch, tmp_path):
