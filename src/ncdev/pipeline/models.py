@@ -90,6 +90,25 @@ class FeatureStep(BaseModel):
     )
 
 
+class ProvenanceRecord(BaseModel):
+    """What a single feature session actually touched in the repo.
+
+    Replaces the policy of demanding the model write
+    ``# Feature: fNN-...`` headers in every file. The engine knows what
+    each session touched (via ``git diff``), so we record that as
+    authoritative provenance — no string markers required.
+    """
+
+    feature_id: str
+    commit_sha: str
+    files_created: list[str] = Field(default_factory=list)
+    files_modified: list[str] = Field(default_factory=list)
+    duration_seconds: float = 0.0
+    recorded_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+
 class FeatureQueueDoc(BaseModel):
     """Ordered list of features to implement sequentially."""
 
