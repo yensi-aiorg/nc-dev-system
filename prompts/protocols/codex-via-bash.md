@@ -38,10 +38,12 @@ For longer prompts, write the prompt to a temp file and pipe:
 cat .ncdev/tmp/codex-prompt.md | codex exec --full-auto --sandbox danger-full-access -
 ```
 
-## Prompt shape for Codex (follow this)
+## Prompt shape for Codex (a useful default)
 
-Codex performs best with concrete, scoped tasks. Structure every Codex
-prompt like this:
+Codex performs best with concrete, scoped tasks. The shape below is
+a default that works — feel free to deviate if your task has a better
+fit. The *content* matters: a one-line task statement, enough context
+to disambiguate, a verification command that returns 0 on success.
 
 ```
 # Task
@@ -53,7 +55,6 @@ prompt like this:
 # Requirements
 - <bullet 1>
 - <bullet 2>
-- ...
 
 # Files
 - Read: <path1>, <path2>
@@ -64,9 +65,9 @@ prompt like this:
 <exact command(s) that must pass when you're done>
 ```
 
-Do not hand Codex vague goals like "make the frontend nicer". It will
-produce sprawling, unfocused changes. Every Codex task must be narrow
-enough that a single `pytest` or `npm test` command can verify it.
+If your task doesn't fit this shape (e.g. a one-shot mechanical
+refactor, a code-review hand-off), use whatever shape best
+communicates the goal. The orchestrator does not parse the prompt.
 
 ## Handling Codex output
 

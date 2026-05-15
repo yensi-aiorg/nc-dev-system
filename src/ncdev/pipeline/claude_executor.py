@@ -88,14 +88,19 @@ def build_feature_prompt(
     )
 
     accept = feature.acceptance
+    mention_note = (
+        f"must mention `{feature.feature_id}` in path or content"
+        if accept.must_mention_feature_id
+        else "no feature-id marker required; engine provenance tracks ownership"
+    )
     accept_block = "\n".join(
         [
-            f"- required_files (must exist AND mention `{feature.feature_id}` "
-            f"in path or content): {accept.required_files or '(none)'}",
+            f"- required_files (must exist; {mention_note}): "
+            f"{accept.required_files or '(none)'}",
             f"- required_routes (must respond 2xx at integration gate): "
             f"{accept.required_routes or '(none)'}",
-            f"- required_tests (must exist, mention `{feature.feature_id}`, "
-            f"and pass): {accept.required_tests or '(none)'}",
+            f"- required_tests (must exist and pass; {mention_note}): "
+            f"{accept.required_tests or '(none)'}",
             f"- required_screenshots (under .ncdev/evidence/): "
             f"{accept.required_screenshots or '(none)'}",
             f"- verify_app_boots: {accept.verify_app_boots} "
@@ -184,17 +189,10 @@ the run by default. Plan your work so each clause is satisfied.
    eventually pass).
 5. {impl_step}
 6. **Emit the asset manifest** as you build — see the schema below.
-7. **Tag every required_file with the feature_id BEFORE committing.**
-   Each entry in `required_files` MUST contain the literal string
-   `{feature.feature_id}` (in path OR in file content). For files
-   that natively support comments, add a one-line header like
-   `# Feature: {feature.feature_id}` (Python/yaml/sh) or
-   `// Feature: {feature.feature_id}` (TS/JS) or
-   `<!-- Feature: {feature.feature_id} -->` (HTML/MD). For JSON
-   files, add a sibling key like `"_owned_by_feature": "{feature.feature_id}"`
-   at the top level. The verifier will reject the feature if any
-   required_file lacks the marker — this is the single most common
-   silent-failure pattern, so do it FIRST before running tests.
+7. **The engine records what your session touched** automatically — you
+   do not need to add `# Feature: <id>` markers to every file. (You may
+   add them if it helps readability, but they are not required for the
+   verifier.)
 8. **Use the `verification-before-completion` skill** before you
    claim done. Run the verification contract's test commands yourself.
    Capture the required screenshots listed in the structured
@@ -211,10 +209,10 @@ the run by default. Plan your work so each clause is satisfied.
 ## What success looks like
 
 - Working tree is clean (all changes committed).
-- Every entry in `required_files` exists AND mentions
+- Every entry in `required_files` exists.
+- Every entry in `required_tests` exists and passes when run in isolation.
+- If `must_mention_feature_id` is true, required files and tests mention
   `{feature.feature_id}` literally (path or content).
-- Every entry in `required_tests` exists, mentions
-  `{feature.feature_id}`, and passes when run in isolation.
 - Verification contract is satisfied (boot probe, test commands,
   screenshots, files).
 - Asset manifest file exists at
@@ -226,8 +224,6 @@ the run by default. Plan your work so each clause is satisfied.
 - "Implemented, but tests are still failing — here's what I tried."
   → Not done. Use systematic-debugging.
 - Working tree dirty when you're "done." → Commit or revert.
-- A `required_file` that exists but doesn't mention `{feature.feature_id}`.
-  → The verifier will reject. Add a docstring/header line that names it.
 - Asset manifest missing. → Write it before committing.
 - Any of the `prohibited_patterns` in the verification contract
   landed in a commit. → Those are pre-commit-hook blockers; fix.
