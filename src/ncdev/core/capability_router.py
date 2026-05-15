@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from ncdev.core.availability import make_default_checker
 from ncdev.core.config import (
     CAPABILITY_KEYS,
     NCDevConfig,
@@ -46,8 +47,9 @@ def resolve_capability(
     """Resolve `capability` to (provider, model).
 
     is_provider_available(provider_name: str) -> bool lets callers plug in a
-    real availability check (binary on PATH, API key set, etc.). Defaults to
-    "enabled in config".
+    custom availability check. Defaults to real availability probes (binary on
+    PATH for CLI providers, API key present for HTTP providers) while still
+    respecting disabled providers in config.
 
     Raises UnknownCapabilityError on unknown capability.
     Raises NoAvailableProviderError if the chain is empty or no candidate
@@ -66,10 +68,7 @@ def resolve_capability(
             "Set cfg.capabilities.chains or pick a built-in mode."
         )
 
-    def default_available(provider: str) -> bool:
-        prov = cfg.providers.get(provider)
-        return prov is not None and prov.enabled
-
+    default_available = make_default_checker(cfg)
     check = is_provider_available or default_available
     for i, choice in enumerate(chain):
         if check(choice.provider):

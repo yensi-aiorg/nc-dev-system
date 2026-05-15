@@ -34,8 +34,11 @@ def _cfg_with_frontend_chain(*, codex_enabled: bool = True) -> NCDevConfig:
     )
 
 
-def test_resolve_uses_first_available_choice() -> None:
+def test_resolve_uses_first_available_choice(monkeypatch) -> None:
+    from ncdev.core import availability
+
     cfg = _cfg_with_frontend_chain()
+    monkeypatch.setattr(availability, "cli_binary_available", lambda n: n == "codex")
 
     resolved = resolve_capability("frontend_implementation", config=cfg)
 
@@ -44,8 +47,12 @@ def test_resolve_uses_first_available_choice() -> None:
     assert resolved.chain_position == 0
 
 
-def test_resolve_skips_disabled_first_choice() -> None:
+def test_resolve_skips_disabled_first_choice(monkeypatch) -> None:
+    from ncdev.core import availability
+
     cfg = _cfg_with_frontend_chain(codex_enabled=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.setattr(availability, "cli_binary_available", lambda _name: False)
 
     resolved = resolve_capability("frontend_implementation", config=cfg)
 
@@ -75,6 +82,38 @@ def test_resolve_custom_availability_callable() -> None:
             config=cfg,
             is_provider_available=lambda _provider: False,
         )
+
+
+def test_router_uses_default_availability_skips_disabled(monkeypatch) -> None:
+    """The router consults make_default_checker when no callable is passed."""
+    cfg = NCDevConfig(
+        mode="custom",
+        providers={
+            "openai_codex": ProviderPreferenceConfig(enabled=False),
+            "anthropic_claude_code": ProviderPreferenceConfig(enabled=True),
+        },
+        capabilities=CapabilityMatrixConfig(
+            chains={
+                "frontend_implementation": [
+                    CapabilityChoice(provider="openai_codex", model="gpt-5.5"),
+                    CapabilityChoice(
+                        provider="anthropic_claude_code",
+                        model="opus",
+                    ),
+                ],
+            },
+        ),
+    )
+
+    # Stub binary checks so this test doesn't depend on local installs.
+    from ncdev.core import availability
+
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(availability, "cli_binary_available", lambda n: n == "claude")
+
+    resolved = resolve_capability("frontend_implementation", config=cfg)
+    assert resolved.provider == "anthropic_claude_code"
+    assert resolved.chain_position == 1
 
 
 def test_defaults_populate_from_mode_preset() -> None:
