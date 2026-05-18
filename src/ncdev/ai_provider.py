@@ -70,6 +70,7 @@ class AIProvider(ABC):
         *,
         model: str | None = None,
         tools: list[str] | None = None,
+        codex_options: list[str] | None = None,
     ) -> list[str]:
         """Build argv for direct ``subprocess.run(...)`` invocation.
 
@@ -260,6 +261,14 @@ class _CLIProviderMixin:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_claude_model(model: str | None) -> str:
+    """Resolve an auto/None model request to a concrete Claude model."""
+    from ncdev.core.capability_policy import resolve_model
+    from ncdev.core.capability_probe import probe_claude
+
+    return resolve_model("anthropic_claude_code", model, probe_claude())
+
+
 class CodexCLIProvider(_CLIProviderMixin, AIProvider):
     """AI provider backed by the Codex CLI.
 
@@ -285,7 +294,11 @@ class CodexCLIProvider(_CLIProviderMixin, AIProvider):
         *,
         model: str | None = None,
         tools: list[str] | None = None,
+        codex_options: list[str] | None = None,
     ) -> list[str]:
+        from ncdev.core.capability_policy import resolve_model
+        from ncdev.core.capability_probe import probe_codex
+
         argv = [
             self._cmd_name,
             "exec",
@@ -293,8 +306,9 @@ class CodexCLIProvider(_CLIProviderMixin, AIProvider):
             "--sandbox",
             "danger-full-access",
         ]
-        if model:
-            argv += ["--model", model]
+        argv += ["--model", resolve_model("openai_codex", model, probe_codex())]
+        if codex_options:
+            argv += list(codex_options)
         argv.append(prompt)
         return argv
 
@@ -334,7 +348,7 @@ class ClaudeCLIProvider(_CLIProviderMixin, AIProvider):
             "--output-format",
             "text",
             "--model",
-            model or "claude-opus-4-6",
+            _resolve_claude_model(model),
         ]
         if tools:
             argv += ["--allowedTools", ",".join(tools)]
