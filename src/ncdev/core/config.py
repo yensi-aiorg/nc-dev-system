@@ -178,6 +178,11 @@ class SentinelServiceConfig(BaseModel):
     test_commands: dict[str, str] = Field(default_factory=dict)
     pr_labels: list[str] = Field(default_factory=lambda: ["sentinel-auto", "bug"])
     auto_deploy: bool = False
+    staging_branch: str = "staging"
+    deploy_command: str = ""
+    staging_url: str = ""
+    protected_files: list[str] = Field(default_factory=list)
+    repo_clone_url: str = ""
 
 
 class SentinelIntakeConfig(BaseModel):
@@ -306,3 +311,40 @@ def ensure_default_config(workspace: Path) -> NCDevConfig:
     if not config_path.exists():
         yaml.safe_dump(config.to_yaml_dict(), config_path.open("w", encoding="utf-8"), sort_keys=False)
     return config
+
+
+class UnknownServiceError(ValueError):
+    """Raised when a failure report names a service not in the registry."""
+
+
+def resolve_service(
+    service_name: str,
+    config: NCDevConfig,
+) -> SentinelServiceConfig:
+    """Look up a service config by name.
+
+    Raises UnknownServiceError if the service is not registered under
+    config.sentinel.services.
+    """
+    svc = config.sentinel.services.get(service_name)
+    if svc is None:
+        known = ", ".join(sorted(config.sentinel.services)) or "(none registered)"
+        raise UnknownServiceError(
+            f"Service '{service_name}' is not registered in "
+            f"sentinel.services. Known services: {known}"
+        )
+    return svc
+
+
+def validate_service_for_deploy(svc: SentinelServiceConfig) -> list[str]:
+    """Return human-readable violations that would block the deploy path."""
+    violations: list[str] = []
+    if not svc.repo_clone_url.strip():
+        violations.append("repo_clone_url is empty - cannot clone the repo for an isolated fix")
+    if not svc.deploy_command.strip():
+        violations.append("deploy_command is empty - cannot redeploy staging after a fix")
+    if not svc.staging_url.strip():
+        violations.append("staging_url is empty - cannot verify the fix on staging")
+    if not svc.test_commands:
+        violations.append("test_commands is empty - cannot verify the fix")
+    return violations
