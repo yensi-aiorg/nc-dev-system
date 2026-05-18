@@ -110,15 +110,23 @@ Turns `auto` into a concrete choice. Given `(CapabilitySnapshot, task_key, polic
 |------|--------|
 | `claude_session.py` | Remove the `claude-opus-4-6` default literal; `model` is resolved via `capability_router` |
 | `ai_provider.py` | Remove the `model or "claude-opus-4-6"` fallback; resolve via router |
+| `ai_session.py` | Remove the `model or "claude-opus-4-6"` literal; resolve via router |
+| `core/config.py` `MODE_PRESETS` | Convert baked-in model literals (`gpt-5.5`, `claude-opus-4-6`) in the mode presets to `auto` sentinels — presets back routing for **all** flows including the Sentinel bugfix path, so if they keep pinning, `auto` never reaches bug fixing |
+| `cli.py` | `full` / `factory` `--model` default becomes `auto`. The `fix` command has **no `--model` flag of its own** — it inherits the resolved `claude_session.py` default, so de-hardcoding that default automatically covers bug fixing |
 | `.nc-dev/config.yaml` | `preferred_models` accepts `auto` / `latest-opus` sentinels |
 | `ai_provider.py` `CodexCLIProvider.build_argv()` | Pass through advanced flags (`reasoning_effort`, profiles) from the resolved capability set — **revives the currently dead `reasoning_effort` config field** |
 
 ### 3.4 Skill selection + injection
 
-A step in the charter or design phase that:
+A step that runs wherever a charter is produced — the greenfield/brownfield charter phase, the design phase, **and the synthesized bugfix charter** (`sentinel_charter.py` / `issue_charter.py`):
 
-1. Picks the relevant skills for the project type from the probed inventory — e.g. a greenfield UI build gets design skills, `/goal`, `frontend-design`; a backend build gets a different set.
-2. **Steers sessions toward them** by naming the selected skills (and what they are for) in each per-feature Claude session's `append_system_prompt`.
+1. Picks the relevant skills for the work type from the probed inventory:
+   - Greenfield UI build → design skills, `/goal`, `frontend-design`
+   - Backend build → a different set
+   - **Bug fixing** → `systematic-debugging` and reproduction-oriented skills, biased by the failure report
+2. **Steers sessions toward them** by naming the selected skills (and what they are for) in each session's `append_system_prompt`.
+
+The Sentinel bugfix path has **no design phase**, so skill selection must hook the bugfix charter directly — otherwise a fix session, which most needs `systematic-debugging`, would get no skill steering at all.
 
 This directly closes the `/goal` gap: today a session will not invoke `/goal` because nothing tells it the command exists or applies. Phase 1 *consumes* skills only — no authoring (that is Phase 2, §4.3).
 
@@ -186,6 +194,21 @@ Adoption policy is **probe + auto-adopt**: the newest capability the probe repor
 - A new model appearing in the installed CLI is used on the next run with **no code or config edit**.
 - `reasoning_effort` (and other Codex advanced flags) set in `config.yaml` actually reach `codex exec`.
 - A greenfield UI build verifiably invokes design skills and `/goal` (visible in `skills_invoked`).
+- A Sentinel bugfix run verifiably invokes `systematic-debugging` (visible in `skills_invoked`).
 - `.nc-dev/capabilities.json` is written every run and accurately reflects the installed toolchain.
 - After Phase 2: a capability with a poor track record in the ledger is demoted on the following run without human intervention.
-- No hardcoded model literals remain in `claude_session.py` or `ai_provider.py`.
+- No hardcoded model literals remain in `claude_session.py`, `ai_provider.py`, `ai_session.py`, or `core/config.py` `MODE_PRESETS`.
+
+## 9. Impact on Existing Flows
+
+This work is a layer *underneath* the existing flows. It changes *which* model / skill / flag a session receives — never *what* a flow does. No flow is removed, rewired, or degraded.
+
+| Flow | Entry point | What changes | What does NOT change |
+|------|-------------|--------------|----------------------|
+| **Greenfield** | `ncdev full` / `factory` | Sessions get auto-resolved models + project-type skill steering | Charter → design → sequential feature execution, `[BROKEN]` tagging |
+| **Brownfield** | `ncdev full` / `factory` | Same as greenfield | `state_scanner` skip logic, Citex ingestion/grounding |
+| **Bug fixing** | `ncdev fix` / Sentinel intake | Same auto-resolution; bugfix charter gains `systematic-debugging` skill steering | Sentinel reproduce → fix → verify → deploy → rollback chain, intake API, callback |
+
+All three flows spawn Claude through the single `run_claude_session` primitive (`sentinel_reproduce.py` is a confirmed caller alongside `charter.py` and `claude_executor.py`) and Codex through `ai_provider` — so capability adoption reaches every flow uniformly with no per-flow code.
+
+**Bug fixing is preserved and improved:** the Sentinel path picks up newest models for free, advanced Codex flags actually reach `codex exec`, and fix sessions are explicitly steered toward debugging skills (§3.4). The capability of the system to fix bugs is a hard requirement and is unaffected by this design.
