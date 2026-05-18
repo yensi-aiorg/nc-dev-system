@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 from ncdev.core.models import (
     CapabilityDescriptor,
@@ -45,6 +46,34 @@ def _run_version(binary: str) -> str:
         return (result.stdout or result.stderr or "").strip()
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def scan_installed_skills(workspace: Path | None = None) -> list[str]:
+    """Return sorted, de-duplicated names of installed Claude skills.
+
+    Scans ~/.claude/skills, ~/.claude/plugins, and <workspace>/.claude/skills.
+    Each immediate subdirectory is treated as one skill. Missing
+    directories are skipped silently — a missing scan source is normal,
+    never an error.
+    """
+    roots: list[Path] = [
+        Path.home() / ".claude" / "skills",
+        Path.home() / ".claude" / "plugins",
+    ]
+    if workspace is not None:
+        roots.append(workspace / ".claude" / "skills")
+
+    found: set[str] = set()
+    for root in roots:
+        try:
+            if not root.is_dir():
+                continue
+            for child in root.iterdir():
+                if child.is_dir() and not child.name.startswith("."):
+                    found.add(child.name)
+        except OSError:
+            continue
+    return sorted(found)
 
 
 def probe_claude() -> ProviderCapabilitySnapshot:

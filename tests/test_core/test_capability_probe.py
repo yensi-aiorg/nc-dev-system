@@ -42,3 +42,29 @@ def test_probe_codex_records_version(monkeypatch):
     assert snap.provider == "openai_codex"
     assert snap.available is True
     assert snap.version == "0.130.0"
+
+
+from pathlib import Path
+
+from ncdev.core.capability_probe import scan_installed_skills
+
+
+def test_scan_installed_skills_finds_skill_dirs(tmp_path, monkeypatch):
+    home_skills = tmp_path / "home" / ".claude" / "skills"
+    (home_skills / "systematic-debugging").mkdir(parents=True)
+    (home_skills / "frontend-design").mkdir(parents=True)
+    workspace = tmp_path / "proj"
+    ws_skills = workspace / ".claude" / "skills"
+    (ws_skills / "project-local-skill").mkdir(parents=True)
+    monkeypatch.setattr("ncdev.core.capability_probe.Path.home", lambda: tmp_path / "home")
+
+    found = scan_installed_skills(workspace)
+
+    assert "systematic-debugging" in found
+    assert "frontend-design" in found
+    assert "project-local-skill" in found
+
+
+def test_scan_installed_skills_handles_missing_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr("ncdev.core.capability_probe.Path.home", lambda: tmp_path / "nope")
+    assert scan_installed_skills(tmp_path / "also-nope") == []
