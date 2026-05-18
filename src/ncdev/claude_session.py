@@ -119,7 +119,7 @@ def run_claude_session(
     *,
     cwd: Path,
     tools: Iterable[str] = DEFAULT_BUILD_TOOLS,
-    model: str = "claude-opus-4-6",
+    model: str = "auto",
     timeout: int = 1800,
     permission_mode: str = "acceptEdits",
     append_system_prompt: str | None = None,
@@ -147,7 +147,8 @@ def run_claude_session(
         Task for subagents). Use :data:`DEFAULT_PLAN_TOOLS` for read-only
         planning sessions.
     model:
-        Model label for Claude. Default: ``claude-opus-4-6``.
+        Model label for Claude. Default ``"auto"`` — resolved to a
+        concrete model via capability_policy at call time.
     timeout:
         Kill-switch in seconds. Separate from ``max_budget_usd`` — both
         can terminate the session.
@@ -201,6 +202,14 @@ def run_claude_session(
     system_prompt = "\n\n---\n\n".join(system_prompt_parts) if system_prompt_parts else None
 
     tools_list = list(tools)
+
+    # Resolve an "auto" model request to a concrete model. A non-auto
+    # value is an explicit pin and passes through untouched.
+    if model.strip().lower() in ("auto", "latest", ""):
+        from ncdev.core.capability_probe import probe_claude
+        from ncdev.core.capability_policy import resolve_model
+
+        model = resolve_model("anthropic_claude_code", model, probe_claude())
 
     cmd: list[str] = [
         "claude",

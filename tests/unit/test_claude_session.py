@@ -15,12 +15,21 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 from ncdev.claude_session import (
     DEFAULT_BUILD_TOOLS,
     DEFAULT_PLAN_TOOLS,
     run_claude_session,
 )
+
+
+@pytest.fixture(autouse=True)
+def _skip_claude_version_probe(monkeypatch):
+    from ncdev.core import capability_probe
+
+    monkeypatch.setattr(capability_probe, "_run_version", lambda _: "")
 
 
 # ---------------------------------------------------------------------------
