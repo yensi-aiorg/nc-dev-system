@@ -11,7 +11,19 @@ FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "sentinel_reports"
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
-    app = create_app(workspace=tmp_path, api_key="test-key")
+    def fake_runner(**kw):
+        from ncdev.core.models import SentinelRunState
+
+        state = SentinelRunState(
+            run_id=kw["run_id"],
+            workspace=str(tmp_path),
+            run_dir=str(tmp_path),
+            command="fix",
+        )
+        state.metadata["fix_result"] = {"outcome": "fixed"}
+        return state
+
+    app = create_app(workspace=tmp_path, api_key="test-key", fix_runner=fake_runner)
     return TestClient(app)
 
 
@@ -22,6 +34,7 @@ def test_health_endpoint(client: TestClient) -> None:
     assert data["status"] == "healthy"
     assert data["active_runs"] == 0
     assert data["queued"] == 0
+    assert data["max_concurrent"] == 3
 
 
 def test_post_report_requires_auth(client: TestClient) -> None:
@@ -66,7 +79,7 @@ def test_get_run_status_after_post(client: TestClient) -> None:
     run_id = post_resp.json()["run_id"]
     get_resp = client.get(f"/api/v1/runs/{run_id}")
     assert get_resp.status_code == 200
-    assert get_resp.json()["status"] == "queued"
+    assert get_resp.json()["status"] in {"queued", "running", "complete"}
 
 
 def test_get_run_status_not_found(client: TestClient) -> None:
@@ -80,7 +93,19 @@ def test_get_run_result_not_found(client: TestClient) -> None:
 
 
 def test_no_auth_when_no_key(tmp_path: Path) -> None:
-    app = create_app(workspace=tmp_path, api_key="")
+    def fake_runner(**kw):
+        from ncdev.core.models import SentinelRunState
+
+        state = SentinelRunState(
+            run_id=kw["run_id"],
+            workspace=str(tmp_path),
+            run_dir=str(tmp_path),
+            command="fix",
+        )
+        state.metadata["fix_result"] = {"outcome": "fixed"}
+        return state
+
+    app = create_app(workspace=tmp_path, api_key="", fix_runner=fake_runner)
     client = TestClient(app)
     raw = json.loads((FIXTURES_DIR / "backend_error.json").read_text())
     resp = client.post("/api/v1/reports", json=raw)
