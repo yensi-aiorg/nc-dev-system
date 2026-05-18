@@ -436,6 +436,57 @@ def run_factory_from_issues(
     )
 
 
+def run_factory_with_bundle(
+    *,
+    workspace: Path,
+    bundle: CharterBundle,
+    target_repo_path: Path,
+    source_label: Path,
+    max_cycles: int = 3,
+    builder_model: str | None = None,
+    builder_timeout: int = 3600,
+    max_budget_usd: float | None = None,
+    config: NCDevConfig | None = None,
+) -> FactoryRunState:
+    """Run the factory loop against a caller-supplied charter bundle.
+
+    The bundle is persisted to a fresh run directory before entering the
+    standard cycle loop. ``source_label`` is audit metadata only; it does
+    not need to point at a PRD.
+    """
+    workspace = workspace.resolve()
+    target_repo_path = target_repo_path.resolve()
+    source_label = source_label.resolve()
+    run_id = make_run_id("factory-bundle")
+    run_dir = workspace / ".nc-dev" / "runs" / run_id
+    outputs_dir = run_dir / "outputs"
+
+    write_charter(bundle, outputs_dir)
+
+    state = FactoryRunState(
+        workspace=workspace,
+        source_path=source_label,
+    )
+    return _run_factory_cycle_loop(
+        state=state,
+        workspace=workspace,
+        source_path=source_label,
+        target_repo_path=target_repo_path,
+        max_cycles=max_cycles,
+        builder_model=builder_model,
+        builder_timeout=builder_timeout,
+        max_budget_usd=max_budget_usd,
+        config=config,
+        probe_test_craftr=False,
+        capture_baseline=False,
+        test_craftr_url="http://localhost:16630",
+        target_url="http://localhost:23000",
+        project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
+        pipeline_run_id=run_id,
+        skip_charter=True,
+    )
+
+
 def _run_factory_cycle_loop(
     *,
     state: FactoryRunState,
