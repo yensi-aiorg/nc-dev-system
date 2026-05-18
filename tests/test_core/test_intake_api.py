@@ -77,18 +77,30 @@ def test_get_run_status_after_post(client: TestClient) -> None:
         headers={"Authorization": "Bearer test-key"},
     )
     run_id = post_resp.json()["run_id"]
-    get_resp = client.get(f"/api/v1/runs/{run_id}")
+    get_resp = client.get(
+        f"/api/v1/runs/{run_id}",
+        headers={"Authorization": "Bearer test-key"},
+    )
     assert get_resp.status_code == 200
-    assert get_resp.json()["status"] in {"queued", "running", "complete"}
+    data = get_resp.json()
+    assert data["status"] in {"queued", "running", "complete"}
+    assert data["run_id"] == run_id
+    assert "run_state" not in data
 
 
 def test_get_run_status_not_found(client: TestClient) -> None:
-    resp = client.get("/api/v1/runs/nonexistent")
+    resp = client.get(
+        "/api/v1/runs/nonexistent",
+        headers={"Authorization": "Bearer test-key"},
+    )
     assert resp.status_code == 404
 
 
 def test_get_run_result_not_found(client: TestClient) -> None:
-    resp = client.get("/api/v1/runs/nonexistent/result")
+    resp = client.get(
+        "/api/v1/runs/nonexistent/result",
+        headers={"Authorization": "Bearer test-key"},
+    )
     assert resp.status_code == 404
 
 

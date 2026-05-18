@@ -55,6 +55,27 @@ def create_app(
         if auth != f"Bearer {api_key}":
             raise HTTPException(status_code=401, detail="Unauthorized")
 
+    def _as_dict(value: Any) -> dict[str, Any]:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return dict(value)
+        return {}
+
+    def _status_shape(entry: dict[str, Any]) -> dict[str, Any]:
+        result = _as_dict(entry.get("result"))
+        status = entry.get("status")
+        return {
+            "run_id": entry.get("run_id"),
+            "report_id": entry.get("report_id"),
+            "status": status,
+            "queued_at": entry.get("queued_at"),
+            "started_at": entry.get("started_at"),
+            "completed_at": entry.get("completed_at"),
+            "outcome": result.get("outcome") if status == "complete" else None,
+            "error": entry.get("error") if status == "failed" else None,
+        }
+
     def _execute(run_id: str, report_path: Path) -> None:
         with lock:
             run_registry[run_id]["status"] = "running"
@@ -136,26 +157,46 @@ def create_app(
             },
         )
 
+    @app.get("/api/v1/runs")
+    def list_runs(request: Request, status: str | None = None) -> dict[str, Any]:
+        _check_auth(request)
+        with lock:
+            entries = [dict(entry) for entry in run_registry.values()]
+        if status is not None:
+            entries = [entry for entry in entries if entry.get("status") == status]
+        entries.sort(key=lambda entry: entry.get("queued_at") or "", reverse=True)
+        return {"runs": [_status_shape(entry) for entry in entries]}
+
     @app.get("/api/v1/runs/{run_id}")
-    def get_run(run_id: str) -> dict[str, Any]:
+    def get_run(request: Request, run_id: str) -> dict[str, Any]:
+        _check_auth(request)
         with lock:
             entry = run_registry.get(run_id)
             if entry is not None:
                 entry = dict(entry)
         if entry is None:
             raise HTTPException(status_code=404, detail="Run not found")
-        return entry
+        return _status_shape(entry)
 
     @app.get("/api/v1/runs/{run_id}/result")
-    def get_run_result(run_id: str) -> dict[str, Any]:
+    def get_run_result(request: Request, run_id: str) -> dict[str, Any]:
+        _check_auth(request)
         with lock:
             entry = run_registry.get(run_id)
             if entry is not None:
                 entry = dict(entry)
         if entry is None:
             raise HTTPException(status_code=404, detail="Run not found")
-        if entry.get("status") != "complete":
-            raise HTTPException(status_code=404, detail="Run not complete")
-        return entry.get("result", {})
+        status = entry.get("status")
+        if status in {"queued", "running"}:
+            return JSONResponse(
+                status_code=409,
+                content={"status": status, "detail": "run not complete"},
+            )
+        if status == "failed":
+            return {"status": "failed", "error": entry.get("error"), "result": None}
+        if status == "complete":
+            return {**_as_dict(entry.get("result")), "status": "complete"}
+        raise HTTPException(status_code=409, detail="Run not complete")
 
     return app
