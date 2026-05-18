@@ -557,7 +557,12 @@ def main(argv: list[str] | None = None) -> int:
         workspace = _workspace(args.workspace)
         target_repo = _resolve_target_repo(args.target_repo, workspace)
         if args.from_issues:
-            if target_repo is None:
+            # --from-issues must target an EXPLICIT repo. _resolve_target_repo
+            # falls back to the cwd git repo when --target-repo is omitted —
+            # for a fix loop that fallback is dangerous (it would run against
+            # whatever repo you happen to be standing in), so gate on the
+            # raw CLI arg, not the resolved path.
+            if not args.target_repo:
                 console.print("[red]factory --from-issues requires --target-repo[/red]")
                 return 1
             result = _factory_from_issues_runner(
