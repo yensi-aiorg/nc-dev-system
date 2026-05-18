@@ -47,3 +47,19 @@ def resolve_model(
         return default
     # Explicit alias or explicit pin: the CLI accepts it verbatim.
     return requested.strip()
+
+
+def resolve_codex_options(defaults: dict[str, str] | None) -> list[str]:
+    """Translate a provider's `defaults` dict into Codex CLI argv fragments.
+
+    Only keys that map to a real Codex CLI option are emitted; unknown
+    keys (e.g. base_url) are ignored. `reasoning_effort` maps to the
+    Codex config key `model_reasoning_effort` via `-c key="value"`.
+    """
+    if not defaults:
+        return []
+    args: list[str] = []
+    effort = defaults.get("reasoning_effort")
+    if effort:
+        args += ["-c", f'model_reasoning_effort="{effort}"']
+    return args

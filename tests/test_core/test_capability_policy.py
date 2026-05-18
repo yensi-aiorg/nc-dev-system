@@ -48,3 +48,21 @@ def test_codex_auto_resolves_to_codex_default(monkeypatch):
 def test_unavailable_provider_still_resolves_to_default(monkeypatch):
     snap = _claude_snap(monkeypatch, available=False)
     assert resolve_model("anthropic_claude_code", "auto", snap) == "opus"
+
+
+from ncdev.core.capability_policy import resolve_codex_options
+
+
+def test_reasoning_effort_translates_to_codex_config_flag():
+    args = resolve_codex_options({"reasoning_effort": "high"})
+    assert args == ["-c", 'model_reasoning_effort="high"']
+
+
+def test_empty_defaults_yield_no_args():
+    assert resolve_codex_options({}) == []
+    assert resolve_codex_options(None) == []
+
+
+def test_unknown_defaults_keys_are_ignored():
+    args = resolve_codex_options({"base_url": "http://x", "reasoning_effort": "low"})
+    assert args == ["-c", 'model_reasoning_effort="low"']
