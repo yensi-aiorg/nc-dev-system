@@ -30,6 +30,15 @@ class DeployResult:
     steps: list[str] = field(default_factory=list)
 
 
+@dataclass
+class RollbackResult:
+    ok: bool
+    reverted_to: str = ""
+    redeployed: bool = False
+    error: str = ""
+    steps: list[str] = field(default_factory=list)
+
+
 def _run_git(
     args: list[str],
     *,
@@ -234,6 +243,111 @@ def open_and_merge_to_staging(
     result.deployed = True
     result.ok = True
     return result
+
+
+def revert_staging_merge(
+    repo_dir: Path,
+    svc: SentinelServiceConfig,
+    staging_sha_before: str,
+) -> RollbackResult:
+    """Roll the staging branch back to the recorded pre-fix state and redeploy."""
+    if not staging_sha_before:
+        return RollbackResult(
+            ok=False,
+            error="no pre-fix staging SHA recorded - cannot roll back safely",
+        )
+
+    result = RollbackResult(ok=False, reverted_to=staging_sha_before)
+    remote = svc.git_remote.strip() or "origin"
+
+    result.steps.append(f"fetch {remote}")
+    code, _out, err = _run_git(["fetch", remote], cwd=repo_dir, timeout=120)
+    if code != 0:
+        result.error = f"git fetch failed: {err.strip() or f'exit {code}'}"
+        return result
+
+    result.steps.append(f"checkout staging branch {svc.staging_branch}")
+    code, _out, err = _run_git(
+        ["checkout", svc.staging_branch],
+        cwd=repo_dir,
+        timeout=60,
+    )
+    if code != 0:
+        result.error = f"git checkout staging failed: {err.strip() or f'exit {code}'}"
+        return result
+
+    revert_range = f"{staging_sha_before}..HEAD"
+    result.steps.append(f"check commits to revert ({revert_range})")
+    code, out, err = _run_git(
+        ["rev-list", "--count", revert_range],
+        cwd=repo_dir,
+        timeout=60,
+    )
+    if code != 0:
+        result.error = f"git rev-list failed: {err.strip() or f'exit {code}'}"
+        return result
+    commit_count = out.strip()
+    if commit_count.isdigit() and int(commit_count) == 0:
+        result.steps.append("nothing to revert")
+        result.ok = True
+        return result
+
+    result.steps.append(f"revert commits after {staging_sha_before}")
+    code, _out, err = _run_git(
+        ["revert", "--no-edit", revert_range],
+        cwd=repo_dir,
+        timeout=300,
+    )
+    if code != 0:
+        result.steps.append("abort failed revert")
+        abort_code, _abort_out, abort_err = _run_git(
+            ["revert", "--abort"],
+            cwd=repo_dir,
+            timeout=60,
+        )
+        detail = err.strip() or f"exit {code}"
+        if abort_code != 0:
+            detail = (
+                f"{detail}; git revert --abort failed: "
+                f"{abort_err.strip() or f'exit {abort_code}'}"
+            )
+        result.error = f"git revert conflict or failure: {detail}"
+        return result
+
+    result.steps.append(f"push reverted staging branch to {remote}")
+    code, _out, err = _run_git(
+        ["push", remote, svc.staging_branch],
+        cwd=repo_dir,
+        timeout=120,
+    )
+    if code != 0:
+        result.error = f"git push rollback failed: {err.strip() or f'exit {code}'}"
+        return result
+
+    result.steps.append("redeploy reverted staging")
+    code, _out, err = _run_deploy_command(svc.deploy_command, repo_dir)
+    if code != 0:
+        result.error = f"rollback deploy command failed: {err.strip() or f'exit {code}'}"
+        return result
+
+    result.redeployed = True
+    result.ok = True
+    return result
+
+
+def rollback_if_unsafe(
+    repo_dir: Path,
+    svc: SentinelServiceConfig,
+    deploy_result: DeployResult,
+    *,
+    staging_verified: bool,
+) -> RollbackResult | None:
+    """Roll back a merged staging deploy when deploy or verification failed."""
+    if not deploy_result.merged:
+        return None
+    if deploy_result.deployed and staging_verified:
+        return None
+    return revert_staging_merge(repo_dir, svc, deploy_result.staging_sha_before)
 
 
 def _build_pr_title(message: str, max_length: int = 88) -> str:

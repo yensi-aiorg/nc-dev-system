@@ -165,3 +165,93 @@ def test_build_pr_body_includes_error_detail():
     assert "boom in handler" in body
     assert "rep-9" in body
     assert "app.py" in body
+
+
+def test_revert_staging_merge_happy_path(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+
+    git_calls = []
+
+    def fake_git(args, **kw):
+        git_calls.append(args)
+        return (0, "", "")
+
+    deploy_calls = []
+    monkeypatch.setattr(sd, "_run_git", fake_git)
+    monkeypatch.setattr(
+        sd,
+        "_run_deploy_command",
+        lambda cmd, cwd: deploy_calls.append(cmd) or (0, "ok", ""),
+    )
+    result = sd.revert_staging_merge(tmp_path, _full_service(), "staging-sha-1")
+    assert result.ok is True
+    assert result.reverted_to == "staging-sha-1"
+    assert result.redeployed is True
+    assert deploy_calls == ["echo deployed"]
+    assert any("revert" in " ".join(a) for a in git_calls)
+
+
+def test_revert_empty_sha_refuses(tmp_path):
+    from ncdev.core.sentinel_deploy import revert_staging_merge
+
+    result = revert_staging_merge(tmp_path, _full_service(), "")
+    assert result.ok is False
+    assert "no pre-fix staging sha" in result.error.lower()
+
+
+def test_revert_conflict_aborts_and_fails(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+
+    aborted = []
+
+    def fake_git(args, **kw):
+        if args[0] == "revert" and "--abort" not in args:
+            return (1, "", "CONFLICT")
+        if args[0] == "revert" and "--abort" in args:
+            aborted.append(1)
+            return (0, "", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(sd, "_run_git", fake_git)
+    monkeypatch.setattr(sd, "_run_deploy_command", lambda cmd, cwd: (0, "", ""))
+    result = sd.revert_staging_merge(tmp_path, _full_service(), "sha-1")
+    assert result.ok is False
+    assert aborted == [1]
+    assert "conflict" in result.error.lower()
+
+
+def test_rollback_if_unsafe_triggers_on_failed_verification(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+    from ncdev.core.sentinel_deploy import DeployResult, rollback_if_unsafe
+
+    monkeypatch.setattr(
+        sd,
+        "revert_staging_merge",
+        lambda *a, **k: sd.RollbackResult(ok=True, reverted_to="sha-1"),
+    )
+    dr = DeployResult(ok=True, merged=True, deployed=True, staging_sha_before="sha-1")
+    rb = rollback_if_unsafe(tmp_path, _full_service(), dr, staging_verified=False)
+    assert rb is not None
+    assert rb.ok is True
+
+
+def test_rollback_if_unsafe_skips_on_clean_verified_deploy(tmp_path):
+    from ncdev.core.sentinel_deploy import DeployResult, rollback_if_unsafe
+
+    dr = DeployResult(ok=True, merged=True, deployed=True, staging_sha_before="sha-1")
+    rb = rollback_if_unsafe(tmp_path, _full_service(), dr, staging_verified=True)
+    assert rb is None
+
+
+def test_rollback_if_unsafe_triggers_when_deploy_command_failed(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+    from ncdev.core.sentinel_deploy import DeployResult, rollback_if_unsafe
+
+    monkeypatch.setattr(
+        sd,
+        "revert_staging_merge",
+        lambda *a, **k: sd.RollbackResult(ok=True, reverted_to="sha-1"),
+    )
+    dr = DeployResult(ok=False, merged=True, deployed=False, staging_sha_before="sha-1")
+    rb = rollback_if_unsafe(tmp_path, _full_service(), dr, staging_verified=False)
+    assert rb is not None
