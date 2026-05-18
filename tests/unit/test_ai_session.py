@@ -18,6 +18,13 @@ from ncdev.claude_session import ClaudeSessionResult
 from ncdev.core.config import NCDevConfig
 
 
+@pytest.fixture(autouse=True)
+def _skip_codex_version_probe(monkeypatch):
+    from ncdev.core import capability_probe
+
+    monkeypatch.setattr(capability_probe, "_run_version", lambda _: "")
+
+
 # ---------------------------------------------------------------------------
 # Mode tables
 # ---------------------------------------------------------------------------

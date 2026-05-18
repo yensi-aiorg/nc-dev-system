@@ -179,7 +179,7 @@ def run_ai_session(
     if include_codex_protocol is None:
         include_codex_protocol = (impl == "codex")
 
-    effective_model = model or "claude-opus-4-6"
+    effective_model = model or "auto"
     return run_claude_session(
         prompt,
         cwd=cwd,
@@ -211,6 +211,7 @@ def run_codex_session(
     model: str | None = None,
     log_path: Path | None = None,
     extra_args: list[str] | None = None,
+    codex_options: list[str] | None = None,
     max_bytes_per_stream: int = _CODEX_CAPTURE_MAX_BYTES,
 ) -> ClaudeSessionResult:
     """Run a Codex session. No skills, no subagents, no NC Dev hooks.
@@ -237,13 +238,17 @@ def run_codex_session(
         "Conventional Commits. Leave the working tree clean when done."
     )
 
+    from ncdev.core.capability_policy import resolve_model
+    from ncdev.core.capability_probe import probe_codex
+
     cmd: list[str] = [
         "codex", "exec",
         "--full-auto",
         "--sandbox", "danger-full-access",
+        "--model", resolve_model("openai_codex", model, probe_codex()),
     ]
-    if model:
-        cmd += ["--model", model]
+    if codex_options:
+        cmd += list(codex_options)
     if extra_args:
         cmd += list(extra_args)
     cmd.append(codex_prompt)
