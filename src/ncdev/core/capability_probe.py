@@ -7,6 +7,7 @@ CapabilitySnapshotDoc schema in core/models.py.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from ncdev.core.models import (
     CapabilityDescriptor,
+    CapabilitySnapshotDoc,
     ProviderCapabilitySnapshot,
 )
 
@@ -126,3 +128,47 @@ def probe_codex() -> ProviderCapabilitySnapshot:
         ),
         notes=["reasoning via config key model_reasoning_effort"],
     )
+
+
+def probe_toolchain(workspace: Path | None = None) -> CapabilitySnapshotDoc:
+    """Probe every provider into one CapabilitySnapshotDoc.
+
+    Never raises — a failed sub-probe is recorded in that provider's
+    snapshot.notes and the snapshot is marked unavailable.
+    """
+    snapshots = [probe_claude(), probe_codex()]
+    skills = scan_installed_skills(workspace)
+    for snap in snapshots:
+        if snap.provider == "anthropic_claude_code" and snap.available:
+            snap.notes.append(f"installed skills: {', '.join(skills) or '(none)'}")
+    return CapabilitySnapshotDoc(
+        generator="ncdev.core.capability_probe",
+        snapshots=snapshots,
+    )
+
+
+def write_snapshot(doc: CapabilitySnapshotDoc, path: Path) -> None:
+    """Persist the snapshot atomically.
+
+    Writes to a unique temp file in the same directory, then os.replace()
+    onto the target — an atomic rename on POSIX. A concurrent reader sees
+    either the old complete file or the new complete file, never a
+    partial write. Concurrent writers are last-writer-wins, which is
+    safe: every prober inspects the same toolchain.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    tmp.write_text(doc.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_snapshot(path: Path) -> CapabilitySnapshotDoc | None:
+    """Load a persisted snapshot, or None if missing/corrupt."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return CapabilitySnapshotDoc.model_validate_json(raw)
+    except ValueError:
+        return None

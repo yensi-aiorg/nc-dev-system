@@ -68,3 +68,46 @@ def test_scan_installed_skills_finds_skill_dirs(tmp_path, monkeypatch):
 def test_scan_installed_skills_handles_missing_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr("ncdev.core.capability_probe.Path.home", lambda: tmp_path / "nope")
     assert scan_installed_skills(tmp_path / "also-nope") == []
+
+
+from ncdev.core.capability_probe import (
+    load_snapshot,
+    probe_toolchain,
+    write_snapshot,
+)
+from ncdev.core.models import CapabilitySnapshotDoc
+
+
+def test_probe_toolchain_returns_snapshot_doc(tmp_path, monkeypatch):
+    monkeypatch.setattr("ncdev.core.capability_probe.shutil.which", lambda _: None)
+    monkeypatch.setattr("ncdev.core.capability_probe.Path.home", lambda: tmp_path)
+    doc = probe_toolchain(workspace=tmp_path)
+    assert isinstance(doc, CapabilitySnapshotDoc)
+    assert doc.schema_id == "capability-snapshot.1"
+    providers = {s.provider for s in doc.snapshots}
+    assert providers == {"anthropic_claude_code", "openai_codex"}
+
+
+def test_write_then_load_snapshot_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr("ncdev.core.capability_probe.shutil.which", lambda _: None)
+    monkeypatch.setattr("ncdev.core.capability_probe.Path.home", lambda: tmp_path)
+    doc = probe_toolchain(workspace=tmp_path)
+    out = tmp_path / ".nc-dev" / "capabilities.json"
+
+    write_snapshot(doc, out)
+
+    assert out.exists()
+    loaded = load_snapshot(out)
+    assert loaded is not None
+    assert loaded.schema_id == "capability-snapshot.1"
+    assert len(loaded.snapshots) == 2
+
+
+def test_load_snapshot_missing_returns_none(tmp_path):
+    assert load_snapshot(tmp_path / "nope.json") is None
+
+
+def test_load_snapshot_corrupt_returns_none(tmp_path):
+    bad = tmp_path / "capabilities.json"
+    bad.write_text("{not valid json", encoding="utf-8")
+    assert load_snapshot(bad) is None
