@@ -4,6 +4,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from ncdev.core.models import SentinelFailureReport
+
 _PROTECTED_PATTERNS = (
     "Dockerfile",
     "docker-compose",
@@ -98,3 +100,112 @@ class CooldownTracker:
             return False
         elapsed = time.monotonic() - self._last_failure[service]
         return elapsed < self.cooldown_seconds
+
+
+@dataclass
+class SafetyVerdict:
+    allowed: bool
+    reason: str = ""
+
+
+@dataclass
+class SentinelSafetyGate:
+    """Single entry point for all Sentinel fix safety checks.
+
+    Owns one CircuitBreaker, ScopeGuard, DeduplicationTracker, and
+    CooldownTracker. The fix orchestrator calls preflight() before
+    starting, check_scope() after the fix produces a diff, and
+    record_outcome() when done.
+
+    NOTE: the trackers hold in-process state. For the HTTP intake
+    (multiple runs in one process) a single shared SentinelSafetyGate
+    instance must be used across runs - construct it once at the
+    intake-app level, not per-run. The orchestrator accepts an
+    optional injected gate for exactly this reason.
+    """
+
+    circuit_breaker: CircuitBreaker = field(default_factory=CircuitBreaker)
+    scope_guard: ScopeGuard = field(default_factory=ScopeGuard)
+    dedup: DeduplicationTracker = field(default_factory=DeduplicationTracker)
+    cooldown: CooldownTracker = field(default_factory=CooldownTracker)
+
+    def preflight(self, report: SentinelFailureReport) -> SafetyVerdict:
+        """Check before a fix run starts.
+
+        Blocks when:
+          - the circuit breaker is tripped for this service
+          - the service is in cooldown after a recent failure
+          - an identical fix (same dedup key) is already active
+        Returns SafetyVerdict(allowed=False, reason=...) on the first
+        block, else SafetyVerdict(allowed=True).
+        """
+        service = report.service.name
+        if self.circuit_breaker.is_tripped(service):
+            return SafetyVerdict(False, f"Circuit breaker tripped for service: {service}")
+        if self.cooldown.is_cooling_down(service):
+            return SafetyVerdict(False, f"Service is cooling down after recent failure: {service}")
+
+        key = self._dedup_key(report)
+        if self.dedup.is_active(key):
+            return SafetyVerdict(False, f"Duplicate active fix already exists for key: {key}")
+
+        return SafetyVerdict(True)
+
+    def claim(self, report: SentinelFailureReport, run_id: str) -> None:
+        """Mark this report's dedup key active for run_id.
+
+        Call right after a successful preflight, before doing work.
+        """
+        self.dedup.mark_active(self._dedup_key(report), run_id)
+
+    def release(self, report: SentinelFailureReport) -> None:
+        """Clear the dedup key.
+
+        Call in a finally-block so a crashed run doesn't wedge the key forever.
+        """
+        self.dedup.mark_complete(self._dedup_key(report))
+
+    def check_scope(
+        self,
+        files_changed: int,
+        lines_changed: int,
+        changed_paths: list[str],
+        *,
+        extra_protected: list[str] | None = None,
+    ) -> SafetyVerdict:
+        """Wrap ScopeGuard.check.
+
+        extra_protected (from the service config's protected_files) is checked
+        in addition to the built-in _PROTECTED_PATTERNS - a changed path
+        containing any extra_protected entry is blocked.
+        """
+        ok, reason = self.scope_guard.check(files_changed, lines_changed, changed_paths)
+        if not ok:
+            return SafetyVerdict(False, reason)
+
+        protected_entries = [entry for entry in extra_protected or [] if entry]
+        for path in changed_paths:
+            for protected in protected_entries:
+                if protected in path:
+                    return SafetyVerdict(False, f"Protected file modified: {path}")
+
+        return SafetyVerdict(True)
+
+    def record_outcome(self, report: SentinelFailureReport, *, success: bool) -> None:
+        """On success record circuit breaker success; on failure record failure."""
+        service = report.service.name
+        if success:
+            self.circuit_breaker.record_success(service)
+            return
+
+        self.circuit_breaker.record_failure(service)
+        self.cooldown.record_failure(service)
+
+    @staticmethod
+    def _dedup_key(report: SentinelFailureReport) -> str:
+        return DeduplicationTracker.make_key(
+            report.service.name,
+            report.error.file,
+            report.error.function,
+            report.error.error_type,
+        )
