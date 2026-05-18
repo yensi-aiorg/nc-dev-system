@@ -20,6 +20,7 @@ from ncdev.core.models import (
     SentinelTaskStatus,
     ServiceInfo,
 )
+from ncdev.core.sentinel_deploy import DeployResult, RollbackResult, StagingVerification
 from ncdev.core.sentinel_safety import SentinelSafetyGate
 from ncdev.sentinel_reproduce import ReproductionResult
 
@@ -109,6 +110,14 @@ def _config_with_service(repo: Path, *, callback_url: str = "") -> NCDevConfig:
     cfg.sentinel.callback.api_key = "test-key"
     cfg.sentinel.callback.retry_count = 1
     cfg.sentinel.callback.retry_delay_seconds = 0
+    return cfg
+
+
+def _deploy_config_with_service(repo: Path, *, callback_url: str = "") -> NCDevConfig:
+    cfg = _config_with_service(repo, callback_url=callback_url)
+    cfg.sentinel.services["citebot"].repo_clone_url = str(repo)
+    cfg.sentinel.services["citebot"].deploy_command = "echo deploy"
+    cfg.sentinel.services["citebot"].staging_url = "https://staging.example"
     return cfg
 
 
@@ -311,6 +320,198 @@ def test_happy_path_is_fixed(
     assert record_calls == [True]
     result_path = Path(state.run_dir) / "outputs" / "fix-result.json"
     assert result_path.exists()
+
+
+def test_fixed_locally_and_staging_verified_sets_pr_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ncdev.core import engine
+
+    repo, sha = _source_repo(tmp_path)
+    report_path = _write_report(tmp_path, _report(git_sha=sha))
+    _patch_reproduce(monkeypatch, reproduced=True)
+    _fake_bundle(monkeypatch)
+    factory_calls = _patch_factory(monkeypatch, fix_app=True)
+
+    def fake_deploy(
+        repo_dir: Path,
+        svc: SentinelServiceConfig,
+        report: SentinelFailureReport,
+        branch: str,
+        *,
+        commit_sha: str = "",
+    ) -> DeployResult:
+        assert repo_dir == factory_calls[0]
+        assert branch == "sentinel/fix/rep-123"
+        assert commit_sha
+        return DeployResult(
+            ok=True,
+            pr_url="https://github.com/org/repo/pull/42",
+            fix_branch=branch,
+            merged=True,
+            deployed=True,
+            staging_sha_before="staging-before",
+            staging_sha_after="staging-after",
+        )
+
+    monkeypatch.setattr(engine, "open_and_merge_to_staging", fake_deploy)
+    monkeypatch.setattr(
+        engine,
+        "verify_on_staging",
+        lambda *a, **k: StagingVerification(
+            verified=True,
+            staging_reachable=True,
+            repro_test_passed=True,
+        ),
+    )
+    monkeypatch.setattr(engine, "rollback_if_unsafe", lambda *a, **k: None)
+
+    state = _run(tmp_path, report_path, _deploy_config_with_service(repo))
+    result = _fix_result(state)
+
+    assert result["outcome"] == FixOutcome.FIXED.value
+    assert result["pr_url"] == "https://github.com/org/repo/pull/42"
+    assert result["fix_branch"] == "sentinel/fix/rep-123"
+    assert _git(factory_calls[0], "branch", "--show-current") == "sentinel/fix/rep-123"
+
+
+def test_staging_verification_failure_rolls_back_and_validation_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ncdev.core import engine
+
+    repo, sha = _source_repo(tmp_path)
+    report_path = _write_report(tmp_path, _report(git_sha=sha))
+    _patch_reproduce(monkeypatch, reproduced=True)
+    _fake_bundle(monkeypatch)
+    _patch_factory(monkeypatch, fix_app=True)
+    gate = SentinelSafetyGate()
+    record_calls: list[bool] = []
+    rollback_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        gate,
+        "record_outcome",
+        lambda report, *, success: record_calls.append(success),
+    )
+    monkeypatch.setattr(
+        engine,
+        "open_and_merge_to_staging",
+        lambda *a, **k: DeployResult(
+            ok=True,
+            pr_url="https://github.com/org/repo/pull/43",
+            fix_branch="sentinel/fix/rep-123",
+            merged=True,
+            deployed=True,
+            staging_sha_before="staging-before",
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "verify_on_staging",
+        lambda *a, **k: StagingVerification(
+            verified=False,
+            staging_reachable=True,
+            repro_test_passed=False,
+            detail="repro failed on staging",
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "rollback_if_unsafe",
+        lambda *a, **k: rollback_calls.append(True) or RollbackResult(ok=True),
+    )
+
+    state = _run(tmp_path, report_path, _deploy_config_with_service(repo), gate=gate)
+    result = _fix_result(state)
+
+    assert result["outcome"] == FixOutcome.VALIDATION_FAILED.value
+    assert result["pr_url"] == "https://github.com/org/repo/pull/43"
+    assert "rollback ok=True" in result["outcome_detail"]
+    assert rollback_calls == [True]
+    assert record_calls == [False]
+
+
+def test_missing_deploy_config_keeps_fixed_local_no_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ncdev.core import engine
+
+    repo, sha = _source_repo(tmp_path)
+    report_path = _write_report(tmp_path, _report(git_sha=sha))
+    _patch_reproduce(monkeypatch, reproduced=True)
+    _fake_bundle(monkeypatch)
+    _patch_factory(monkeypatch, fix_app=True)
+    monkeypatch.setattr(
+        engine,
+        "open_and_merge_to_staging",
+        lambda *a, **k: pytest.fail("deploy should not be attempted"),
+    )
+
+    state = _run(tmp_path, report_path, _config_with_service(repo))
+    result = _fix_result(state)
+
+    assert result["outcome"] == FixOutcome.FIXED.value
+    assert result["pr_url"] is None
+    assert result["fix_branch"] == "sentinel/fix/rep-123"
+    assert "skipped" in result["outcome_detail"]
+
+
+def test_callback_fires_once_with_final_post_deploy_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ncdev.core import engine
+
+    repo, sha = _source_repo(tmp_path)
+    report_path = _write_report(tmp_path, _report(git_sha=sha))
+    _patch_reproduce(monkeypatch, reproduced=True)
+    _fake_bundle(monkeypatch)
+    _patch_factory(monkeypatch, fix_app=True)
+    order: list[str] = []
+    sent_results = []
+
+    monkeypatch.setattr(
+        engine,
+        "open_and_merge_to_staging",
+        lambda *a, **k: order.append("deploy")
+        or DeployResult(
+            ok=True,
+            pr_url="https://github.com/org/repo/pull/44",
+            fix_branch="sentinel/fix/rep-123",
+            merged=True,
+            deployed=True,
+            staging_sha_before="staging-before",
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "verify_on_staging",
+        lambda *a, **k: order.append("verify")
+        or StagingVerification(verified=True, staging_reachable=True),
+    )
+    monkeypatch.setattr(engine, "rollback_if_unsafe", lambda *a, **k: None)
+
+    def fake_send_fix_result(**kwargs: Any) -> bool:
+        order.append("callback")
+        sent_results.append(kwargs["result"])
+        return True
+
+    monkeypatch.setattr(engine, "send_fix_result", fake_send_fix_result)
+
+    state = _run(
+        tmp_path,
+        report_path,
+        _deploy_config_with_service(repo, callback_url="https://sentinel.example/cb"),
+    )
+
+    assert _fix_result(state)["outcome"] == FixOutcome.FIXED.value
+    assert len(sent_results) == 1
+    assert sent_results[0].pr_url == "https://github.com/org/repo/pull/44"
+    assert order == ["deploy", "verify", "callback"]
 
 
 def test_dry_run_short_circuits(

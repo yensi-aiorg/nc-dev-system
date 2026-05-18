@@ -37,7 +37,7 @@ class TestRunSentinelFixDryRun:
         assert state.metadata["attempts"] == 0
         assert state.metadata["max_attempts"] == 3
         assert state.metadata["auto_deploy"] is False
-        assert "nc-dev/sentinel-fix-rpt_bk_001" == state.metadata["fix_branch"]
+        assert "sentinel/fix/rpt_bk_001" == state.metadata["fix_branch"]
 
     def test_persists_report_artifact(self, tmp_path: Path):
         ws = _workspace(tmp_path)

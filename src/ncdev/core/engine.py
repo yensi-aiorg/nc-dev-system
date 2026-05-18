@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from ncdev.core.config import (
     UnknownServiceError,
     load_config,
     resolve_service,
+    validate_service_for_deploy,
 )
 from ncdev.core.models import (
     FixOutcome,
@@ -33,6 +35,11 @@ from ncdev.core.models import (
     SentinelTaskStatus,
 )
 from ncdev.core.sentinel_callback import send_fix_result
+from ncdev.core.sentinel_deploy import (
+    open_and_merge_to_staging,
+    rollback_if_unsafe,
+    verify_on_staging,
+)
 from ncdev.core.sentinel_safety import SentinelSafetyGate
 from ncdev.factory import run_factory_with_bundle
 from ncdev.sentinel_charter import synthesize_charter_from_sentinel_report
@@ -133,6 +140,7 @@ def _clone_and_checkout(
     svc: SentinelServiceConfig,
     report: SentinelFailureReport,
     checkout_dir: Path,
+    fix_branch: str,
 ) -> tuple[bool, str]:
     clone_source = svc.repo_clone_url.strip() or svc.repo_path.strip()
     if not clone_source:
@@ -150,6 +158,14 @@ def _clone_and_checkout(
     )
     if checkout_result.returncode != 0:
         return False, _git_failure_message("git checkout", checkout_result)
+
+    branch_result = _run_git(
+        ["checkout", "-b", fix_branch],
+        cwd=checkout_dir,
+        timeout=120,
+    )
+    if branch_result.returncode != 0:
+        return False, _git_failure_message("git checkout -b", branch_result)
 
     return True, ""
 
@@ -204,6 +220,8 @@ def _build_fix_result(
     attempts_used: int,
     max_attempts: int,
     started_at: datetime,
+    pr_url: str | None = None,
+    fix_branch: str | None = None,
     completed_at: datetime | None = None,
 ) -> SentinelFixResult:
     completed = completed_at or _utc_now()
@@ -212,8 +230,8 @@ def _build_fix_result(
         run_id=run_id,
         outcome=outcome,
         outcome_detail=outcome_detail,
-        pr_url=None,
-        fix_branch=None,
+        pr_url=pr_url,
+        fix_branch=fix_branch,
         commit_sha=commit_sha,
         files_changed=files_changed,
         reproduction_test=reproduction_test,
@@ -300,7 +318,7 @@ def run_sentinel_fix(
     state.artifacts.append(str(report_artifact_path))
 
     triage = report.triage
-    fix_branch = f"nc-dev/sentinel-fix-{report.report_id}"
+    fix_branch = f"sentinel/fix/{report.report_id}"
     state.metadata.update({
         "mode": "sentinel-fix",
         "report_id": report.report_id,
@@ -351,6 +369,8 @@ def run_sentinel_fix(
         task_status: SentinelTaskStatus,
         phase: SentinelPhase | None = None,
         commit_sha: str | None = None,
+        pr_url: str | None = None,
+        result_fix_branch: str | None = None,
         record_outcome: bool = True,
     ) -> SentinelRunState:
         _set_task(state, task_name, task_status, detail)
@@ -370,6 +390,8 @@ def run_sentinel_fix(
             attempts_used=attempts_used,
             max_attempts=max_fix_attempts,
             started_at=started_at,
+            pr_url=pr_url,
+            fix_branch=result_fix_branch,
         )
         result_path = _persist_fix_result(
             state=state,
@@ -470,6 +492,7 @@ def run_sentinel_fix(
             svc=svc,
             report=report,
             checkout_dir=checkout_dir,
+            fix_branch=fix_branch,
         )
         if not cloned:
             return finish(
@@ -483,13 +506,13 @@ def run_sentinel_fix(
             state,
             "clone",
             SentinelTaskStatus.PASSED,
-            f"checked out {report.service.git_sha}",
+            f"checked out {report.service.git_sha} on {fix_branch}",
         )
         _set_task(
             state,
             "checkout_version",
             SentinelTaskStatus.PASSED,
-            f"checked out {report.service.git_sha}",
+            f"checked out {report.service.git_sha} on {fix_branch}",
         )
         _persist_progress(state)
 
@@ -612,14 +635,137 @@ def run_sentinel_fix(
                 task_name="verify",
                 task_status=SentinelTaskStatus.FAILED,
                 commit_sha=head_sha,
+                result_fix_branch=fix_branch,
             )
 
+        _set_task(
+            state,
+            "verify",
+            SentinelTaskStatus.PASSED,
+            "fix verified locally",
+        )
+        _set_task(
+            state,
+            "validate",
+            SentinelTaskStatus.PASSED,
+            "fix verified locally",
+        )
+        _set_task(state, "deploy", SentinelTaskStatus.RUNNING)
+        _persist_progress(state)
+
+        deploy_violations = validate_service_for_deploy(svc)
+        if deploy_violations:
+            detail = (
+                "fix verified locally; staging deploy skipped - incomplete service "
+                f"config: {'; '.join(deploy_violations)}"
+            )
+            return finish(
+                outcome=FixOutcome.FIXED,
+                detail=detail,
+                task_name="deploy",
+                task_status=SentinelTaskStatus.PASSED,
+                commit_sha=head_sha,
+                result_fix_branch=fix_branch,
+            )
+
+        deploy_result = open_and_merge_to_staging(
+            checkout_dir,
+            svc,
+            report,
+            fix_branch,
+            commit_sha=head_sha or "",
+        )
+        state.metadata["deploy_result"] = asdict(deploy_result)
+        if not deploy_result.merged:
+            detail = deploy_result.error or "staging PR did not merge"
+            return finish(
+                outcome=FixOutcome.VALIDATION_FAILED,
+                detail=detail,
+                task_name="deploy",
+                task_status=SentinelTaskStatus.FAILED,
+                commit_sha=head_sha,
+                pr_url=deploy_result.pr_url or None,
+                result_fix_branch=deploy_result.fix_branch or fix_branch,
+            )
+
+        deploy_status = (
+            SentinelTaskStatus.PASSED
+            if deploy_result.deployed
+            else SentinelTaskStatus.FAILED
+        )
+        _set_task(
+            state,
+            "deploy",
+            deploy_status,
+            "staging deploy completed"
+            if deploy_result.deployed
+            else deploy_result.error or "staging deploy failed",
+        )
+        _set_task(state, "staging_verify", SentinelTaskStatus.RUNNING)
+        _persist_progress(state)
+
+        staging = verify_on_staging(
+            checkout_dir,
+            svc,
+            reproduction_test=repro_test_path or "",
+        )
+        state.metadata["staging_verification"] = asdict(staging)
+        _set_task(
+            state,
+            "staging_verify",
+            SentinelTaskStatus.PASSED
+            if staging.verified
+            else SentinelTaskStatus.FAILED,
+            staging.detail,
+        )
+        _persist_progress(state)
+
+        rollback = rollback_if_unsafe(
+            checkout_dir,
+            svc,
+            deploy_result,
+            staging_verified=staging.verified,
+        )
+        if rollback is not None:
+            state.metadata["rollback_result"] = asdict(rollback)
+            _set_task(
+                state,
+                "rollback",
+                SentinelTaskStatus.PASSED if rollback.ok else SentinelTaskStatus.FAILED,
+                "rollback succeeded" if rollback.ok else rollback.error or "rollback failed",
+            )
+            _persist_progress(state)
+
+        if deploy_result.deployed and staging.verified:
+            return finish(
+                outcome=FixOutcome.FIXED,
+                detail="fix verified locally and on staging",
+                task_name="staging_verify",
+                task_status=SentinelTaskStatus.PASSED,
+                commit_sha=head_sha,
+                pr_url=deploy_result.pr_url or None,
+                result_fix_branch=deploy_result.fix_branch or fix_branch,
+            )
+
+        failures: list[str] = []
+        if not deploy_result.deployed:
+            failures.append(
+                f"staging deploy failed: {deploy_result.error or 'deploy command failed'}"
+            )
+        if not staging.verified:
+            failures.append(
+                f"staging verification failed: {staging.detail or 'verification failed'}"
+            )
+        if rollback is not None:
+            failures.append(f"rollback ok={rollback.ok}")
         return finish(
-            outcome=FixOutcome.FIXED,
-            detail="fix verified locally",
-            task_name="verify",
-            task_status=SentinelTaskStatus.PASSED,
+            outcome=FixOutcome.VALIDATION_FAILED,
+            detail="; ".join(failures) or "staging validation failed",
+            task_name="staging_verify",
+            task_status=SentinelTaskStatus.FAILED,
             commit_sha=head_sha,
+            pr_url=deploy_result.pr_url or None,
+            result_fix_branch=deploy_result.fix_branch or fix_branch,
         )
     finally:
         gate.release(report)

@@ -167,6 +167,44 @@ def test_build_pr_body_includes_error_detail():
     assert "app.py" in body
 
 
+def test_verify_on_staging_both_checks_pass(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+
+    monkeypatch.setattr(sd, "_probe_url", lambda url: True)
+    monkeypatch.setattr(sd, "_run_repro_test", lambda repo, test, env: True)
+    v = sd.verify_on_staging(tmp_path, _full_service(), "tests/test_repro.py")
+    assert v.verified is True
+    assert v.staging_reachable is True
+    assert v.repro_test_passed is True
+
+
+def test_verify_on_staging_fails_when_staging_down(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+
+    monkeypatch.setattr(sd, "_probe_url", lambda url: False)
+    monkeypatch.setattr(sd, "_run_repro_test", lambda repo, test, env: True)
+    v = sd.verify_on_staging(tmp_path, _full_service(), "tests/test_repro.py")
+    assert v.verified is False
+
+
+def test_verify_on_staging_fails_when_repro_test_fails(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+
+    monkeypatch.setattr(sd, "_probe_url", lambda url: True)
+    monkeypatch.setattr(sd, "_run_repro_test", lambda repo, test, env: False)
+    v = sd.verify_on_staging(tmp_path, _full_service(), "tests/test_repro.py")
+    assert v.verified is False
+
+
+def test_verify_on_staging_skips_test_when_none(tmp_path, monkeypatch):
+    from ncdev.core import sentinel_deploy as sd
+
+    monkeypatch.setattr(sd, "_probe_url", lambda url: True)
+    v = sd.verify_on_staging(tmp_path, _full_service(), "")
+    assert v.verified is True
+    assert "skip" in v.detail.lower()
+
+
 def test_revert_staging_merge_happy_path(tmp_path, monkeypatch):
     from ncdev.core import sentinel_deploy as sd
 

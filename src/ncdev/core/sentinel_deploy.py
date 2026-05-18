@@ -9,9 +9,12 @@ writes to prod.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from ncdev.core.config import SentinelServiceConfig, validate_service_for_deploy
 from ncdev.core.models import SentinelFailureReport
@@ -37,6 +40,14 @@ class RollbackResult:
     redeployed: bool = False
     error: str = ""
     steps: list[str] = field(default_factory=list)
+
+
+@dataclass
+class StagingVerification:
+    verified: bool
+    staging_reachable: bool = False
+    repro_test_passed: bool = False
+    detail: str = ""
 
 
 def _run_git(
@@ -96,6 +107,80 @@ def _run_deploy_command(command: str, cwd: Path) -> tuple[int, str, str]:
     except subprocess.TimeoutExpired as exc:
         return 124, exc.stdout or "", exc.stderr or "deploy command timed out after 600s"
     return completed.returncode, completed.stdout, completed.stderr
+
+
+def _probe_url(url: str) -> bool:
+    """Return True when the URL responds with a 2xx status."""
+    if not url:
+        return False
+    request = Request(url, method="GET")
+    try:
+        with urlopen(request, timeout=15) as response:
+            return 200 <= response.status < 300
+    except (OSError, URLError):
+        return False
+
+
+def _run_repro_test(repo_dir: Path, test_path: str, env: dict[str, str]) -> bool:
+    """Run the reproduction test with the supplied environment."""
+    merged_env = os.environ.copy()
+    merged_env.update(env)
+    try:
+        completed = subprocess.run(
+            ["python", "-m", "pytest", test_path, "-q"],
+            cwd=repo_dir,
+            env=merged_env,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=1800,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return completed.returncode == 0
+
+
+def verify_on_staging(
+    repo_dir: Path,
+    svc: SentinelServiceConfig,
+    reproduction_test: str,
+) -> StagingVerification:
+    """Confirm the fix holds on the deployed staging environment."""
+    staging_url = svc.staging_url.strip()
+    staging_reachable = _probe_url(staging_url)
+    if not staging_reachable:
+        return StagingVerification(
+            verified=False,
+            staging_reachable=False,
+            detail=f"staging URL is not reachable: {staging_url or '(empty)'}",
+        )
+
+    if not reproduction_test:
+        return StagingVerification(
+            verified=True,
+            staging_reachable=True,
+            detail="staging reachable; reproduction test skipped because no test path was provided",
+        )
+
+    repro_passed = _run_repro_test(
+        repo_dir,
+        reproduction_test,
+        {"NCDEV_TARGET_URL": staging_url},
+    )
+    if repro_passed:
+        return StagingVerification(
+            verified=True,
+            staging_reachable=True,
+            repro_test_passed=True,
+            detail="staging reachable and reproduction test passed",
+        )
+
+    return StagingVerification(
+        verified=False,
+        staging_reachable=True,
+        repro_test_passed=False,
+        detail="staging reachable but reproduction test failed",
+    )
 
 
 def build_pr_body(report: SentinelFailureReport, commit_sha: str = "") -> str:
