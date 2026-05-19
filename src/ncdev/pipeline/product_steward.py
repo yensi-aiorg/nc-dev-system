@@ -267,7 +267,8 @@ Reply with a SINGLE JSON object (no prose around it). Schema:
   "reasoning": "<2-4 sentences explaining your call>",
   "target_feature_ids": ["<feature_ids the action applies to>"],
   "new_features": [<full FeatureStep objects if disposition=insert_features>],
-  "amendments": [{{"feature_id": "...", "field": "...", "new_value": ..., "reason": "..."}}]
+  "amendments": [{{"feature_id": "...", "field": "...", "new_value": ..., "reason": "..."}}],
+  "capability_lessons": ["<short structured lessons about which models/skills helped or hurt this cycle. Empty list if nothing notable.>"]
 }}
 ```
 
@@ -286,6 +287,13 @@ Reply with a SINGLE JSON object (no prose around it). Schema:
   fresh planning pass. Use sparingly.
 - `stop_as_unrecoverable` - the product can't be completed within budget
   / capability. Explain why.
+
+### Capability lessons
+
+In `capability_lessons`, record short, concrete observations about how the
+*tools* performed this cycle — which skills measurably helped or hurt, whether
+the model over- or under-built. One sentence each. These feed NC Dev's
+capability ledger and bias future skill selection. Use [] when nothing stands out.
 
 ### Examples of judgement calls you should make
 
