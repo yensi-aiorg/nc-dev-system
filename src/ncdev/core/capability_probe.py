@@ -190,6 +190,16 @@ def write_snapshot(doc: CapabilitySnapshotDoc, path: Path) -> None:
     os.replace(tmp, path)
 
 
+def persist_capability_snapshot(workspace: Path) -> Path:
+    """Probe the toolchain and write the snapshot to the workspace.
+
+    Writes `<workspace>/.nc-dev/capabilities.json` and returns its path.
+    """
+    path = workspace / ".nc-dev" / "capabilities.json"
+    write_snapshot(probe_toolchain(workspace=workspace), path)
+    return path
+
+
 def load_snapshot(path: Path) -> CapabilitySnapshotDoc | None:
     """Load a persisted snapshot, or None if missing/corrupt."""
     try:

@@ -136,3 +136,19 @@ def test_probe_claude_records_flags_in_notes(monkeypatch):
     )
     snap = probe_claude()
     assert any("flags:" in note and "--model" in note for note in snap.notes)
+
+
+from ncdev.core.capability_probe import persist_capability_snapshot
+
+
+def test_persist_capability_snapshot_writes_to_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr("ncdev.core.capability_probe.shutil.which", lambda _: None)
+    monkeypatch.setattr("ncdev.core.capability_probe.Path.home", lambda: tmp_path)
+
+    path = persist_capability_snapshot(tmp_path)
+
+    assert path == tmp_path / ".nc-dev" / "capabilities.json"
+    assert path.is_file()
+    loaded = load_snapshot(path)
+    assert loaded is not None
+    assert loaded.schema_id == "capability-snapshot.1"

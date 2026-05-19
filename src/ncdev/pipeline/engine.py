@@ -85,6 +85,15 @@ def run_pipeline(
         except Exception:  # noqa: BLE001
             config = NCDevConfig()
 
+    # Persist the capability snapshot for this run — telemetry / the
+    # spec's snapshot guardrail. Best-effort: never fail a run over it.
+    try:
+        from ncdev.core.capability_probe import persist_capability_snapshot
+
+        persist_capability_snapshot(workspace)
+    except Exception:  # noqa: BLE001
+        pass
+
     state = PipelineRunState(
         run_id=run_id,
         workspace=str(workspace),
