@@ -300,8 +300,20 @@ def execute_feature_claude_driven(
     _work_type = work_type_for(
         is_brownfield=_is_brownfield, touches_frontend=_touches_frontend
     )
-    _skill_block = render_skill_block(
-        select_skills(_work_type, scan_installed_skills(target_path))
+    _selected_skills = select_skills(_work_type, scan_installed_skills(target_path))
+    _skill_block = render_skill_block(_selected_skills)
+
+    # Record what the builder capability resolved to, for the ledger.
+    from ncdev.core.capability_probe import probe_codex
+    from ncdev.core.capability_policy import resolve_model
+
+    _resolved_provider = (
+        "openai_codex" if implementer_mode == "codex" else "anthropic_claude_code"
+    )
+    _resolved_model = (
+        resolve_model("openai_codex", model, probe_codex())
+        if implementer_mode == "codex"
+        else "auto"
     )
 
     session = run_ai_session(
@@ -385,6 +397,9 @@ def execute_feature_claude_driven(
         commit_sha=post_commit or "",
         error_message=(session.error or "") + recoverability_note,
         builder_output=(session.final_text or "")[:2000],
+        resolved_provider=_resolved_provider,
+        resolved_model=_resolved_model,
+        skills_steered=_selected_skills,
     )
     # Persist the session cost + skills in metadata for metrics
     (step_dir / "result.json").write_text(
