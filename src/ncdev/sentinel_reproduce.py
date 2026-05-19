@@ -46,6 +46,15 @@ def reproduce_failure(
     prompt = build_reproduction_prompt(report=report, **context)
 
     pre_session_files = _git_changed_files(repo_dir)
+    from ncdev.core.capability_probe import scan_installed_skills
+    from ncdev.core.skill_selector import render_skill_block, select_skills
+
+    # Bugfix sessions always use the "bugfix" work type -- they most need
+    # systematic-debugging + reproduction skills.
+    _skill_block = render_skill_block(
+        select_skills("bugfix", scan_installed_skills(repo_dir))
+    )
+
     session = run_ai_session(
         prompt,
         cwd=repo_dir,
@@ -54,6 +63,7 @@ def reproduce_failure(
         model=model,
         timeout=timeout,
         max_budget_usd=max_budget_usd,
+        append_system_prompt=_skill_block or None,
     )
     session_cost = float(session.total_cost_usd or 0.0)
 

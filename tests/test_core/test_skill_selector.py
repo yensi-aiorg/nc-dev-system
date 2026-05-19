@@ -41,3 +41,10 @@ def test_work_type_for_classifies_inputs():
     assert work_type_for(is_brownfield=True, touches_frontend=False) == "brownfield"
     assert work_type_for(is_brownfield=False, touches_frontend=True) == "greenfield_ui"
     assert work_type_for(is_brownfield=False, touches_frontend=False) == "greenfield_backend"
+
+
+def test_bugfix_steering_block_names_systematic_debugging():
+    block = render_skill_block(
+        select_skills("bugfix", ["systematic-debugging", "test-driven-development"])
+    )
+    assert "systematic-debugging" in block

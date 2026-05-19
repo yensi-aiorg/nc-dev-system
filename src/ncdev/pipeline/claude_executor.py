@@ -284,6 +284,26 @@ def execute_feature_claude_driven(
     pre_commit = _git_head(target_path)
 
     start = time.time()
+    from ncdev.core.capability_probe import scan_installed_skills
+    from ncdev.core.skill_selector import (
+        render_skill_block,
+        select_skills,
+        work_type_for,
+    )
+
+    # Best-effort work-type classification. If the feature/charter objects
+    # in scope expose a clear brownfield or frontend signal, use it; if
+    # not, default to False -- that yields a safe "greenfield_backend"
+    # skill set and never crashes.
+    _is_brownfield = bool(charter_bundle.contract.is_brownfield or charter_bundle.contract.existing_repo_path)
+    _touches_frontend = bool(charter_bundle.contract.frontend_framework or charter_bundle.verification.frontend_test_command)
+    _work_type = work_type_for(
+        is_brownfield=_is_brownfield, touches_frontend=_touches_frontend
+    )
+    _skill_block = render_skill_block(
+        select_skills(_work_type, scan_installed_skills(target_path))
+    )
+
     session = run_ai_session(
         prompt,
         cwd=target_path,
@@ -295,6 +315,7 @@ def execute_feature_claude_driven(
         permission_mode="acceptEdits",
         max_budget_usd=max_budget_usd,
         log_path=step_dir / "session.jsonl",
+        append_system_prompt=_skill_block or None,
     )
     build_duration = time.time() - start
 
