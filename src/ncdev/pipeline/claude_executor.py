@@ -284,6 +284,7 @@ def execute_feature_claude_driven(
     pre_commit = _git_head(target_path)
 
     start = time.time()
+    from ncdev.core.capability_ledger import recent_lessons
     from ncdev.core.capability_probe import scan_installed_skills
     from ncdev.core.skill_selector import (
         render_skill_block,
@@ -300,7 +301,11 @@ def execute_feature_claude_driven(
     _work_type = work_type_for(
         is_brownfield=_is_brownfield, touches_frontend=_touches_frontend
     )
-    _selected_skills = select_skills(_work_type, scan_installed_skills(target_path))
+    _selected_skills = select_skills(
+        _work_type,
+        scan_installed_skills(target_path),
+        lessons=recent_lessons(project_name=charter_bundle.contract.project_name),
+    )
     _skill_block = render_skill_block(_selected_skills)
 
     # Record what the builder capability resolved to, for the ledger.
