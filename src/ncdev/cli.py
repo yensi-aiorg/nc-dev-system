@@ -468,6 +468,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum recurrences for a pattern to be a candidate",
     )
 
+    skill_author = sub.add_parser(
+        "skill-author",
+        help="Author a new skill for a recurring pattern (spawns a Claude session)",
+    )
+    skill_author.add_argument("--name", required=True, help="Name for the new skill")
+    skill_author.add_argument(
+        "--pattern", required=True,
+        help="The recurring pattern the skill should address "
+             "(copy one from `ncdev skill-candidates`)",
+    )
+
+    skill_promote = sub.add_parser(
+        "skill-promote",
+        help="Promote a pending authored skill into the live ~/.claude/skills library",
+    )
+    skill_promote.add_argument("--name", required=True, help="Pending skill name to promote")
+
     return parser
 
 
@@ -710,6 +727,29 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"  - {c.pattern}  [dim](x{c.occurrences})[/dim]")
         pending = list_pending_skills()
         console.print(f"[bold]Pending authored skills[/bold]: {', '.join(pending) or '(none)'}")
+        return 0
+
+    if args.command == "skill-author":
+        from ncdev.core.skill_author import author_skill
+        from ncdev.core.skill_candidate import SkillCandidate
+
+        candidate = SkillCandidate(
+            pattern=args.pattern, occurrences=0, example_lessons=[args.pattern],
+        )
+        dest = author_skill(candidate, skill_name=args.name)
+        console.print(f"[green]Authored pending skill at {dest}[/green]")
+        console.print(f"Review it, then run: ncdev skill-promote --name {args.name}")
+        return 0
+
+    if args.command == "skill-promote":
+        from ncdev.core.skill_author import promote_skill
+
+        try:
+            dest = promote_skill(args.name)
+        except (FileNotFoundError, FileExistsError) as exc:
+            console.print(f"[red]{exc}[/red]")
+            return 1
+        console.print(f"[green]Promoted skill to {dest}[/green]")
         return 0
 
     parser.print_help()

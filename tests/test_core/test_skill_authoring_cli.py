@@ -20,3 +20,28 @@ def test_skill_candidates_runs_and_reports(monkeypatch, tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "recurring gap in retry handling" in out
+
+
+def test_skill_author_and_promote_parse():
+    p = build_parser()
+    a = p.parse_args(["skill-author", "--name", "retry-helper", "--pattern", "x"])
+    assert a.command == "skill-author" and a.name == "retry-helper"
+    b = p.parse_args(["skill-promote", "--name", "retry-helper"])
+    assert b.command == "skill-promote" and b.name == "retry-helper"
+
+
+def test_skill_promote_moves_pending_into_library(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    pend = tmp_path / ".ncdev" / "skill-candidates" / "retry-helper"
+    pend.mkdir(parents=True)
+    (pend / "SKILL.md").write_text("# s", encoding="utf-8")
+
+    rc = main(["skill-promote", "--name", "retry-helper"])
+
+    assert rc == 0
+    assert (tmp_path / ".claude" / "skills" / "retry-helper" / "SKILL.md").is_file()
+
+
+def test_skill_promote_unknown_returns_nonzero(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    assert main(["skill-promote", "--name", "nope"]) == 1
