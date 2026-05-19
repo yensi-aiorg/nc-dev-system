@@ -459,6 +459,15 @@ def build_parser() -> argparse.ArgumentParser:
     qa_update.add_argument("--note", default="", help="Status note")
     qa_update.add_argument("--workspace", default=None)
 
+    skill_candidates = sub.add_parser(
+        "skill-candidates",
+        help="List recurring ledger patterns + pending authored skills",
+    )
+    skill_candidates.add_argument(
+        "--threshold", type=int, default=3,
+        help="Minimum recurrences for a pattern to be a candidate",
+    )
+
     return parser
 
 
@@ -686,6 +695,21 @@ def main(argv: list[str] | None = None) -> int:
             note=args.note,
         )
         console.print_json(data=metadata)
+        return 0
+
+    if args.command == "skill-candidates":
+        from ncdev.core.capability_ledger import read_entries
+        from ncdev.core.skill_candidate import detect_skill_candidates
+        from ncdev.core.skill_author import list_pending_skills
+
+        candidates = detect_skill_candidates(read_entries(), threshold=args.threshold)
+        console.print(f"[bold]Skill candidates[/bold] (>= {args.threshold} recurrences):")
+        if not candidates:
+            console.print("  (none)")
+        for c in candidates:
+            console.print(f"  - {c.pattern}  [dim](x{c.occurrences})[/dim]")
+        pending = list_pending_skills()
+        console.print(f"[bold]Pending authored skills[/bold]: {', '.join(pending) or '(none)'}")
         return 0
 
     parser.print_help()
