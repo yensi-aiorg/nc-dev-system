@@ -28,12 +28,18 @@ CLAUDE_MODEL_ALIASES: tuple[str, ...] = ("opus", "sonnet", "haiku")
 CODEX_DEFAULT_MODEL: str = "gpt-5.5"
 
 _SEMVER = re.compile(r"(\d+\.\d+\.\d+)")
+_LONG_FLAG = re.compile(r"--[a-z][a-z0-9-]+")
 
 
 def detect_cli_version(raw: str) -> str:
     """Extract a semver-ish version token from `<cli> --version` output."""
     match = _SEMVER.search(raw or "")
     return match.group(1) if match else "unknown"
+
+
+def parse_supported_flags(help_text: str) -> list[str]:
+    """Sorted, de-duplicated long flags (`--xyz`) found in CLI help text."""
+    return sorted(set(_LONG_FLAG.findall(help_text or "")))
 
 
 def _run_version(binary: str) -> str:
@@ -47,6 +53,20 @@ def _run_version(binary: str) -> str:
         )
         return (result.stdout or result.stderr or "").strip()
     except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _run_help(binary: str) -> str:
+    """Return raw `<binary> --help` stdout, or '' on any failure."""
+    try:
+        result = subprocess.run(
+            [binary, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return (result.stdout or result.stderr or "").strip()
+    except (OSError, subprocess.SubprocessError, TypeError):
         return ""
 
 
@@ -88,7 +108,7 @@ def probe_claude() -> ProviderCapabilitySnapshot:
             notes=["claude CLI not found on PATH"],
         )
     version = detect_cli_version(_run_version("claude"))
-    return ProviderCapabilitySnapshot(
+    snap = ProviderCapabilitySnapshot(
         provider="anthropic_claude_code",
         model=CLAUDE_MODEL_ALIASES[0],
         available=True,
@@ -103,6 +123,10 @@ def probe_claude() -> ProviderCapabilitySnapshot:
         ),
         notes=[f"accepted model aliases: {', '.join(CLAUDE_MODEL_ALIASES)}"],
     )
+    flags = parse_supported_flags(_run_help("claude"))
+    if flags:
+        snap.notes.append(f"flags: {', '.join(flags)}")
+    return snap
 
 
 def probe_codex() -> ProviderCapabilitySnapshot:
@@ -115,7 +139,7 @@ def probe_codex() -> ProviderCapabilitySnapshot:
             notes=["codex CLI not found on PATH"],
         )
     version = detect_cli_version(_run_version("codex"))
-    return ProviderCapabilitySnapshot(
+    snap = ProviderCapabilitySnapshot(
         provider="openai_codex",
         model=CODEX_DEFAULT_MODEL,
         available=True,
@@ -128,6 +152,10 @@ def probe_codex() -> ProviderCapabilitySnapshot:
         ),
         notes=["reasoning via config key model_reasoning_effort"],
     )
+    flags = parse_supported_flags(_run_help("codex"))
+    if flags:
+        snap.notes.append(f"flags: {', '.join(flags)}")
+    return snap
 
 
 def probe_toolchain(workspace: Path | None = None) -> CapabilitySnapshotDoc:

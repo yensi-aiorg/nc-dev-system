@@ -111,3 +111,28 @@ def test_load_snapshot_corrupt_returns_none(tmp_path):
     bad = tmp_path / "capabilities.json"
     bad.write_text("{not valid json", encoding="utf-8")
     assert load_snapshot(bad) is None
+
+
+from ncdev.core.capability_probe import parse_supported_flags
+
+
+def test_parse_supported_flags_extracts_long_flags():
+    help_text = """Usage: claude [options]
+      --model <name>      The model
+      --permission-mode   Mode
+      -p, --print         Print
+    """
+    flags = parse_supported_flags(help_text)
+    assert "--model" in flags
+    assert "--permission-mode" in flags
+    assert "--print" in flags
+
+
+def test_probe_claude_records_flags_in_notes(monkeypatch):
+    monkeypatch.setattr("ncdev.core.capability_probe.shutil.which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr("ncdev.core.capability_probe._run_version", lambda _b: "1.2.3")
+    monkeypatch.setattr(
+        "ncdev.core.capability_probe._run_help", lambda _b: "  --model x\n  --verbose y"
+    )
+    snap = probe_claude()
+    assert any("flags:" in note and "--model" in note for note in snap.notes)
