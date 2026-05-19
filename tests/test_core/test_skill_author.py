@@ -27,3 +27,37 @@ def test_list_pending_skills_finds_dirs_with_skill_md(monkeypatch, tmp_path):
 def test_list_pending_skills_empty_when_no_dir(monkeypatch, tmp_path):
     monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
     assert list_pending_skills() == []
+
+
+import pytest
+
+from ncdev.core.skill_author import promote_skill
+
+
+def _make_pending(tmp_path, name):
+    d = tmp_path / ".ncdev" / "skill-candidates" / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("# skill", encoding="utf-8")
+    return d
+
+
+def test_promote_copies_candidate_into_live_library(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    _make_pending(tmp_path, "retry-helper")
+    dest = promote_skill("retry-helper")
+    assert dest == tmp_path / ".claude" / "skills" / "retry-helper"
+    assert (dest / "SKILL.md").read_text(encoding="utf-8") == "# skill"
+
+
+def test_promote_unknown_candidate_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    with pytest.raises(FileNotFoundError):
+        promote_skill("does-not-exist")
+
+
+def test_promote_refuses_to_overwrite_existing_skill(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    _make_pending(tmp_path, "retry-helper")
+    (tmp_path / ".claude" / "skills" / "retry-helper").mkdir(parents=True)
+    with pytest.raises(FileExistsError):
+        promote_skill("retry-helper")
