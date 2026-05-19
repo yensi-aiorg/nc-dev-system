@@ -131,6 +131,8 @@ def run_claude_session(
     settings_path: Path | None = None,
     enable_ncdev_hooks: bool = True,
     retain_events: bool = False,
+    _session_executor=None,
+    _model_fallback_done: bool = False,
 ) -> ClaudeSessionResult:
     """Spawn a Claude session and stream its events.
 
@@ -187,6 +189,33 @@ def run_claude_session(
         log them to JSONL already (``log_path``). Turn on for tests /
         debugging only.
     """
+    _requested_was_auto = model.strip().lower() in ("auto", "latest", "")
+
+    def _maybe_retry(result, resolved_model):
+        """Retry once down the alias chain if the CLI rejected an auto model."""
+        if result.success or _model_fallback_done or not _requested_was_auto:
+            return result
+        from ncdev.core.capability_policy import (
+            is_model_rejection_error,
+            next_alias_down,
+        )
+        if not is_model_rejection_error(result.error, result.final_text):
+            return result
+        fallback = next_alias_down("anthropic_claude_code", resolved_model)
+        if fallback is None:
+            return result
+        return run_claude_session(
+            prompt, cwd=cwd, tools=tools, model=fallback, timeout=timeout,
+            permission_mode=permission_mode,
+            append_system_prompt=append_system_prompt,
+            include_codex_protocol=include_codex_protocol,
+            max_budget_usd=max_budget_usd, log_path=log_path,
+            on_event=on_event, extra_args=extra_args,
+            settings_path=settings_path, enable_ncdev_hooks=enable_ncdev_hooks,
+            retain_events=retain_events,
+            _session_executor=_session_executor, _model_fallback_done=True,
+        )
+
     if shutil.which("claude") is None:
         return ClaudeSessionResult(
             success=False, final_text="", exit_code=-1,
@@ -214,6 +243,9 @@ def run_claude_session(
             "anthropic_claude_code", model, probe_claude(),
             ledger_entries=read_entries(),
         )
+
+    if _session_executor is not None:
+        return _maybe_retry(_session_executor(model), model)
 
     cmd: list[str] = [
         "claude",
@@ -406,7 +438,7 @@ def run_claude_session(
                     final_text = text
                     break
 
-    return ClaudeSessionResult(
+    return _maybe_retry(ClaudeSessionResult(
         success=exit_code == 0,
         final_text=final_text,
         exit_code=exit_code,
@@ -420,7 +452,7 @@ def run_claude_session(
         duration_seconds=duration,
         stderr=stderr_text,
         error=None if exit_code == 0 else f"claude exited with code {exit_code}",
-    )
+    ), model)
 
 
 # ---------------------------------------------------------------------------
