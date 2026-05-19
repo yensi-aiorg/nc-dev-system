@@ -48,3 +48,22 @@ def test_read_entries_skips_corrupt_lines(monkeypatch, tmp_path):
     )
     entries = read_entries()
     assert [e.run_id for e in entries] == ["good"]
+
+
+from ncdev.pipeline.models import StepResult, StepStatus
+
+
+def test_step_result_has_capability_fields_with_safe_defaults():
+    step = StepResult(feature_id="f1", status=StepStatus.PASSED)
+    assert step.resolved_provider == ""
+    assert step.resolved_model == ""
+    assert step.skills_steered == []
+
+
+def test_step_result_accepts_capability_fields():
+    step = StepResult(
+        feature_id="f1", status=StepStatus.PASSED,
+        resolved_provider="openai_codex", resolved_model="gpt-5.5",
+        skills_steered=["systematic-debugging"],
+    )
+    assert step.resolved_model == "gpt-5.5"

@@ -193,6 +193,10 @@ class StepResult(BaseModel):
     commit_sha: str = ""
     error_message: str = ""
     builder_output: str = ""
+    # Capability resolution (Phase 2 — for the capability ledger).
+    resolved_provider: str = ""
+    resolved_model: str = ""
+    skills_steered: list[str] = Field(default_factory=list)
 
 
 class PipelineRunState(BaseModel):
