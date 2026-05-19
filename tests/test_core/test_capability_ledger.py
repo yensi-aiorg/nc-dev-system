@@ -67,3 +67,48 @@ def test_step_result_accepts_capability_fields():
         skills_steered=["systematic-debugging"],
     )
     assert step.resolved_model == "gpt-5.5"
+
+
+from ncdev.core.capability_ledger import record_cycle
+from ncdev.pipeline.metrics import RunMetrics
+
+
+def test_record_cycle_writes_entry_from_metrics(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    metrics = RunMetrics(
+        run_id="r1", project_name="demo", total_features=4,
+        passed_features=3, first_pass_success_rate=0.75, repair_rate=0.25,
+        builder_primary="codex", builder_model="gpt-5.5",
+    )
+    steps = [
+        StepResult(
+            feature_id="f1", status=StepStatus.PASSED,
+            resolved_provider="openai_codex", resolved_model="gpt-5.5",
+            skills_steered=["systematic-debugging"],
+        ),
+    ]
+    record_cycle(
+        metrics=metrics, steps=steps, cycle=1,
+        steward_disposition="continue",
+        capability_lessons=["codex handled boilerplate well"],
+    )
+    entries = read_entries()
+    assert len(entries) == 1
+    e = entries[0]
+    assert e.provider == "openai_codex"
+    assert e.model == "gpt-5.5"
+    assert e.cycle == 1
+    assert e.first_pass_success_rate == 0.75
+    assert e.skills_steered == ["systematic-debugging"]
+    assert e.capability_lessons == ["codex handled boilerplate well"]
+
+
+def test_record_cycle_no_steps_uses_metrics_builder(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    metrics = RunMetrics(run_id="r1", builder_primary="codex", builder_model="gpt-5.5")
+    record_cycle(metrics=metrics, steps=[], cycle=1, steward_disposition="continue",
+                 capability_lessons=[])
+    e = read_entries()[0]
+    assert e.provider == "openai_codex"
+    assert e.model == "gpt-5.5"
+    assert e.broken_rate == 0.0
