@@ -47,12 +47,17 @@ def reproduce_failure(
 
     pre_session_files = _git_changed_files(repo_dir)
     from ncdev.core.capability_probe import scan_installed_skills
+    from ncdev.core.capability_ledger import recent_lessons
     from ncdev.core.skill_selector import render_skill_block, select_skills
 
     # Bugfix sessions always use the "bugfix" work type -- they most need
     # systematic-debugging + reproduction skills.
     _skill_block = render_skill_block(
-        select_skills("bugfix", scan_installed_skills(repo_dir))
+        select_skills(
+            "bugfix",
+            scan_installed_skills(repo_dir),
+            lessons=recent_lessons(),
+        )
     )
 
     session = run_ai_session(
