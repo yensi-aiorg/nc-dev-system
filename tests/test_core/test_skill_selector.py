@@ -48,3 +48,22 @@ def test_bugfix_steering_block_names_systematic_debugging():
         select_skills("bugfix", ["systematic-debugging", "test-driven-development"])
     )
     assert "systematic-debugging" in block
+
+
+def test_select_skills_drops_skill_flagged_hurt():
+    lessons = ["frontend-design hurt — produced inconsistent layouts"]
+    picked = select_skills("greenfield_ui", INVENTORY, lessons=lessons)
+    assert "frontend-design" not in picked
+    assert "test-driven-development" in picked  # unaffected skills remain
+
+
+def test_select_skills_ignores_lessons_without_hurt():
+    lessons = ["frontend-design helped a lot"]
+    picked = select_skills("greenfield_ui", INVENTORY, lessons=lessons)
+    assert "frontend-design" in picked  # "helped" is advisory, not forced
+
+
+def test_select_skills_no_lessons_is_phase1_behaviour():
+    assert select_skills("bugfix", INVENTORY) == select_skills(
+        "bugfix", INVENTORY, lessons=None
+    )

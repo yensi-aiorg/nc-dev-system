@@ -39,11 +39,38 @@ def work_type_for(*, is_brownfield: bool, touches_frontend: bool) -> str:
     return "greenfield_ui" if touches_frontend else "greenfield_backend"
 
 
-def select_skills(work_type: str, inventory: list[str]) -> list[str]:
-    """Return the preferred skills for `work_type` that are installed."""
+def _skills_flagged_hurt(lessons: list[str]) -> set[str]:
+    """Skill names a lesson explicitly flags as harmful.
+
+    A skill is dropped when a lesson mentions its name AND the word
+    "hurt". Conservative on purpose — "helped" lessons are advisory.
+    """
+    flagged: set[str] = set()
+    for lesson in lessons:
+        low = lesson.lower()
+        if "hurt" not in low:
+            continue
+        for skill in {s for skills in _WORK_TYPE_SKILLS.values() for s in skills}:
+            if skill in low:
+                flagged.add(skill)
+    return flagged
+
+
+def select_skills(
+    work_type: str,
+    inventory: list[str],
+    *,
+    lessons: list[str] | None = None,
+) -> list[str]:
+    """Return the preferred skills for `work_type` that are installed.
+
+    When `lessons` (Steward capability lessons from the ledger) are
+    supplied, any skill a lesson flags as "hurt" is dropped.
+    """
     preferred = _WORK_TYPE_SKILLS.get(work_type, _WORK_TYPE_SKILLS["brownfield"])
     installed = set(inventory)
-    return [s for s in preferred if s in installed]
+    hurt = _skills_flagged_hurt(lessons) if lessons else set()
+    return [s for s in preferred if s in installed and s not in hurt]
 
 
 def render_skill_block(skills: list[str]) -> str:
