@@ -208,8 +208,12 @@ def run_claude_session(
     if model.strip().lower() in ("auto", "latest", ""):
         from ncdev.core.capability_probe import probe_claude
         from ncdev.core.capability_policy import resolve_model
+        from ncdev.core.capability_ledger import read_entries
 
-        model = resolve_model("anthropic_claude_code", model, probe_claude())
+        model = resolve_model(
+            "anthropic_claude_code", model, probe_claude(),
+            ledger_entries=read_entries(),
+        )
 
     cmd: list[str] = [
         "claude",
