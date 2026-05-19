@@ -72,3 +72,26 @@ def test_no_retry_for_non_model_failure():
 
     claude_session.run_claude_session("hi", cwd=Path("."), _session_executor=fake_executor)
     assert calls == ["opus"]
+
+
+def test_surface_skill_candidates_prints_detected_patterns(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    from ncdev.core.capability_ledger import LedgerEntry, append_entry
+    for i in range(3):
+        append_entry(LedgerEntry(
+            timestamp="t", project_name="demo", run_id=f"r{i}", cycle=1,
+            provider="openai_codex", model="gpt-5.5",
+            capability_lessons=["recurring gap in retry handling"],
+        ))
+    from ncdev.factory import surface_skill_candidates
+    surface_skill_candidates()
+    out = capsys.readouterr().out
+    assert "recurring gap in retry handling" in out
+    assert "skill-author" in out
+
+
+def test_surface_skill_candidates_silent_when_none(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    from ncdev.factory import surface_skill_candidates
+    surface_skill_candidates()
+    assert capsys.readouterr().out == ""

@@ -76,6 +76,26 @@ class FactoryRunState:
     changed_files_per_cycle: list[list[str]] = field(default_factory=list)
 
 
+def surface_skill_candidates() -> None:
+    """Print recurring skill candidates from the ledger. Silent when none."""
+    from ncdev.core.capability_ledger import read_entries
+    from ncdev.core.skill_candidate import detect_skill_candidates
+
+    candidates = detect_skill_candidates(read_entries())
+    if not candidates:
+        return
+    console.print(
+        "[bold]Skill candidates detected[/bold] — recurring patterns in the "
+        "capability ledger:"
+    )
+    for c in candidates:
+        console.print(f"  - {c.pattern}  [dim](x{c.occurrences})[/dim]")
+    console.print(
+        "  Consider authoring a skill: "
+        "[cyan]ncdev skill-author --name <name> --pattern \"<pattern>\"[/cyan]"
+    )
+
+
 def load_charter_bundle_from_run(run_dir: Path) -> CharterBundle:
     """Indirection point so tests can stub charter loading."""
     return load_charter(run_dir / "outputs", strict=False)
@@ -365,7 +385,7 @@ def run_factory(
             test_craftr_url=test_craftr_url,
         )
 
-    return _run_factory_cycle_loop(
+    state = _run_factory_cycle_loop(
         state=state,
         workspace=workspace,
         source_path=source_path,
@@ -381,6 +401,8 @@ def run_factory(
         target_url=target_url,
         project_id=project_id,
     )
+    surface_skill_candidates()
+    return state
 
 
 def run_factory_from_issues(
