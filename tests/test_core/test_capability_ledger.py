@@ -112,3 +112,33 @@ def test_record_cycle_no_steps_uses_metrics_builder(monkeypatch, tmp_path):
     assert e.provider == "openai_codex"
     assert e.model == "gpt-5.5"
     assert e.broken_rate == 0.0
+
+
+from ncdev.core.capability_ledger import recent_lessons
+
+
+def test_recent_lessons_flattens_capability_lessons(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    append_entry(_entry(run_id="r1", capability_lessons=["lesson A"]))
+    append_entry(_entry(run_id="r2", capability_lessons=["lesson B", "lesson C"]))
+    assert recent_lessons() == ["lesson A", "lesson B", "lesson C"]
+
+
+def test_recent_lessons_filters_by_project(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    append_entry(_entry(run_id="r1", project_name="alpha", capability_lessons=["A only"]))
+    append_entry(_entry(run_id="r2", project_name="beta", capability_lessons=["B only"]))
+    assert recent_lessons(project_name="alpha") == ["A only"]
+
+
+def test_recent_lessons_respects_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    for i in range(30):
+        append_entry(_entry(run_id=f"r{i}", capability_lessons=[f"lesson {i}"]))
+    out = recent_lessons(limit=5)
+    assert out == [f"lesson {i}" for i in range(25, 30)]
+
+
+def test_recent_lessons_empty_ledger(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    assert recent_lessons() == []

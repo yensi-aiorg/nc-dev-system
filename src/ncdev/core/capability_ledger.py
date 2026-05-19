@@ -72,6 +72,25 @@ def read_entries() -> list[LedgerEntry]:
     return entries
 
 
+def recent_lessons(
+    *,
+    project_name: str | None = None,
+    limit: int = 20,
+) -> list[str]:
+    """Flattened `capability_lessons` from the most recent ledger entries.
+
+    Entries are filtered to `project_name` when given, then the last
+    `limit` entries are taken and their lessons concatenated in order.
+    """
+    entries = read_entries()
+    if project_name:
+        entries = [e for e in entries if e.project_name == project_name]
+    lessons: list[str] = []
+    for entry in entries[-limit:]:
+        lessons.extend(entry.capability_lessons)
+    return lessons
+
+
 # Maps RunMetrics.builder_primary short names to provider registry keys.
 _BUILDER_PROVIDER: dict[str, str] = {
     "codex": "openai_codex",
