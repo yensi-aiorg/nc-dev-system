@@ -265,8 +265,12 @@ def _resolve_claude_model(model: str | None) -> str:
     """Resolve an auto/None model request to a concrete Claude model."""
     from ncdev.core.capability_policy import resolve_model
     from ncdev.core.capability_probe import probe_claude
+    from ncdev.core.capability_ledger import read_entries
 
-    return resolve_model("anthropic_claude_code", model, probe_claude())
+    return resolve_model(
+        "anthropic_claude_code", model, probe_claude(),
+        ledger_entries=read_entries(),
+    )
 
 
 class CodexCLIProvider(_CLIProviderMixin, AIProvider):
