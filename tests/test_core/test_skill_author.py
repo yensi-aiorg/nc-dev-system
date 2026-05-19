@@ -61,3 +61,44 @@ def test_promote_refuses_to_overwrite_existing_skill(monkeypatch, tmp_path):
     (tmp_path / ".claude" / "skills" / "retry-helper").mkdir(parents=True)
     with pytest.raises(FileExistsError):
         promote_skill("retry-helper")
+
+
+from ncdev.core.skill_author import author_skill
+from ncdev.core.skill_candidate import SkillCandidate
+
+
+def test_author_skill_spawns_session_into_pending_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    candidate = SkillCandidate(
+        pattern="had to hand-fix retry logic",
+        occurrences=4,
+        example_lessons=["had to hand-fix retry logic"],
+        projects=["demo"],
+    )
+    captured = {}
+
+    def fake_runner(prompt, *, cwd, **kwargs):
+        captured["prompt"] = prompt
+        captured["cwd"] = cwd
+        (cwd / "SKILL.md").write_text("# retry-helper", encoding="utf-8")
+
+        class _Result:
+            success = True
+            final_text = "authored"
+        return _Result()
+
+    dest = author_skill(candidate, skill_name="retry-helper", run_session=fake_runner)
+
+    assert dest == tmp_path / ".ncdev" / "skill-candidates" / "retry-helper"
+    assert (dest / "SKILL.md").is_file()
+    assert captured["cwd"] == dest
+    assert "writing-skills" in captured["prompt"]
+    assert "had to hand-fix retry logic" in captured["prompt"]
+
+
+def test_author_skill_rejects_a_name_that_already_has_a_pending_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    _make_pending(tmp_path, "retry-helper")
+    candidate = SkillCandidate(pattern="x", occurrences=3)
+    with pytest.raises(FileExistsError):
+        author_skill(candidate, skill_name="retry-helper", run_session=lambda *a, **k: None)
