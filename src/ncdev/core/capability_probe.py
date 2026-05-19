@@ -66,7 +66,7 @@ def _run_help(binary: str) -> str:
             timeout=10,
         )
         return (result.stdout or result.stderr or "").strip()
-    except (OSError, subprocess.SubprocessError, TypeError):
+    except (OSError, subprocess.SubprocessError):
         return ""
 
 

@@ -1,4 +1,17 @@
+import pytest
+
 from ncdev import claude_session
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_capability_probe(monkeypatch):
+    """These tests fake subprocess.Popen; the capability probe's
+    subprocess.run-based helpers must be stubbed too, or they break on
+    the faked Popen. Keep the probe hermetic."""
+    from ncdev.core import capability_probe
+
+    monkeypatch.setattr(capability_probe, "_run_version", lambda _: "")
+    monkeypatch.setattr(capability_probe, "_run_help", lambda _: "")
 
 
 def test_auto_model_is_resolved_not_passed_literally(monkeypatch):

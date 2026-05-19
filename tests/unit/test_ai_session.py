@@ -23,6 +23,10 @@ def _skip_codex_version_probe(monkeypatch):
     from ncdev.core import capability_probe
 
     monkeypatch.setattr(capability_probe, "_run_version", lambda _: "")
+    # These tests fake subprocess.Popen globally; the capability probe's
+    # subprocess.run-based helpers must be stubbed too, or they break on
+    # the faked Popen. Keep the probe hermetic.
+    monkeypatch.setattr(capability_probe, "_run_help", lambda _: "")
 
 
 # ---------------------------------------------------------------------------
