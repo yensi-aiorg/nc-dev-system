@@ -485,6 +485,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     skill_promote.add_argument("--name", required=True, help="Pending skill name to promote")
 
+    skill_review = sub.add_parser(
+        "skill-review",
+        help="Run a lightweight Steward review of a pending authored skill",
+    )
+    skill_review.add_argument("--name", required=True, help="Pending skill name to review")
+
     return parser
 
 
@@ -751,6 +757,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         console.print(f"[green]Promoted skill to {dest}[/green]")
         return 0
+
+    if args.command == "skill-review":
+        from ncdev.core.skill_author import candidate_skills_dir
+        from ncdev.core.skill_review import review_skill_candidate
+
+        skill_dir = candidate_skills_dir() / args.name
+        try:
+            review = review_skill_candidate(skill_dir)
+        except FileNotFoundError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return 1
+        verdict = "[green]APPROVED[/green]" if review.approved else "[yellow]NOT APPROVED[/yellow]"
+        console.print(f"Steward review of '{args.name}': {verdict}")
+        console.print(f"  {review.reasoning}")
+        return 0 if review.approved else 1
 
     parser.print_help()
     return 1

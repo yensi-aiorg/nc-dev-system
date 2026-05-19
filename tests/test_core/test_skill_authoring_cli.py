@@ -45,3 +45,13 @@ def test_skill_promote_moves_pending_into_library(monkeypatch, tmp_path, capsys)
 def test_skill_promote_unknown_returns_nonzero(monkeypatch, tmp_path):
     monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
     assert main(["skill-promote", "--name", "nope"]) == 1
+
+
+def test_skill_review_command_parses():
+    args = build_parser().parse_args(["skill-review", "--name", "retry-helper"])
+    assert args.command == "skill-review" and args.name == "retry-helper"
+
+
+def test_skill_review_missing_candidate_returns_nonzero(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
+    assert main(["skill-review", "--name", "nope"]) == 1
