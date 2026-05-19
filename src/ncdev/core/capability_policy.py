@@ -7,6 +7,9 @@ explicit pin > known alias > version table > provider default.
 
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
+
 from ncdev.core.capability_probe import (
     CLAUDE_MODEL_ALIASES,
     CODEX_DEFAULT_MODEL,
@@ -32,10 +35,6 @@ VERSION_MODEL_TABLE: dict[str, dict[str, str]] = {
 
 
 # --- Metrics gate (Phase 2) -------------------------------------------------
-_GATE_WINDOW = 5            # consider at most this many recent entries
-_GATE_MIN_SAMPLES = 3       # need at least this many before gating
-_GATE_FAIL_THRESHOLD = 0.5  # mean failure rate above this -> demote
-
 # Per-provider alias chain, best-first. Demotion steps one rung down.
 _ALIAS_CHAIN: dict[str, tuple[str, ...]] = {
     "anthropic_claude_code": CLAUDE_MODEL_ALIASES,  # ("opus", "sonnet", "haiku")
@@ -74,13 +73,21 @@ def next_alias_down(provider: str, model: str) -> str | None:
     return chain[idx + 1] if idx + 1 < len(chain) else None
 
 
-def _gated_model(provider: str, model: str, ledger_entries: list) -> str:
-    """Demote `model` one alias rung if its recent track record is bad.
+@lru_cache(maxsize=1)
+def _default_gate_config():
+    """Load gate thresholds from .nc-dev/config.yaml, or defaults on any error."""
+    from ncdev.core.config import CapabilityGateConfig, load_config
 
-    `ledger_entries` is a list of capability_ledger.LedgerEntry. Only
-    entries for this exact (provider, model) count. Returns `model`
-    unchanged when there is no demotion target or not enough data.
-    """
+    try:
+        return load_config(Path.cwd()).capability_gate
+    except Exception:  # noqa: BLE001
+        return CapabilityGateConfig()
+
+
+def _gated_model(provider: str, model: str, ledger_entries: list, gate_config=None) -> str:
+    """Demote `model` one alias rung if its recent track record is bad."""
+    if gate_config is None:
+        gate_config = _default_gate_config()
     chain = _ALIAS_CHAIN.get(provider, ())
     if model not in chain:
         return model
@@ -90,11 +97,11 @@ def _gated_model(provider: str, model: str, ledger_entries: list) -> str:
     recent = [
         e for e in ledger_entries
         if e.provider == provider and e.model == model
-    ][-_GATE_WINDOW:]
-    if len(recent) < _GATE_MIN_SAMPLES:
+    ][-gate_config.window:]
+    if len(recent) < gate_config.min_samples:
         return model
     mean_failure = sum(1.0 - e.first_pass_success_rate for e in recent) / len(recent)
-    if mean_failure > _GATE_FAIL_THRESHOLD:
+    if mean_failure > gate_config.fail_threshold:
         return chain[idx + 1]
     return model
 
@@ -105,6 +112,7 @@ def resolve_model(
     snapshot: ProviderCapabilitySnapshot,
     *,
     ledger_entries: list | None = None,
+    gate_config=None,
 ) -> str:
     """Resolve `requested` to a concrete model string for `provider`.
 
@@ -122,7 +130,7 @@ def resolve_model(
     else:
         resolved = requested.strip()
     if ledger_entries:
-        resolved = _gated_model(provider, resolved, ledger_entries)
+        resolved = _gated_model(provider, resolved, ledger_entries, gate_config)
     return resolved
 
 

@@ -95,6 +95,14 @@ class CapabilityMatrixConfig(BaseModel):
     chains: dict[str, list[CapabilityChoice]] = Field(default_factory=dict)
 
 
+class CapabilityGateConfig(BaseModel):
+    """Thresholds for the capability metrics gate (Phase 2 feedback loop)."""
+
+    window: int = 5            # consider at most this many recent entries
+    min_samples: int = 3       # need at least this many before gating
+    fail_threshold: float = 0.5  # mean failure rate above this -> demote
+
+
 DEFAULT_CAPABILITY_CHAINS: dict[str, dict[str, list[CapabilityChoice]]] = {
     "claude_plan_codex_build": {
         "frontend_implementation": [
@@ -268,6 +276,7 @@ class NCDevConfig(BaseModel):
     )
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     capabilities: CapabilityMatrixConfig = Field(default_factory=CapabilityMatrixConfig)
+    capability_gate: CapabilityGateConfig = Field(default_factory=CapabilityGateConfig)
     quality_gates: QualityGateConfig = Field(default_factory=QualityGateConfig)
     sentinel: SentinelConfig = Field(default_factory=SentinelConfig)
 
