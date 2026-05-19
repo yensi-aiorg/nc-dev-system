@@ -106,3 +106,23 @@ def test_gate_does_not_apply_to_explicit_pin(monkeypatch):
     snap = _claude_snap(monkeypatch)
     ledger = _led("claude-opus-4-7", 0.0, n=5)
     assert _rm("anthropic_claude_code", "claude-opus-4-7", snap, ledger_entries=ledger) == "claude-opus-4-7"
+
+
+# Append to tests/test_core/test_capability_policy.py
+from ncdev.core.capability_policy import is_model_rejection_error, next_alias_down
+
+
+def test_is_model_rejection_error_matches_known_phrases():
+    assert is_model_rejection_error("Error: model not found")
+    assert is_model_rejection_error("you do not have access to this model")
+    assert is_model_rejection_error(None, "invalid model: opus-9")
+    assert not is_model_rejection_error("timed out after 600s")
+    assert not is_model_rejection_error(None, None)
+
+
+def test_next_alias_down_steps_through_the_chain():
+    assert next_alias_down("anthropic_claude_code", "opus") == "sonnet"
+    assert next_alias_down("anthropic_claude_code", "sonnet") == "haiku"
+    assert next_alias_down("anthropic_claude_code", "haiku") is None
+    assert next_alias_down("anthropic_claude_code", "claude-opus-4-7") is None
+    assert next_alias_down("openai_codex", "gpt-5.5") is None

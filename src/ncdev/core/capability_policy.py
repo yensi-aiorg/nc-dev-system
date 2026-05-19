@@ -42,6 +42,37 @@ _ALIAS_CHAIN: dict[str, tuple[str, ...]] = {
     "openai_codex": (CODEX_DEFAULT_MODEL,),         # single model — no demotion target
 }
 
+_MODEL_REJECTION_MARKERS: tuple[str, ...] = (
+    "model not found",
+    "does not exist",
+    "do not have access",
+    "invalid model",
+    "unknown model",
+    "not authorized",
+)
+
+
+def is_model_rejection_error(*text_parts: str | None) -> bool:
+    """True if any text part looks like the CLI rejecting the model.
+
+    Heuristic — the CLIs expose no machine-readable error code.
+    """
+    blob = " ".join(p for p in text_parts if p).lower()
+    return any(marker in blob for marker in _MODEL_REJECTION_MARKERS)
+
+
+def next_alias_down(provider: str, model: str) -> str | None:
+    """The next alias one rung down `provider`'s chain, or None.
+
+    Returns None when `model` is not a chain alias (e.g. an explicit
+    pin) or is already the last rung.
+    """
+    chain = _ALIAS_CHAIN.get(provider, ())
+    if model not in chain:
+        return None
+    idx = chain.index(model)
+    return chain[idx + 1] if idx + 1 < len(chain) else None
+
 
 def _gated_model(provider: str, model: str, ledger_entries: list) -> str:
     """Demote `model` one alias rung if its recent track record is bad.
