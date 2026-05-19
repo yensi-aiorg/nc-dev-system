@@ -2,6 +2,8 @@ from pathlib import Path
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 
 from ncdev.factory import (
     FactoryStopReason,
@@ -13,6 +15,11 @@ from ncdev.pipeline.product_steward import (
     FeatureAmendment,
     StewardDecision,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_capability_ledger(monkeypatch, tmp_path):
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
 
 
 def _make_pipeline_state(tmp_path: Path, cycle: int, status: str = "passed"):

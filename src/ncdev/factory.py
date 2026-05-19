@@ -606,6 +606,23 @@ def _run_factory_cycle_loop(
             **steward_kwargs,
         )
         state.decisions.append(decision)
+
+        # Phase B.5 — record this cycle in the cross-project capability ledger.
+        try:
+            from ncdev.core.capability_ledger import record_cycle
+            from ncdev.pipeline.metrics import compute_run_metrics
+
+            record_cycle(
+                metrics=compute_run_metrics(pipeline_state),
+                steps=list(pipeline_state.completed_steps),
+                cycle=cycle,
+                steward_disposition=decision.disposition.value,
+                capability_lessons=list(decision.capability_lessons),
+            )
+        except Exception as exc:  # noqa: BLE001
+            # The ledger is best-effort telemetry — never fail a build over it.
+            console.print(f"[yellow]capability ledger write skipped: {exc}[/yellow]")
+
         console.print(
             f"  [cyan]Steward[/cyan]: {decision.disposition.value} — "
             f"{decision.reasoning[:200]}"
