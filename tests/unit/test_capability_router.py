@@ -140,5 +140,5 @@ def test_user_chains_preserved_across_validation() -> None:
         CapabilityChoice(provider="openrouter", model="custom/frontier")
     ]
     assert cfg.capabilities.chains["backend_implementation"] == [
-        CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+        CapabilityChoice(provider="openai_codex", model="auto")
     ]

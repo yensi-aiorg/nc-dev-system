@@ -25,7 +25,7 @@ def test_cli_full_defaults() -> None:
     assert args.base_url == "http://localhost:23000"
     assert args.dry_run is False
     assert args.target_repo is None
-    assert args.model == "claude-opus-4-6"
+    assert args.model == "auto"
     assert args.timeout == 600
     assert args.max_repairs == 2
 

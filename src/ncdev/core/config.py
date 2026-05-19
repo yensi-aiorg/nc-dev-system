@@ -98,36 +98,36 @@ class CapabilityMatrixConfig(BaseModel):
 DEFAULT_CAPABILITY_CHAINS: dict[str, dict[str, list[CapabilityChoice]]] = {
     "claude_plan_codex_build": {
         "frontend_implementation": [
-            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+            CapabilityChoice(provider="openai_codex", model="auto")
         ],
         "backend_implementation": [
-            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+            CapabilityChoice(provider="openai_codex", model="auto")
         ],
         "test_authoring": [
-            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+            CapabilityChoice(provider="openai_codex", model="auto")
         ],
         "product_coherence_review": [
-            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+            CapabilityChoice(provider="anthropic_claude_code", model="auto")
         ],
         "visual_ux_judgment": [
-            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+            CapabilityChoice(provider="anthropic_claude_code", model="auto")
         ],
         "cheap_boilerplate": [
-            CapabilityChoice(provider="openai_codex", model="gpt-5.5")
+            CapabilityChoice(provider="openai_codex", model="auto")
         ],
         "code_review": [
-            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+            CapabilityChoice(provider="anthropic_claude_code", model="auto")
         ],
         "debugging": [
-            CapabilityChoice(provider="anthropic_claude_code", model="opus")
+            CapabilityChoice(provider="anthropic_claude_code", model="auto")
         ],
     },
     "claude_only": {
-        k: [CapabilityChoice(provider="anthropic_claude_code", model="opus")]
+        k: [CapabilityChoice(provider="anthropic_claude_code", model="auto")]
         for k in CAPABILITY_KEYS
     },
     "codex_only": {
-        k: [CapabilityChoice(provider="openai_codex", model="gpt-5.5")]
+        k: [CapabilityChoice(provider="openai_codex", model="auto")]
         for k in CAPABILITY_KEYS
     },
     "openrouter": {
@@ -245,16 +245,16 @@ class NCDevConfig(BaseModel):
         default_factory=lambda: {
             "anthropic_claude_code": ProviderPreferenceConfig(
                 enabled=True,
-                preferred_models={"planning": "opus", "review": "opus"},
+                preferred_models={"planning": "auto", "review": "auto"},
                 features={"use_subagents": True, "use_hooks": True, "use_mcp": True},
             ),
             "openai_codex": ProviderPreferenceConfig(
                 enabled=True,
                 preferred_models={
-                    "planning": "gpt-5.5",
-                    "review": "gpt-5.5",
-                    "implementation": "gpt-5.5",
-                    "test_implementation": "gpt-5.5",
+                    "planning": "auto",
+                    "review": "auto",
+                    "implementation": "auto",
+                    "test_implementation": "auto",
                 },
                 defaults={"reasoning_effort": "high"},
             ),

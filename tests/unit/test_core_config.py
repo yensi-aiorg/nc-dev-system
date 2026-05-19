@@ -83,5 +83,5 @@ def test_apply_mode_preset_seeds_capabilities_without_overwriting_user_chain() -
         CapabilityChoice(provider="openrouter", model="user/model")
     ]
     assert cfg.capabilities.chains["product_coherence_review"] == [
-        CapabilityChoice(provider="anthropic_claude_code", model="opus")
+        CapabilityChoice(provider="anthropic_claude_code", model="auto")
     ]

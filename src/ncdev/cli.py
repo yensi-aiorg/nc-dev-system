@@ -313,8 +313,8 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--workspace", default=None)
     full.add_argument("--base-url", default="http://localhost:23000")
     full.add_argument("--dry-run", action="store_true", help="Do not invoke builders")
-    full.add_argument("--model", default="claude-opus-4-6",
-                      help="Claude model for the orchestrator session (e.g. claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001)")
+    full.add_argument("--model", default="auto",
+                      help="Claude model: 'auto' (default, newest) or an explicit pin like claude-opus-4-7")
     full.add_argument("--max-budget-usd", type=float, default=None,
                       help="Cost ceiling per feature session (Claude only — ignored by Codex shell-outs)")
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
@@ -381,7 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
     factory.add_argument("--workspace", default=None)
     factory.add_argument("--max-cycles", type=int, default=5,
                          help="Stop after this many build→judge cycles")
-    factory.add_argument("--model", default="claude-opus-4-6")
+    factory.add_argument("--model", default="auto")
     factory.add_argument("--timeout", type=int, default=3600,
                          help="Per-feature builder timeout (seconds)")
     factory.add_argument("--max-budget-usd", type=float, default=None)
