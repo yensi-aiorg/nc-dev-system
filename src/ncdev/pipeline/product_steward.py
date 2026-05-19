@@ -56,6 +56,7 @@ class StewardDecision(BaseModel):
     target_feature_ids: list[str] = Field(default_factory=list)
     new_features: list[FeatureStep] = Field(default_factory=list)
     amendments: list[FeatureAmendment] = Field(default_factory=list)
+    capability_lessons: list[str] = Field(default_factory=list)
 
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)

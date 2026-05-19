@@ -3,6 +3,7 @@ import json
 from ncdev.claude_session import ClaudeSessionResult
 from ncdev.pipeline.product_steward import (
     Disposition,
+    StewardDecision,
     parse_steward_response,
 )
 
@@ -46,6 +47,23 @@ def test_parse_steward_response_invalid_disposition_raises():
             "disposition": "yolo",
             "reasoning": "n/a",
         }))
+
+
+def test_steward_decision_capability_lessons_defaults_empty():
+    d = StewardDecision(disposition="continue", reasoning="done")
+    assert d.capability_lessons == []
+
+
+def test_parse_steward_response_reads_capability_lessons():
+    text = '''{
+      "disposition": "continue",
+      "reasoning": "product complete",
+      "capability_lessons": ["systematic-debugging cut repair attempts on backend features"]
+    }'''
+    decision = parse_steward_response(text)
+    assert decision.capability_lessons == [
+        "systematic-debugging cut repair attempts on backend features"
+    ]
 
 
 def _bundle():
