@@ -45,3 +45,23 @@ def test_candidate_records_distinct_projects():
 
 def test_empty_entries_yield_no_candidates():
     assert detect_skill_candidates([], threshold=3) == []
+
+
+def test_near_identical_lessons_cluster_into_one_candidate():
+    entries = [
+        _entry("r1", ["had to hand-fix the pagination helper"]),
+        _entry("r2", ["had to hand fix the pagination helper"]),
+        _entry("r3", ["had to hand-fix the pagination helpers"]),
+    ]
+    candidates = detect_skill_candidates(entries, threshold=3)
+    assert len(candidates) == 1
+    assert candidates[0].occurrences == 3
+
+
+def test_clearly_different_lessons_do_not_cluster():
+    entries = [
+        _entry("r1", ["pagination helper keeps breaking"]),
+        _entry("r2", ["authentication tokens expire too early"]),
+        _entry("r3", ["the database migration ordering is wrong"]),
+    ]
+    assert detect_skill_candidates(entries, threshold=3) == []
