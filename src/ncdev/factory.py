@@ -564,6 +564,20 @@ def _run_factory_cycle_loop(
 
         # Phase B — judge (Steward)
         run_dir = Path(pipeline_state.run_dir)
+
+        # Pin the run_dir and reuse its charter for every subsequent
+        # cycle. Without this, each repair cycle calls run_pipeline with
+        # run_id=None + skip_charter=False, which spins up a fresh
+        # run_dir and regenerates the charter from scratch. Charter
+        # generation is non-deterministic, so feature IDs drift between
+        # cycles and the state-scanner can no longer recognise
+        # already-built features — turning a "repair one feature" cycle
+        # into a near-full rebuild. RERUN_CHARTER still regenerates, but
+        # it does so in-place in this pinned run_dir's outputs/.
+        if pipeline_run_id is None:
+            pipeline_run_id = run_dir.name
+            skip_charter = True
+
         try:
             bundle = load_charter_bundle_from_run(run_dir)
         except Exception as exc:  # noqa: BLE001

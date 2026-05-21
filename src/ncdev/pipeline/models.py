@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FeatureAcceptance(BaseModel):
@@ -333,6 +333,49 @@ class VerificationContract(BaseModel):
     # ProductDebt evidence. The contract field is the source of truth
     # for the budget; the Steward decides what to do about violations.
     performance_budget: dict[str, dict[str, float]] = Field(default_factory=dict)
+
+    @field_validator("performance_budget", mode="before")
+    @classmethod
+    def _normalise_performance_budget(cls, value: Any) -> Any:
+        """Coerce loose LLM shapes into route -> metric -> max-number.
+
+        The charter LLM is inconsistent here: sometimes a flat
+        ``{metric: number}`` map, sometimes ``{metric: {target, unit,
+        comparator}}`` objects. Canonicalise both — scalar values are
+        gathered under a synthetic ``budget`` route, and non-numeric
+        inner fields (``unit``, ``comparator``, ...) are dropped — so the
+        contract validates and downstream numeric checks still work.
+        """
+        if not isinstance(value, dict):
+            return value
+
+        def _as_number(v: Any) -> float | None:
+            if isinstance(v, bool):
+                return None
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, str):
+                try:
+                    return float(v.strip())
+                except ValueError:
+                    return None
+            return None
+
+        normalised: dict[str, dict[str, float]] = {}
+        for key, inner in value.items():
+            if isinstance(inner, dict):
+                numeric = {
+                    k: n
+                    for k, v in inner.items()
+                    if (n := _as_number(v)) is not None
+                }
+                if numeric:
+                    normalised[str(key)] = numeric
+            else:
+                n = _as_number(inner)
+                if n is not None:
+                    normalised.setdefault("budget", {})[str(key)] = n
+        return normalised
 
     # Assets
     assets_manifest_required: bool = True

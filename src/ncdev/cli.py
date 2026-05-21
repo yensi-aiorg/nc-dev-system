@@ -17,6 +17,7 @@ from ncdev.core.engine import (
 from ncdev.factory import FactoryStopReason
 from ncdev.factory import run_factory as _factory_runner_default
 from ncdev.factory import run_factory_from_issues as _factory_from_issues_runner_default
+from ncdev.factory import run_factory_with_bundle as _factory_with_bundle_runner_default
 from ncdev.pipeline import engine as engine_mod
 
 console = Console()
@@ -376,6 +377,18 @@ def build_parser() -> argparse.ArgumentParser:
             "--target-repo."
         ),
     )
+    factory.add_argument(
+        "--resume-charter",
+        default=None,
+        metavar="RUN_DIR",
+        help=(
+            "Path to a prior run directory (.nc-dev/runs/run-...) whose "
+            "charter to reuse. Skips charter generation and runs every "
+            "cycle against that fixed feature decomposition, so the "
+            "state-scanner recognises already-built features and only "
+            "the failed/missing ones are (re)built. Requires --target-repo."
+        ),
+    )
     factory.add_argument("--target-repo", default=None,
                          help="Existing target repository (brownfield)")
     factory.add_argument("--workspace", default=None)
@@ -608,6 +621,50 @@ def main(argv: list[str] | None = None) -> int:
                 probe_test_craftr=args.probe_test_craftr,
                 test_craftr_url=args.test_craftr_url,
                 target_url=args.target_url,
+            )
+            console.print(
+                f"factory: cycles={result.cycles_run} "
+                f"stop_reason={result.stop_reason.value if result.stop_reason else 'none'}"
+            )
+            return 0 if result.stop_reason in {
+                FactoryStopReason.STEWARD_CONTINUE_AT_END,
+            } else 1
+
+        if args.resume_charter:
+            if not args.target_repo:
+                console.print(
+                    "[red]factory --resume-charter requires --target-repo[/red]"
+                )
+                return 1
+            from ncdev.pipeline.charter import load_charter as _load_charter
+
+            resume_dir = Path(args.resume_charter).resolve()
+            charter_dir = (
+                resume_dir / "outputs"
+                if (resume_dir / "outputs").is_dir()
+                else resume_dir
+            )
+            try:
+                bundle = _load_charter(charter_dir, strict=False)
+            except Exception as exc:  # noqa: BLE001
+                console.print(
+                    f"[red]Could not load charter from {charter_dir}: {exc}[/red]"
+                )
+                return 1
+            console.print(
+                f"[cyan]Resuming against charter from {charter_dir} "
+                f"({len(bundle.feature_queue.features)} features) — "
+                "skipping charter generation[/cyan]"
+            )
+            result = _factory_with_bundle_runner_default(
+                workspace=workspace,
+                bundle=bundle,
+                target_repo_path=target_repo,
+                source_label=Path(args.source).resolve(),
+                max_cycles=args.max_cycles,
+                builder_model=args.model,
+                builder_timeout=args.timeout,
+                max_budget_usd=args.max_budget_usd,
             )
             console.print(
                 f"factory: cycles={result.cycles_run} "

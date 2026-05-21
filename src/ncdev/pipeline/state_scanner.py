@@ -279,20 +279,69 @@ def _find_project_python(project_root: Path, target_path: Path) -> Path | None:
     return None
 
 
-def _looks_like_playwright_test(test_path: Path) -> bool:
-    """True if ``test_path`` sits under an e2e/ directory or a path
-    component named tests/e2e — the Playwright convention.
+_PLAYWRIGHT_CONFIGS = (
+    "playwright.config.ts",
+    "playwright.config.js",
+    "playwright.config.mjs",
+)
 
-    Also true if a ``playwright.config.{ts,js,mjs}`` exists adjacent
-    to the test or in any ancestor up to ten levels."""
+
+def _playwright_test_dir(config_path: Path) -> str | None:
+    """Extract the ``testDir`` value from a Playwright config, or None."""
+    try:
+        text = config_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    match = re.search(r"""testDir\s*:\s*['"]([^'"]+)['"]""", text)
+    return match.group(1) if match else None
+
+
+def _looks_like_playwright_test(test_path: Path) -> bool:
+    """True if ``test_path`` is a Playwright test (vs a vitest/jest unit test).
+
+    Detection runs most-reliable signal first:
+
+    1. **Content.** An ``@playwright/test`` import means Playwright; a
+       ``vitest`` / ``@testing-library`` import means it is not. This is
+       definitive and config-independent.
+    2. **Path convention.** An ``e2e`` path component.
+    3. **Config + testDir.** A ``playwright.config.*`` ancestor *and* the
+       test living inside that config's ``testDir``. The mere existence
+       of the config is NOT enough — projects routinely run vitest and
+       Playwright side by side (one config at the project root, unit
+       tests under ``src/``), so a unit test must not be misrouted to
+       ``npx playwright test`` just because a config exists above it.
+    """
+    try:
+        head = test_path.read_text(encoding="utf-8", errors="ignore")[:4000]
+    except OSError:
+        head = ""
+    if "@playwright/test" in head:
+        return True
+    if "vitest" in head or "@testing-library/" in head:
+        return False
+
     parts = {p.lower() for p in test_path.parts}
     if "e2e" in parts:
         return True
+
     cursor = test_path.parent
     for _ in range(10):
-        for cfg in ("playwright.config.ts", "playwright.config.js", "playwright.config.mjs"):
-            if (cursor / cfg).exists():
-                return True
+        for cfg in _PLAYWRIGHT_CONFIGS:
+            cfg_path = cursor / cfg
+            if cfg_path.exists():
+                test_dir = _playwright_test_dir(cfg_path)
+                if test_dir is None:
+                    # No explicit testDir — Playwright defaults it to the
+                    # config's own directory. The test was reached by
+                    # walking up from it, so it is a descendant of that
+                    # directory: treat it as a Playwright test.
+                    return True
+                resolved_dir = (cursor / test_dir).resolve()
+                try:
+                    return test_path.resolve().is_relative_to(resolved_dir)
+                except ValueError:
+                    return False
         if cursor == cursor.parent:
             break
         cursor = cursor.parent

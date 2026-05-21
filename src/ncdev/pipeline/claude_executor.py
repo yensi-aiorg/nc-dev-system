@@ -782,8 +782,28 @@ def _run_shell(cmd: str, *, cwd: Path, timeout: int) -> tuple[bool, str]:
 
 
 def _last_line(text: str) -> str:
-    lines = [line for line in text.strip().splitlines() if line.strip()]
-    return lines[-1][:200] if lines else "(no output)"
+    """Summarise failing command output for a failure reason.
+
+    The literal last line is often a generic hint (e.g. a test runner's
+    "No tests found. You may need to escape symbols..." footer) while
+    the real cause — a ReferenceError, a stack trace — sits a few lines
+    above. Prefer the first line that looks like an error; always also
+    include the final lines so the runner's own verdict is visible.
+    """
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if not lines:
+        return "(no output)"
+    error_markers = (
+        "error", "exception", "traceback", "referenceerror",
+        "typeerror", "assert", "failed", "cannot find",
+    )
+    picked: list[str] = []
+    for line in lines:
+        if any(m in line.lower() for m in error_markers):
+            picked.append(line)
+            break
+    picked.extend(line for line in lines[-4:] if line not in picked)
+    return " ⏎ ".join(picked)[:400]
 
 
 def _probe_health(
