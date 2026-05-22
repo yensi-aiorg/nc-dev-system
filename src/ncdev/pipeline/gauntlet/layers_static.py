@@ -103,19 +103,45 @@ def layer_anti_bypass(ctx: GauntletContext) -> GauntletLayerResult:
 
 # --- L6 security -----------------------------------------------------------
 
-# Each scanner: (name, argv, "available?" probe binary). A scanner whose
-# binary is absent is skipped, not failed — absence is not a vuln.
-_SAST_SCANNERS: tuple[tuple[str, list[str], str], ...] = (
-    ("bandit", ["bandit", "-r", ".", "-ll", "-q"], "bandit"),
-    ("pip-audit", ["pip-audit", "--progress-spinner", "off"], "pip-audit"),
-    ("semgrep", ["semgrep", "--error", "--quiet", "--config", "auto"], "semgrep"),
-)
+
+def _scanners_for(repo: Path) -> tuple[tuple[str, list[str], str], ...]:
+    """SAST scanners applicable to ``repo`` — (name, argv, probe binary).
+
+    bandit and semgrep scan the repo's own source, so they always
+    apply. pip-audit audits *declared dependencies* — but with no
+    target it audits the ambient environment (NC Dev's own venv, not
+    the project). It is therefore included only when the repo ships a
+    ``requirements.txt``, and pointed explicitly at that file.
+    """
+    scanners: list[tuple[str, list[str], str]] = [
+        ("bandit", ["bandit", "-r", ".", "-ll", "-q"], "bandit"),
+        ("semgrep", ["semgrep", "--error", "--quiet", "--config", "auto"], "semgrep"),
+    ]
+    if (repo / "requirements.txt").is_file():
+        scanners.append((
+            "pip-audit",
+            ["pip-audit", "--progress-spinner", "off", "-r", "requirements.txt"],
+            "pip-audit",
+        ))
+    return tuple(scanners)
 
 
-def _which(binary: str) -> bool:
+def _which(binary: str) -> str | None:
+    """Resolve a scanner binary to a runnable path, or None.
+
+    Checks PATH first, then the directory of the current interpreter —
+    pip-installed console scripts (bandit, pip-audit) land next to
+    ``sys.executable`` and are missed by a bare PATH lookup when the
+    venv is not activated.
+    """
     import shutil
+    import sys
 
-    return shutil.which(binary) is not None
+    found = shutil.which(binary)
+    if found:
+        return found
+    candidate = Path(sys.executable).parent / binary
+    return str(candidate) if candidate.exists() else None
 
 
 def layer_security(ctx: GauntletContext) -> GauntletLayerResult:
@@ -135,7 +161,13 @@ def layer_security(ctx: GauntletContext) -> GauntletLayerResult:
             summary="security: command execution disabled — skipped",
         )
 
-    available = [s for s in _SAST_SCANNERS if _which(s[2])]
+    # Resolve each applicable scanner to a runnable path; drop the
+    # ones not installed.
+    available: list[tuple[str, list[str]]] = []
+    for name, argv, probe in _scanners_for(ctx.repo):
+        resolved = _which(probe)
+        if resolved:
+            available.append((name, [resolved, *argv[1:]]))
     if not available:
         return GauntletLayerResult(
             layer="L6-security", status=LayerStatus.SKIPPED, blocking=False,
@@ -145,7 +177,7 @@ def layer_security(ctx: GauntletContext) -> GauntletLayerResult:
 
     findings: list[str] = []
     ran: list[str] = []
-    for name, argv, _ in available:
+    for name, argv in available:
         ok, code, output = run_shell(" ".join(argv), cwd=ctx.repo, timeout=600)
         ran.append(name)
         if not ok:

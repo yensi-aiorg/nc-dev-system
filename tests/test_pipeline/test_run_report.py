@@ -91,6 +91,17 @@ def test_report_reflects_integration_result(tmp_path: Path) -> None:
     assert report.integration_failures == ["route /x 500"]
 
 
+def test_report_sums_feature_costs(tmp_path: Path) -> None:
+    state = _state()
+    s1 = StepResult(feature_id="f01", status=StepStatus.PASSED, cost_usd=2.5)
+    s2 = StepResult(feature_id="f02", status=StepStatus.PASSED, cost_usd=1.5)
+    state.completed_steps = [s1, s2]
+    report = build_run_report(state, tmp_path)
+    assert report.total_cost_usd == 4.0
+    assert "$4.00" in report.to_markdown()
+    assert report.to_dict()["total_cost_usd"] == 4.0
+
+
 def test_write_run_report_persists_both_files(tmp_path: Path) -> None:
     state = _state()
     state.completed_steps = [StepResult(feature_id="f01", status=StepStatus.PASSED)]

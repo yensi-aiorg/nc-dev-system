@@ -27,6 +27,7 @@ class FeatureReport:
     status: str
     commit: str = ""
     build_seconds: float = 0.0
+    cost_usd: float = 0.0
     gauntlet_ran: bool = False
     gauntlet_passed: bool | None = None
     gauntlet_blocking: list[str] = field(default_factory=list)
@@ -45,6 +46,10 @@ class RunReport:
     assumptions: list[str] = field(default_factory=list)
     integration_passed: bool | None = None
     integration_failures: list[str] = field(default_factory=list)
+
+    @property
+    def total_cost_usd(self) -> float:
+        return sum(f.cost_usd for f in self.features)
 
     @property
     def passed_count(self) -> int:
@@ -73,6 +78,7 @@ class RunReport:
             "target_path": self.target_path,
             "passed": self.passed_count,
             "failed": self.failed_count,
+            "total_cost_usd": round(self.total_cost_usd, 4),
             "assumptions": self.assumptions,
             "integration_passed": self.integration_passed,
             "integration_failures": self.integration_failures,
@@ -82,6 +88,7 @@ class RunReport:
                     "status": f.status,
                     "commit": f.commit,
                     "build_seconds": round(f.build_seconds, 1),
+                    "cost_usd": round(f.cost_usd, 4),
                     "gauntlet_ran": f.gauntlet_ran,
                     "gauntlet_passed": f.gauntlet_passed,
                     "gauntlet_blocking": f.gauntlet_blocking,
@@ -99,6 +106,7 @@ class RunReport:
             f"- **Status:** {self.status}",
             f"- **Target:** `{self.target_path}`",
             f"- **Features:** {self.passed_count} passed, {self.failed_count} failed",
+            f"- **Cost:** ${self.total_cost_usd:.2f}",
         ]
         if self.integration_passed is not None:
             lines.append(
@@ -171,6 +179,7 @@ def _feature_report(result: StepResult, run_dir: Path) -> FeatureReport:
         status=result.status.value,
         commit=result.commit_sha,
         build_seconds=result.build_duration_seconds,
+        cost_usd=result.cost_usd,
         error=result.error_message,
     )
     gauntlet = _load_gauntlet(run_dir, result.feature_id)

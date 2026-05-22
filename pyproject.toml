@@ -27,6 +27,12 @@ dev = [
   "pytest-mock>=3.12",
   "pytest-timeout>=2.2",
 ]
+# SAST scanners the Verification Gauntlet's L6 layer shells out to.
+# Installing this group makes L6 actually run instead of SKIP.
+security = [
+  "bandit>=1.9",
+  "pip-audit>=2.7",
+]
 
 [project.scripts]
 ncdev = "ncdev.cli:main"

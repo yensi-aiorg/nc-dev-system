@@ -140,7 +140,7 @@ def record_cycle(
         first_pass_success_rate=metrics.first_pass_success_rate,
         repair_rate=metrics.repair_rate,
         broken_rate=broken_rate,
-        total_cost_usd=0.0,
+        total_cost_usd=metrics.total_cost_usd,
         steward_disposition=steward_disposition,
         capability_lessons=list(capability_lessons),
     )

@@ -193,10 +193,17 @@ the run by default. Plan your work so each clause is satisfied.
    do not need to add `# Feature: <id>` markers to every file. (You may
    add them if it helps readability, but they are not required for the
    verifier.)
-8. **Use the `verification-before-completion` skill** before you
-   claim done. Run the verification contract's test commands yourself.
-   Capture the required screenshots listed in the structured
-   acceptance.
+8. **Self-verify against EVERY acceptance criterion — one at a time.**
+   Before you commit, walk the acceptance-criteria list above item by
+   item. For each criterion, name the specific file, line, or passing
+   test that proves your diff satisfies it. "Should", "mostly", or
+   "the rest cover it" is not proof. An independent oracle reviews the
+   diff against each criterion and BLOCKS the commit if even one is
+   unmet — and the recurring failure pattern is implementers stopping
+   exactly one criterion short. Do not be that implementer. Then use
+   the `verification-before-completion` skill: run the verification
+   contract's test commands yourself and capture the required
+   screenshots.
 9. **If verification fails**, use the `systematic-debugging` skill.
    Do not loop blindly — identify root cause, fix narrowly, re-verify.
 10. **Commit the work** once verification passes. Use Conventional
@@ -227,6 +234,17 @@ the run by default. Plan your work so each clause is satisfied.
 - Asset manifest missing. → Write it before committing.
 - Any of the `prohibited_patterns` in the verification contract
   landed in a commit. → Those are pre-commit-hook blockers; fix.
+- **A cosmetic change dressed up as a fix.** If the bug is a 401/403/
+  500, a form that accepts invalid input, or a console error, the fix
+  must change that *observable behaviour*. Editing copy, contrast, or
+  adding a banner that hides the error is NOT a fix — fix the root
+  cause so the failing status becomes a 2xx / the validation actually
+  rejects bad input / the console error is gone.
+- **Fixing the wrong component.** A bug is defined by the route or
+  selector the QA harness actually probes (named in the description /
+  acceptance criteria). Patch THAT code path. A similarly-named
+  component the probe never exercises is not the bug — verify your
+  edit lands on the exact route/element the failure was observed on.
 
 Begin.
 """
@@ -447,6 +465,7 @@ def execute_feature_claude_driven(
         resolved_provider=_resolved_provider,
         resolved_model=_resolved_model,
         skills_steered=_selected_skills,
+        cost_usd=session.total_cost_usd or 0.0,
     )
     # Persist the session cost + skills in metadata for metrics
     (step_dir / "result.json").write_text(
