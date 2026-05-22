@@ -23,6 +23,10 @@ from ncdev.pipeline.gauntlet.layers_command import (
     layer_lint,
     layer_unit_tests,
 )
+from ncdev.pipeline.gauntlet.layers_static import (
+    layer_anti_bypass,
+    layer_security,
+)
 from ncdev.pipeline.gauntlet.models import (
     GauntletLayerResult,
     GauntletReport,
@@ -31,14 +35,16 @@ from ncdev.pipeline.gauntlet.models import (
 
 Layer = Callable[[GauntletContext], GauntletLayerResult]
 
-# The default ladder, in run order. L5 (visual), L6 (security),
-# L7 (anti-bypass) and L8 (oracle) are appended as they land.
+# The default ladder, in run order. L5 (visual) and L8 (oracle) are
+# appended as they land.
 DEFAULT_LAYERS: tuple[Layer, ...] = (
-    layer_compile,          # L0
-    layer_lint,             # L1
-    layer_unit_tests,       # L2
+    layer_compile,            # L0
+    layer_lint,               # L1
+    layer_unit_tests,         # L2
     layer_integration_tests,  # L3
-    layer_e2e_tests,        # L4
+    layer_e2e_tests,          # L4
+    layer_security,           # L6
+    layer_anti_bypass,        # L7
 )
 
 
