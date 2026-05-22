@@ -1,0 +1,104 @@
+"""Tests for the structured run report (Phase 5 observability)."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from ncdev.pipeline.models import PipelineRunState, StepResult, StepStatus
+from ncdev.pipeline.run_report import build_run_report, write_run_report
+
+
+def _state(**kw) -> PipelineRunState:
+    base = dict(
+        run_id="run-001", command="factory", status="passed",
+        target_path="/tmp/app",
+    )
+    base.update(kw)
+    return PipelineRunState(**base)
+
+
+def _gauntlet_json(run_dir: Path, fid: str, *, passed: bool, blocking: list[dict]):
+    step = run_dir / "steps" / fid
+    step.mkdir(parents=True, exist_ok=True)
+    (step / "gauntlet.json").write_text(
+        json.dumps({"feature_id": fid, "passed": passed, "layers": blocking}),
+        encoding="utf-8",
+    )
+
+
+def test_report_counts_passed_and_failed(tmp_path: Path) -> None:
+    state = _state()
+    state.completed_steps = [
+        StepResult(feature_id="f01", status=StepStatus.PASSED),
+        StepResult(feature_id="f02", status=StepStatus.FAILED, error_message="boom"),
+    ]
+    report = build_run_report(state, tmp_path)
+    assert report.passed_count == 1
+    assert report.failed_count == 1
+
+
+def test_report_surfaces_charter_assumptions(tmp_path: Path) -> None:
+    state = _state()
+    state.metadata["charter_assumptions"] = ["assumed single-tenant"]
+    report = build_run_report(state, tmp_path)
+    assert report.assumptions == ["assumed single-tenant"]
+    assert "assumed single-tenant" in report.to_markdown()
+
+
+def test_report_reads_gauntlet_blocking_failures(tmp_path: Path) -> None:
+    state = _state()
+    state.completed_steps = [
+        StepResult(feature_id="f01", status=StepStatus.FAILED),
+    ]
+    _gauntlet_json(
+        tmp_path, "f01", passed=False,
+        blocking=[{
+            "layer": "L7-anti-bypass", "status": "failed",
+            "blocking": True, "summary": "stubbed integration",
+        }],
+    )
+    report = build_run_report(state, tmp_path)
+    fr = report.features[0]
+    assert fr.gauntlet_ran is True
+    assert fr.gauntlet_passed is False
+    assert any("L7-anti-bypass" in b for b in fr.gauntlet_blocking)
+
+
+def test_report_marks_gauntlet_not_run_when_absent(tmp_path: Path) -> None:
+    state = _state()
+    state.completed_steps = [StepResult(feature_id="f01", status=StepStatus.PASSED)]
+    report = build_run_report(state, tmp_path)
+    assert report.features[0].gauntlet_ran is False
+
+
+def test_attention_items_lists_failures(tmp_path: Path) -> None:
+    state = _state(status="partial")
+    state.completed_steps = [
+        StepResult(feature_id="f01", status=StepStatus.PASSED),
+        StepResult(feature_id="f02", status=StepStatus.FAILED, error_message="oops"),
+    ]
+    report = build_run_report(state, tmp_path)
+    attention = report.attention_items
+    assert len(attention) == 1
+    assert "f02" in attention[0] and "oops" in attention[0]
+
+
+def test_report_reflects_integration_result(tmp_path: Path) -> None:
+    state = _state()
+    state.metadata["integration"] = {"passed": False, "failures": ["route /x 500"]}
+    report = build_run_report(state, tmp_path)
+    assert report.integration_passed is False
+    assert report.integration_failures == ["route /x 500"]
+
+
+def test_write_run_report_persists_both_files(tmp_path: Path) -> None:
+    state = _state()
+    state.completed_steps = [StepResult(feature_id="f01", status=StepStatus.PASSED)]
+    md_path = write_run_report(state, tmp_path)
+    assert md_path.name == "report.md"
+    assert md_path.exists()
+    json_path = tmp_path / "report.json"
+    assert json_path.exists()
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["run_id"] == "run-001"
+    assert data["passed"] == 1

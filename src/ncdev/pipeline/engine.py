@@ -415,6 +415,19 @@ def run_pipeline(
         ))
 
     _persist_state(state, run_dir)
+
+    # Structured run report — consolidated observability artifact
+    # (report.json + report.md): features, gauntlet verdicts, charter
+    # assumptions, integration result, and what needs human attention.
+    try:
+        state.completed_steps = completed
+        from ncdev.pipeline.run_report import write_run_report
+
+        report_path = write_run_report(state, run_dir)
+        console.print(f"  [dim]Run report: {report_path}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [dim]Run report generation failed: {exc}[/dim]")
+
     return state
 
 

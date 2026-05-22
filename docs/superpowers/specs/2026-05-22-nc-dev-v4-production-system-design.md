@@ -146,6 +146,18 @@ Design rules:
   (failover) is now delivered directly in `run_ai_session`; the
   matrix is retained for future config-driven multi-provider setups.
 
+- **Phase 5** ✅ — structured run report. `pipeline/run_report.py`
+  consolidates the scattered run evidence (per-step results, per-step
+  `gauntlet.json`, charter assumptions, integration result) into one
+  `report.json` + `report.md` written at end of run: per-feature table
+  with gauntlet verdicts, charter assumptions, gauntlet blocking
+  breakdown, and a "needs attention" list. The per-feature cost
+  ceiling (`max_budget_usd`) and per-session compaction were found
+  already handled — the ceiling is wired through `run_ai_session`, and
+  compaction is the `claude` CLI's job within NC Dev's short
+  per-feature sessions. The capability ledger continues to record
+  cycles; the run report is the per-run companion.
+
 ## 4. Phased roadmap
 
 Each phase: TDD, verified commits, own branch, merged only when the gauntlet (once it
