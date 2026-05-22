@@ -26,18 +26,18 @@ to *manufacture the proof of correctness that the PRD does not hand it.*
 
 From a full codebase audit. Each is fixed under TDD in Phase 1.
 
-| # | Defect | File | Impact |
-|---|--------|------|--------|
-| 1 | Phase 4 ingestion reads dead artifact names (`design-brief.json`, `build-plan.json`) | `pipeline/context_ingestion.py:37-51` | **Cross-feature RAG grounding is silently dead** — feature N+1 never sees feature N |
-| 2 | Two parallel AI-invocation stacks (`ai_session.py` vs `ai_provider.py`) | both | Divergent subprocess shapes, timeouts, result schemas |
-| 3 | `openrouter` mode validates as legal but raises `NotImplementedError` mid-run | `ai_session.py:161` | Uncaught crash on a config the schema accepts |
-| 4 | `lru_cache(maxsize=1)` on gate config is process-global, cwd-bound | `core/capability_policy.py:76` | Wrong thresholds in `ncdev serve`; leaks across tests |
-| 5 | Nested `asyncio.run()` in factory | `factory.py:191,220` | Latent `RuntimeError` if ever inside an event loop |
-| 6 | Git-identity failure produces silent `[BROKEN]`, dirty tree poisons next cycle | `claude_executor.py:905-937` | False "Claude made changes" on next cycle |
-| 7 | Capability router wired to 1 of 8 capabilities | `core/capability_router.py` | Capability-matrix routing is aspirational, not live |
-| 8 | `design_seed.py` output never schema-validated, no tests | `pipeline/design_seed.py` | Malformed design tokens propagate silently |
-| 9 | Dead `FactoryStopReason.NOT_YET_IMPLEMENTED` enum | `factory.py:60` | Confusing dead sentinel |
-| 10 | Charter passes semantic garbage (null feature IDs, null acceptance) | `pipeline/charter.py:413-466` | Bad data drives the whole run |
+| # | Defect | File | Impact | Status |
+|---|--------|------|--------|--------|
+| 1 | Phase 4 ingestion reads dead artifact names (`design-brief.json`, `build-plan.json`) | `pipeline/context_ingestion.py:37-51` | **Cross-feature RAG grounding is silently dead** — feature N+1 never sees feature N | ✅ fixed |
+| 2 | Two parallel AI-invocation stacks (`ai_session.py` vs `ai_provider.py`) | both | Divergent subprocess shapes, timeouts, result schemas | → Phase 2 (the legacy quality gate that `ai_provider` serves is removed when the Gauntlet replaces it; unifying now means unifying against deleted code) |
+| 3 | `openrouter` mode validates as legal but raises `NotImplementedError` mid-run | `ai_session.py:161` | Uncaught crash on a config the schema accepts | ✅ fixed |
+| 4 | `lru_cache(maxsize=1)` on gate config is process-global, cwd-bound | `core/capability_policy.py:76` | Wrong thresholds in `ncdev serve`; leaks across tests | ✅ fixed |
+| 5 | Nested `asyncio.run()` in factory | `factory.py:191,220` | Latent `RuntimeError` if ever inside an event loop | ✅ fixed |
+| 6 | Git-identity failure produces silent `[BROKEN]`, dirty tree poisons next cycle | `claude_executor.py:905-937` | False "Claude made changes" on next cycle | ✅ fixed |
+| 7 | Capability router wired to 1 of 8 capabilities | `core/capability_router.py` | Capability-matrix routing is aspirational, not live | → Phase 4 (router wiring is Phase 4's job; the gauntlet's oracle layer is its real consumer) |
+| 8 | `design_seed.py` output never schema-validated, no tests | `pipeline/design_seed.py` | Malformed design tokens propagate silently | ✅ fixed |
+| 9 | Dead `FactoryStopReason.NOT_YET_IMPLEMENTED` enum | `factory.py:60` | Confusing dead sentinel | ✅ fixed |
+| 10 | Charter passes semantic garbage (null feature IDs, null acceptance) | `pipeline/charter.py:413-466` | Bad data drives the whole run | ✅ fixed |
 
 Also: dead code (`artifacts/state.py` v2 schemas, unused `RoutingConfig` task keys,
 duplicated `_kill_process_tree`), and zero test coverage on real `claude`/`codex`
