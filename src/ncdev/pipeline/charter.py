@@ -426,6 +426,13 @@ def validate_charter_completeness(bundle: CharterBundle) -> list[str]:
     3. Every feature must have at least one ``required_file`` or
        ``required_test`` in its acceptance bag. The state-scanner and
        per-feature verifier need ground truth to check against.
+    4. Semantic integrity (v4 defect #10): the feature queue is
+       non-empty; every feature has a non-blank id, title, description,
+       and at least one prose acceptance criterion; feature ids are
+       unique; and every ``depends_on_features`` entry references a
+       feature that exists in the queue. Pydantic accepts these as
+       structurally valid but they are semantic garbage that would
+       drive the whole run off a cliff.
     """
     violations: list[str] = []
     v = bundle.verification
@@ -456,13 +463,58 @@ def validate_charter_completeness(bundle: CharterBundle) -> list[str]:
             "'docker compose up -d')"
         )
 
-    for feature in bundle.feature_queue.features:
+    features = bundle.feature_queue.features
+    if not features:
+        violations.append(
+            "feature-queue: the feature queue is empty — nothing to build"
+        )
+
+    seen_ids: set[str] = set()
+    for idx, feature in enumerate(features):
+        fid = (feature.feature_id or "").strip()
+        label = fid or f"feature[{idx}]"
+
+        if not fid:
+            violations.append(
+                f"feature[{idx}] has a blank feature_id — every feature "
+                "needs a stable identifier"
+            )
+        elif fid in seen_ids:
+            violations.append(
+                f"duplicate feature_id {fid!r} — feature ids must be unique "
+                "so dependencies and verification can reference them"
+            )
+        else:
+            seen_ids.add(fid)
+
+        if not (feature.title or "").strip():
+            violations.append(f"feature {label!r} has a blank title")
+        if not (feature.description or "").strip():
+            violations.append(f"feature {label!r} has a blank description")
+        if not [crit for crit in feature.acceptance_criteria if crit.strip()]:
+            violations.append(
+                f"feature {label!r} has empty acceptance_criteria — Claude "
+                "needs at least one prose criterion describing what to build"
+            )
+
         accept = feature.acceptance
         if not accept.required_files and not accept.required_tests:
             violations.append(
-                f"feature {feature.feature_id!r} has empty acceptance: "
+                f"feature {label!r} has empty acceptance: "
                 "populate at least one of required_files / required_tests"
             )
+
+    # Dependency references must resolve to features in the queue.
+    valid_ids = {(f.feature_id or "").strip() for f in features}
+    for feature in features:
+        label = (feature.feature_id or "").strip() or "feature"
+        for dep in feature.depends_on_features:
+            dep_id = (dep or "").strip()
+            if dep_id and dep_id not in valid_ids:
+                violations.append(
+                    f"feature {label!r} depends_on unknown feature "
+                    f"{dep_id!r} — not present in the feature queue"
+                )
 
     return violations
 
