@@ -12,21 +12,32 @@ Public surface:
     if not report.passed:
         ...  # report.blocking_failures explains why
 """
-from ncdev.pipeline.gauntlet.context import GauntletContext, run_shell, tail
+from ncdev.pipeline.gauntlet.context import (
+    GauntletContext,
+    extract_json_object,
+    run_shell,
+    tail,
+)
 from ncdev.pipeline.gauntlet.models import (
     GauntletLayerResult,
     GauntletReport,
     LayerStatus,
 )
-from ncdev.pipeline.gauntlet.orchestrator import DEFAULT_LAYERS, run_gauntlet
+from ncdev.pipeline.gauntlet.orchestrator import (
+    DEFAULT_LAYERS,
+    EXECUTOR_LAYERS,
+    run_gauntlet,
+)
 
 __all__ = [
     "run_gauntlet",
     "DEFAULT_LAYERS",
+    "EXECUTOR_LAYERS",
     "GauntletContext",
     "GauntletReport",
     "GauntletLayerResult",
     "LayerStatus",
     "run_shell",
     "tail",
+    "extract_json_object",
 ]

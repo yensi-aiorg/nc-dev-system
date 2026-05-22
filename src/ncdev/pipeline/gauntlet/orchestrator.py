@@ -52,6 +52,19 @@ DEFAULT_LAYERS: tuple[Layer, ...] = (
     layer_oracle,             # L8  independent oracle review
 )
 
+# Layers for the per-feature executor pass. The test layers (L2/L3/L4)
+# are omitted: the executor's post-session verification already runs
+# the project's test commands, and running them twice per feature is
+# pure cost. The full L0-L8 ladder runs at the integration gate.
+EXECUTOR_LAYERS: tuple[Layer, ...] = (
+    layer_compile,            # L0
+    layer_lint,               # L1
+    layer_visual,             # L5
+    layer_security,           # L6
+    layer_anti_bypass,        # L7
+    layer_oracle,             # L8
+)
+
 
 def run_gauntlet(
     ctx: GauntletContext,

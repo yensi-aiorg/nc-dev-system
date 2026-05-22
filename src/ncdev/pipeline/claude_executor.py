@@ -252,10 +252,14 @@ def execute_feature_claude_driven(
     config: NCDevConfig | None = None,
     run_test_commands: bool = True,
     probe_health: bool = True,
+    run_gauntlet_check: bool = True,
 ) -> StepResult:
     """Run one feature via a Claude session and return the StepResult.
 
-    See module docstring for the outer flow.
+    See module docstring for the outer flow. When ``run_gauntlet_check``
+    is set, a feature that would otherwise PASS is additionally run
+    through the Verification Gauntlet (executor layer subset); a
+    blocking gauntlet failure downgrades it to FAILED.
     """
     step_dir = run_dir / "steps" / feature.feature_id
     step_dir.mkdir(parents=True, exist_ok=True)
@@ -394,6 +398,40 @@ def execute_feature_claude_driven(
     if status == StepStatus.FAILED and dirty:
         files_created, files_modified = _diff_since(target_path, pre_commit)
 
+    # Verification Gauntlet — the v4 layered correctness ladder. Runs
+    # only when the feature would otherwise PASS; a blocking gauntlet
+    # failure downgrades it to FAILED. The committed work stays (a real
+    # commit, not a dirty tree) for the Steward / repair loop to act on.
+    gauntlet_note = ""
+    if run_gauntlet_check and status == StepStatus.PASSED:
+        from ncdev.pipeline.gauntlet import (
+            EXECUTOR_LAYERS,
+            GauntletContext,
+            run_gauntlet,
+        )
+
+        g_ctx = GauntletContext(
+            feature=feature,
+            contract=charter_bundle.verification,
+            repo=target_path,
+            changed_files=touched,
+            diff=_git_diff_text(target_path, pre_commit),
+            builder_provider=implementer_mode,
+            config=config,
+            run_commands=run_test_commands,
+        )
+        g_report = run_gauntlet(g_ctx, layers=EXECUTOR_LAYERS)
+        (step_dir / "gauntlet.json").write_text(
+            _gauntlet_report_json(g_report), encoding="utf-8",
+        )
+        logger.info("%s", g_report.summary_line())
+        if not g_report.passed:
+            status = StepStatus.FAILED
+            blocking = "; ".join(
+                f"{l.layer}: {l.summary}" for l in g_report.blocking_failures
+            )
+            gauntlet_note = f" | gauntlet BLOCKED — {blocking}"
+
     result = StepResult(
         feature_id=feature.feature_id,
         status=status,
@@ -404,7 +442,7 @@ def execute_feature_claude_driven(
         files_created=files_created,
         files_modified=files_modified,
         commit_sha=post_commit or "",
-        error_message=(session.error or "") + recoverability_note,
+        error_message=(session.error or "") + recoverability_note + gauntlet_note,
         builder_output=(session.final_text or "")[:2000],
         resolved_provider=_resolved_provider,
         resolved_model=_resolved_model,
@@ -866,6 +904,48 @@ def _git_head(target_path: Path) -> str:
         return r.stdout.strip() if r.returncode == 0 else ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
+
+
+def _git_diff_text(target_path: Path, ref: str) -> str:
+    """Unified diff from ``ref`` to HEAD — the feature's whole change.
+
+    Feeds the gauntlet's anti-bypass (L7) and oracle (L8) layers. An
+    empty ref or git failure yields "" so those layers skip cleanly.
+    """
+    if not ref:
+        return ""
+    try:
+        r = subprocess.run(
+            ["git", "diff", f"{ref}..HEAD"],
+            cwd=str(target_path), capture_output=True, text=True, timeout=20,
+        )
+        return r.stdout if r.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def _gauntlet_report_json(report) -> str:  # noqa: ANN001
+    """Serialise a GauntletReport (nested dataclasses + enums) to JSON."""
+    return json.dumps(
+        {
+            "feature_id": report.feature_id,
+            "passed": report.passed,
+            "duration_seconds": report.duration_seconds,
+            "layers": [
+                {
+                    "layer": layer.layer,
+                    "status": layer.status.value,
+                    "blocking": layer.blocking,
+                    "summary": layer.summary,
+                    "detail": layer.detail,
+                    "findings": layer.findings,
+                    "duration_seconds": layer.duration_seconds,
+                }
+                for layer in report.layers
+            ],
+        },
+        indent=2,
+    )
 
 
 def _ensure_git_identity(target_path: Path) -> None:
