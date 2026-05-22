@@ -123,6 +123,16 @@ class FeatureQueueDoc(BaseModel):
     generator: str = "ncdev.pipeline.feature_queue"
     project_name: str = ""
     features: list[FeatureStep] = Field(default_factory=list)
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ambiguities in the PRD the charter resolved by a judgment "
+            "call. A PRD is ambiguous by nature; an agent that guesses "
+            "silently is the dominant spec-failure mode. Each entry is "
+            "one assumption stated plainly, surfaced in the run report "
+            "so a human can catch a wrong call early."
+        ),
+    )
     sprint_zero_criteria: list[str] = Field(default_factory=lambda: [
         "App installs without errors",
         "App boots and health endpoint returns OK",

@@ -110,6 +110,23 @@ Rules:
 - Target 4–12 features for most PRDs. If the PRD is huge, group into
   logical features rather than listing every sub-task.
 
+### `assumptions` — surface what the PRD left ambiguous
+
+A PRD is ambiguous by nature. Wherever you had to make a judgment call
+because the PRD did not say — a stack choice, a scope boundary, an
+auth model, a data shape, a missing non-functional requirement —
+record it as one plain sentence in `feature-queue.json`'s
+`assumptions` array. Example entries:
+
+  - "PRD does not specify auth — assuming email/password via Keycloak."
+  - "PRD says 'fast' with no number — assuming p95 < 300ms for API routes."
+  - "Multi-tenancy not mentioned — assuming single-tenant for v1."
+
+Do NOT silently guess and move on. Every guess goes in `assumptions`
+so a human can catch a wrong call before the build compounds it. An
+empty `assumptions` array claims the PRD was fully unambiguous —
+rarely true.
+
 ### `acceptance` is MANDATORY per feature — no exceptions
 
 Every FeatureStep MUST have a populated `acceptance` block with at
@@ -176,6 +193,7 @@ def _feature_queue_schema_excerpt() -> str:
     return """{
   project_name: str
   features: array<FeatureStep>
+  assumptions: array<str>    # PRD ambiguities resolved by judgment — see below
 }
 
 FeatureStep = {

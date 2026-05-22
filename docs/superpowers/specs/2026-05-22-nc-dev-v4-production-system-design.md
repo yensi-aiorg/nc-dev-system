@@ -111,6 +111,28 @@ Design rules:
 - Structured per-run report: features built, gauntlet results per layer, assumptions,
   cost, `[BROKEN]` items.
 
+## 3a. Progress log
+
+- **Phase 0** ✅ — research, design doc, baseline (805 tests).
+- **Phase 1** ✅ — 8/10 defects fixed; #2 reclassified, #7 → Phase 4.
+- **Phase 2** ✅ — Verification Gauntlet L0-L8 built, tested, and wired
+  into the feature executor (executor layer subset; full ladder
+  reserved for the integration gate). Defect #2 reclassified:
+  `ai_session` (agentic build sessions) and `ai_provider` (plain
+  completions) serve genuinely different needs — `run_codex_session`
+  even rewrites prompts with build instructions, so routing a
+  summarisation through it would be incorrect. The only real residue
+  is the opt-in `--legacy-quality-gate` CLI path; removing it is
+  non-blocking cleanup, not a correctness fix.
+- **Phase 3** ✅ — charter `assumptions` surface: the charter records
+  every PRD ambiguity it resolved by judgment, surfaced in a panel
+  right after charter generation so a wrong call is caught before the
+  build compounds it. The no-compaction guarantee (Pillar C) is
+  satisfied by architecture, not code: NC Dev spawns a fresh session
+  per feature with the charter re-included verbatim in each prompt, so
+  the charter is never subject to long-horizon multi-feature
+  compaction — the failure mode Cognition documented.
+
 ## 4. Phased roadmap
 
 Each phase: TDD, verified commits, own branch, merged only when the gauntlet (once it

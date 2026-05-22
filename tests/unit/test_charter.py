@@ -371,6 +371,34 @@ def test_validate_completeness_passes_clean_bundle_semantically() -> None:
     assert validate_charter_completeness(bundle) == []
 
 
+# --- assumptions surface (v4 Pillar C) -------------------------------------
+
+
+def test_charter_prompt_instructs_recording_assumptions() -> None:
+    from ncdev.pipeline.charter import CHARTER_PROMPT_TEMPLATE
+
+    assert "assumptions" in CHARTER_PROMPT_TEMPLATE
+    assert "ambiguous" in CHARTER_PROMPT_TEMPLATE.lower()
+
+
+def test_charter_roundtrip_preserves_assumptions(tmp_path: Path) -> None:
+    from ncdev.pipeline.charter import load_charter, write_charter
+
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.assumptions = [
+        "PRD does not specify auth — assuming Keycloak email/password.",
+        "Multi-tenancy not mentioned — assuming single-tenant for v1.",
+    ]
+    write_charter(bundle, tmp_path)
+    reloaded = load_charter(tmp_path, strict=False)
+    assert reloaded.feature_queue.assumptions == bundle.feature_queue.assumptions
+
+
+def test_assumptions_default_to_empty_list() -> None:
+    bundle = _fake_charter_bundle()
+    assert bundle.feature_queue.assumptions == []
+
+
 def test_load_charter_strict_raises_on_incomplete(tmp_path: Path) -> None:
     bundle = _fake_charter_bundle()
     bundle.feature_queue.features[0].acceptance = FeatureAcceptance()
