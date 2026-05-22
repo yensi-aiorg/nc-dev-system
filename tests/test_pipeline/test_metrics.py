@@ -10,6 +10,22 @@ def _make_result(fid: str, status: StepStatus, repairs: int = 0, build_s: float 
     )
 
 
+def test_total_cost_usd_sums_step_costs():
+    """compute_run_metrics previously hardcoded total_cost_usd=0.0 — the
+    capability ledger showed $0 every run. It must sum step costs now."""
+    s1 = _make_result("f1", StepStatus.PASSED)
+    s1.cost_usd = 1.25
+    s2 = _make_result("f2", StepStatus.FAILED)
+    s2.cost_usd = 0.75
+    state = PipelineRunState(
+        run_id="cost", started_at="2026-04-11T10:00:00+00:00",
+        updated_at="2026-04-11T11:00:00+00:00",
+        completed_steps=[s1, s2],
+    )
+    m = compute_run_metrics(state)
+    assert m.total_cost_usd == 2.0
+
+
 def test_all_pass_first_try():
     state = PipelineRunState(
         run_id="t1", started_at="2026-04-11T10:00:00+00:00", updated_at="2026-04-11T11:00:00+00:00",

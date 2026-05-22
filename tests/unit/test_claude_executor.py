@@ -193,6 +193,36 @@ def test_passed_when_session_succeeds_and_commits(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Build prompt — implementer discipline (post-TestCraftr-run hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_demands_per_criterion_self_verification(tmp_path: Path):
+    """The build prompt must require self-checking every acceptance
+    criterion — implementers were stopping one criterion short."""
+    prompt = build_feature_prompt(
+        feature=_make_feature(), target_path=tmp_path,
+        charter_dir=tmp_path / "outputs", prior_feature_ids=[],
+        project_id="myapp",
+    )
+    assert "EVERY acceptance criterion" in prompt
+    assert "one criterion short" in prompt
+
+
+def test_prompt_warns_against_cosmetic_and_wrong_component_fixes(tmp_path: Path):
+    """The build prompt must warn against cosmetic band-aids and fixing
+    a component the QA probe never exercises — both observed failures."""
+    prompt = build_feature_prompt(
+        feature=_make_feature(), target_path=tmp_path,
+        charter_dir=tmp_path / "outputs", prior_feature_ids=[],
+        project_id="myapp",
+    )
+    assert "cosmetic change" in prompt.lower()
+    assert "wrong component" in prompt.lower()
+    assert "2xx" in prompt
+
+
+# ---------------------------------------------------------------------------
 # Verification Gauntlet wiring
 # ---------------------------------------------------------------------------
 

@@ -103,6 +103,23 @@ def test_record_cycle_writes_entry_from_metrics(monkeypatch, tmp_path):
     assert e.capability_lessons == ["codex handled boilerplate well"]
 
 
+def test_record_cycle_propagates_total_cost(monkeypatch, tmp_path):
+    """record_cycle hardcoded total_cost_usd=0.0 — the ledger showed $0
+    every run. It must carry the metrics' real cost now."""
+    monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
+    metrics = RunMetrics(
+        run_id="r-cost", project_name="demo", total_features=2,
+        passed_features=2, total_cost_usd=7.50,
+        builder_primary="codex", builder_model="gpt-5.5",
+    )
+    record_cycle(
+        metrics=metrics, steps=[], cycle=1,
+        steward_disposition="continue", capability_lessons=[],
+    )
+    entries = read_entries()
+    assert entries[0].total_cost_usd == 7.50
+
+
 def test_record_cycle_no_steps_uses_metrics_builder(monkeypatch, tmp_path):
     monkeypatch.setattr("ncdev.core.capability_ledger.Path.home", lambda: tmp_path)
     metrics = RunMetrics(run_id="r1", builder_primary="codex", builder_model="gpt-5.5")

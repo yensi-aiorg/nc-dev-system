@@ -82,10 +82,18 @@ Rules:
   features are built (Dockerfile, .env.example, README, etc.)
 - `required_screenshots` — list the key pages/routes that must have a
   screenshot captured.
+- `typecheck_command` — set whenever the stack is typed: `tsc --noEmit`
+  for TypeScript, `mypy .` for typed Python. This drives Gauntlet L0;
+  leaving it empty silently skips compile-level verification.
 - `lint_command` — at least one when the stack supports it (e.g.
-  "ruff check . && cd frontend && npm run lint").
+  "ruff check ." or "cd frontend && npm run lint").
+- `integration_test_command` — set when the project has a cross-module
+  / cross-service test suite distinct from unit tests (drives L3).
 - `build_command` — when there's a frontend bundler / typed backend,
   set this so the integration gate proves the artifact builds.
+- Populate `typecheck_command` and `lint_command` whenever the stack
+  supports them — an empty command silently skips a whole Gauntlet
+  layer, and thin verification is how broken code ships.
 - `start_command` / `stop_command` — for web/api projects, populate
   these so the integration gate can bring the app up before probing
   routes and tear it down after. Typical: `docker compose up -d` /

@@ -39,6 +39,7 @@ class RunMetrics(BaseModel):
     mean_repair_attempts: float = 0.0
     build_efficiency: float = 0.0
     feature_throughput_per_hour: float = 0.0
+    total_cost_usd: float = 0.0       # summed USD cost of all build sessions
     features: list[FeatureMetric] = Field(default_factory=list)
     builder_primary: str = "codex"
     builder_model: str = "gpt-5.5"
@@ -113,6 +114,7 @@ def compute_run_metrics(
         feature_throughput_per_hour=(
             len(passed) / (total_duration_seconds / 3600.0) if total_duration_seconds > 0 else 0.0
         ),
+        total_cost_usd=sum(s.cost_usd for s in steps),
         features=feature_metrics,
         citex_documents_ingested=ingestion_doc_count,
         citex_queries_by_codex=int(state.metadata.get("citex_queries_by_codex", 0)),

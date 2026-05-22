@@ -207,6 +207,10 @@ class StepResult(BaseModel):
     resolved_provider: str = ""
     resolved_model: str = ""
     skills_steered: list[str] = Field(default_factory=list)
+    # USD cost of the feature's build session. Flows into RunMetrics ->
+    # the capability ledger and the run report. Was previously dropped
+    # on the floor — the ledger showed total_cost_usd: 0.0 every run.
+    cost_usd: float = 0.0
 
 
 class PipelineRunState(BaseModel):
