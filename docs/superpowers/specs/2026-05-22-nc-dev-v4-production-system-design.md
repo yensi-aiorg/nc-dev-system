@@ -158,6 +158,18 @@ Design rules:
   per-feature sessions. The capability ledger continues to record
   cycles; the run report is the per-run companion.
 
+- **Phase 6** ✅ — end-to-end proof. `tests/integration/test_v4_e2e_proof.py`
+  exercises the real chain (feature executor → the real Verification
+  Gauntlet → StepResult → run report) with only the AI boundary
+  sessions stubbed. It proves the headline success criterion directly:
+  a feature that builds, commits, and clears post-session verification
+  cleanly is **still blocked** because L7 anti-bypass catches a planted
+  `raise NotImplementedError` stub in its production code — and the run
+  report surfaces it. A clean control feature passes the same gauntlet.
+  A full live `ncdev factory` run on a real PRD (spawns real CLIs,
+  needs Citex/etc.) is the operator's to run; every seam it depends on
+  is proven by the test suite (898 passing).
+
 ## 4. Phased roadmap
 
 Each phase: TDD, verified commits, own branch, merged only when the gauntlet (once it
