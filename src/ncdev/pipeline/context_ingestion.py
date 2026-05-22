@@ -33,23 +33,33 @@ def ingest_project_context(
     records: list[IngestionRecord] = []
     outputs = run_dir / "outputs"
 
-    # 1. Design brief
-    design_payload = _read_json(outputs / "design-brief.json")
+    # 1. Design system — the artifact the design phase actually writes.
+    design_payload = _read_json(outputs / "design-system.json")
     if design_payload:
         records.append(_ingest_document(
             client, "design",
-            _serialize_json_document("Design Brief", design_payload),
-            metadata={"source": "design-brief.json"},
+            _serialize_json_document("Design System", design_payload),
+            metadata={"source": "design-system.json"},
         ))
 
-    # 2. Architecture (build plan + project config files)
-    arch_payload = _read_json(outputs / "build-plan.json")
+    # 2. Architecture — the target project contract (hard constraints).
+    arch_payload = _read_json(outputs / "target-project-contract.json")
     if arch_payload:
         records.append(_ingest_document(
             client, "architecture",
-            _serialize_json_document("Build Plan", arch_payload),
-            metadata={"source": "build-plan.json"},
+            _serialize_json_document("Target Project Contract", arch_payload),
+            metadata={"source": "target-project-contract.json"},
         ))
+
+    # 2b. Verification contract — what "done" means for every feature.
+    verification_payload = _read_json(outputs / "verification-contract.json")
+    if verification_payload:
+        records.append(_ingest_document(
+            client, "verification",
+            _serialize_json_document("Verification Contract", verification_payload),
+            metadata={"source": "verification-contract.json"},
+        ))
+
     records.extend(_ingest_code_category(
         client, target_path, "architecture",
         ["CLAUDE.md", "AGENTS.md", "pyproject.toml", "package.json"],
