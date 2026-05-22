@@ -143,10 +143,15 @@ def test_claude_only_does_not_call_codex(tmp_path: Path):
             run_ai_session("x", cwd=tmp_path, config=cfg)
 
 
-def test_openrouter_raises_not_implemented(tmp_path: Path):
+def test_openrouter_returns_structured_failure(tmp_path: Path):
+    """openrouter mode is API-only — it must reject cleanly as a
+    structured failure, not crash the run with NotImplementedError
+    (v4 defect #3)."""
     cfg = NCDevConfig(mode="openrouter")
-    with pytest.raises(NotImplementedError, match="API-only"):
-        run_ai_session("x", cwd=tmp_path, config=cfg)
+    result = run_ai_session("x", cwd=tmp_path, config=cfg)
+    assert result.success is False
+    assert result.exit_code == -1
+    assert "API-only" in (result.error or "")
 
 
 def test_custom_mode_honours_hand_tuned_routing_claude_everywhere(tmp_path: Path):

@@ -10,8 +10,8 @@ and dispatches to the right concrete runner:
       Claude does implementation itself.
     * ``codex_only`` → Codex CLI session, no skills / subagents / hooks;
       Codex handles the whole task directly.
-    * ``openrouter`` → raises ``NotImplementedError`` (API-only, no CLI
-      tooling). Caller should fall back or surface to the user.
+    * ``openrouter`` → returns a structured failure ``ClaudeSessionResult``
+      (API-only, no CLI tooling). Caller should fall back or surface it.
     * ``custom`` → resolves orchestrator + implementer from the
       hand-tuned ``routing:`` block.
 
@@ -158,11 +158,20 @@ def run_ai_session(
     logger.info("run_ai_session mode=%s orch=%s impl=%s cwd=%s", cfg.mode, orch, impl, cwd)
 
     if orch == "openrouter":
-        raise NotImplementedError(
-            "openrouter mode is API-only and cannot spawn a file-editing "
-            "session. Install and configure the Claude or Codex CLI and "
-            "pick a CLI mode (claude_plan_codex_build, claude_only, or "
-            "codex_only)."
+        # openrouter is API-only — it cannot spawn a file-editing CLI
+        # session. Reject cleanly as a structured failure so the caller
+        # can surface it, rather than crashing the run with an uncaught
+        # NotImplementedError mid-pipeline (v4 defect #3).
+        return ClaudeSessionResult(
+            success=False,
+            final_text="",
+            exit_code=-1,
+            error=(
+                "openrouter mode is API-only and cannot spawn a "
+                "file-editing session. Set `mode:` in .nc-dev/config.yaml "
+                "to a CLI mode (claude_plan_codex_build, claude_only, or "
+                "codex_only)."
+            ),
         )
 
     if orch == "codex":

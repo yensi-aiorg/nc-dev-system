@@ -57,7 +57,6 @@ class FactoryStopReason(str, Enum):
     STEWARD_CONTINUE_AT_END = "steward_continue_at_end"
     STEWARD_UNRECOVERABLE = "steward_unrecoverable"
     BUDGET_EXHAUSTED = "budget_exhausted"
-    NOT_YET_IMPLEMENTED = "disposition_not_yet_implemented"
 
 
 @dataclass
@@ -147,6 +146,24 @@ def _git_head(target_repo: Path) -> str | None:
         return None
 
 
+def _run_async(coro):
+    """Run a coroutine to completion, even from inside a running loop.
+
+    ``asyncio.run()`` raises ``RuntimeError`` when an event loop is
+    already running on the current thread (v4 defect #5). When that is
+    the case we offload the coroutine to a fresh loop on a worker
+    thread so a synchronous factory caller never crashes.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(lambda: asyncio.run(coro)).result()
+
+
 async def _probe_test_craftr_async(
     *,
     target_url: str,
@@ -188,7 +205,7 @@ def _probe_test_craftr(
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any]]:
     """Run one TestCraftr probe without making the factory depend on it."""
     try:
-        return asyncio.run(
+        return _run_async(
             _probe_test_craftr_async(
                 target_url=target_url,
                 source_path=source_path,
@@ -217,7 +234,7 @@ def _post_baseline_pin(test_craftr_url: str, payload: dict[str, Any]) -> bool:
             )
             resp.raise_for_status()
 
-    asyncio.run(_pin())
+    _run_async(_pin())
     return True
 
 
