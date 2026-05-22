@@ -8,8 +8,17 @@ def test_ingest_project_context_ingests_expected_categories(tmp_path, monkeypatc
     run_dir = tmp_path / "run"
     outputs = run_dir / "outputs"
     outputs.mkdir(parents=True)
-    (outputs / "design-brief.json").write_text(json.dumps({"colors": ["#111"]}), encoding="utf-8")
-    (outputs / "build-plan.json").write_text(json.dumps({"stack": {"backend": "fastapi"}}), encoding="utf-8")
+    # The pipeline (charter.py, design_phase.py) writes these artifact names.
+    # Ingestion MUST read the same names — see v4 design defect #1.
+    (outputs / "design-system.json").write_text(
+        json.dumps({"colors": ["#111"]}), encoding="utf-8"
+    )
+    (outputs / "target-project-contract.json").write_text(
+        json.dumps({"stack": {"backend": "fastapi"}}), encoding="utf-8"
+    )
+    (outputs / "verification-contract.json").write_text(
+        json.dumps({"backend_test_command": "pytest"}), encoding="utf-8"
+    )
 
     target = tmp_path / "repo"
     (target / "backend/app/api/v1").mkdir(parents=True)
@@ -46,12 +55,24 @@ def test_ingest_project_context_ingests_expected_categories(tmp_path, monkeypatc
     report = ingest_project_context(run_dir=run_dir, target_path=target, feature_queue=queue)
 
     categories = {cat for cat, _, _ in calls}
+    sources = {
+        (meta or {}).get("source")
+        for _, _, meta in calls
+        if (meta or {}).get("source")
+    }
     assert report.project_id == "repo"
     assert report.total_documents == len(calls)
     assert report.failed == 0
     assert "design" in categories
     assert "architecture" in categories
+    assert "verification" in categories
     assert "feature_spec" in categories
+    # Regression guard: ingestion must read the artifacts the pipeline writes.
+    assert "design-system.json" in sources
+    assert "target-project-contract.json" in sources
+    assert "verification-contract.json" in sources
+    assert "design-brief.json" not in sources
+    assert "build-plan.json" not in sources
 
 
 def test_ingest_feature_result_stores_prior_feature(tmp_path, monkeypatch) -> None:

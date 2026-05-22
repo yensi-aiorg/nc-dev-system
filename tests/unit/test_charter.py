@@ -318,6 +318,87 @@ def test_validate_completeness_rejects_feature_without_acceptance() -> None:
     assert any("'f99-empty'" in v and "empty acceptance" in v for v in violations)
 
 
+# --- semantic validation (v4 defect #10) -----------------------------------
+
+
+def test_validate_completeness_rejects_blank_feature_id() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[0].feature_id = "   "
+    violations = validate_charter_completeness(bundle)
+    assert any("blank feature_id" in v for v in violations)
+
+
+def test_validate_completeness_rejects_duplicate_feature_ids() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[1].feature_id = "f01-scaffold"
+    violations = validate_charter_completeness(bundle)
+    assert any("duplicate feature_id" in v and "f01-scaffold" in v for v in violations)
+
+
+def test_validate_completeness_rejects_blank_title_or_description() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[0].title = ""
+    bundle.feature_queue.features[1].description = "   "
+    violations = validate_charter_completeness(bundle)
+    assert any("blank title" in v for v in violations)
+    assert any("blank description" in v for v in violations)
+
+
+def test_validate_completeness_rejects_empty_acceptance_criteria() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[0].acceptance_criteria = []
+    violations = validate_charter_completeness(bundle)
+    assert any("acceptance_criteria" in v and "f01-scaffold" in v for v in violations)
+
+
+def test_validate_completeness_rejects_unknown_dependency() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features[1].depends_on_features = ["does-not-exist"]
+    violations = validate_charter_completeness(bundle)
+    assert any("does-not-exist" in v and "depends_on" in v for v in violations)
+
+
+def test_validate_completeness_rejects_empty_feature_queue() -> None:
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.features = []
+    violations = validate_charter_completeness(bundle)
+    assert any("feature queue is empty" in v for v in violations)
+
+
+def test_validate_completeness_passes_clean_bundle_semantically() -> None:
+    """A well-formed bundle yields no semantic violations."""
+    bundle = _fake_charter_bundle()
+    assert validate_charter_completeness(bundle) == []
+
+
+# --- assumptions surface (v4 Pillar C) -------------------------------------
+
+
+def test_charter_prompt_instructs_recording_assumptions() -> None:
+    from ncdev.pipeline.charter import CHARTER_PROMPT_TEMPLATE
+
+    assert "assumptions" in CHARTER_PROMPT_TEMPLATE
+    assert "ambiguous" in CHARTER_PROMPT_TEMPLATE.lower()
+
+
+def test_charter_roundtrip_preserves_assumptions(tmp_path: Path) -> None:
+    from ncdev.pipeline.charter import load_charter, write_charter
+
+    bundle = _fake_charter_bundle()
+    bundle.feature_queue.assumptions = [
+        "PRD does not specify auth — assuming Keycloak email/password.",
+        "Multi-tenancy not mentioned — assuming single-tenant for v1.",
+    ]
+    write_charter(bundle, tmp_path)
+    reloaded = load_charter(tmp_path, strict=False)
+    assert reloaded.feature_queue.assumptions == bundle.feature_queue.assumptions
+
+
+def test_assumptions_default_to_empty_list() -> None:
+    bundle = _fake_charter_bundle()
+    assert bundle.feature_queue.assumptions == []
+
+
 def test_load_charter_strict_raises_on_incomplete(tmp_path: Path) -> None:
     bundle = _fake_charter_bundle()
     bundle.feature_queue.features[0].acceptance = FeatureAcceptance()

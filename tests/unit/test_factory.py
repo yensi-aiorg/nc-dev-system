@@ -7,6 +7,7 @@ import pytest
 
 from ncdev.factory import (
     FactoryStopReason,
+    _run_async,
     run_factory,
 )
 from ncdev.pipeline.models import FeatureAcceptance, FeatureStep
@@ -15,6 +16,25 @@ from ncdev.pipeline.product_steward import (
     FeatureAmendment,
     StewardDecision,
 )
+
+
+async def _async_answer() -> int:
+    return 42
+
+
+def test_run_async_works_outside_event_loop() -> None:
+    assert _run_async(_async_answer()) == 42
+
+
+def test_run_async_works_inside_running_event_loop() -> None:
+    """v4 defect #5: a synchronous factory caller wrapped by an outer
+    event loop must not crash with 'event loop is already running'."""
+    import asyncio
+
+    async def _outer() -> int:
+        return _run_async(_async_answer())
+
+    assert asyncio.run(_outer()) == 42
 
 
 @pytest.fixture(autouse=True)

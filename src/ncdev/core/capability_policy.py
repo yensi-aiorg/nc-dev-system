@@ -7,7 +7,6 @@ explicit pin > known alias > version table > provider default.
 
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 
 from ncdev.core.capability_probe import (
@@ -73,13 +72,19 @@ def next_alias_down(provider: str, model: str) -> str | None:
     return chain[idx + 1] if idx + 1 < len(chain) else None
 
 
-@lru_cache(maxsize=1)
-def _default_gate_config():
-    """Load gate thresholds from .nc-dev/config.yaml, or defaults on any error."""
+def _default_gate_config(workspace: Path | None = None):
+    """Load gate thresholds from ``.nc-dev/config.yaml``, or defaults on error.
+
+    Read fresh each call. A previous ``lru_cache`` here pinned the config
+    to whatever ``cwd`` was active at the first call — wrong for a
+    long-running process handling multiple workspaces, and a state leak
+    across tests (v4 defect #4). ``resolve_model`` runs once per session
+    spawn, so a small YAML read per call is negligible.
+    """
     from ncdev.core.config import CapabilityGateConfig, load_config
 
     try:
-        return load_config(Path.cwd()).capability_gate
+        return load_config(workspace or Path.cwd()).capability_gate
     except Exception:  # noqa: BLE001
         return CapabilityGateConfig()
 

@@ -159,6 +159,22 @@ def run_pipeline(
             return state
         console.print(f"  [green]✓[/green] Charter: {len(bundle.feature_queue.features)} features queued")
 
+    # Surface charter assumptions early — before the build compounds a
+    # wrong judgment call. A PRD is ambiguous by nature; silent guessing
+    # is the dominant spec-failure mode (v4 Pillar C).
+    if bundle is not None and bundle.feature_queue.assumptions:
+        console.print(Panel(
+            "[bold]Charter assumptions[/bold] — the PRD was ambiguous "
+            "here; the charter resolved each by a judgment call. Review "
+            "before relying on the build:\n  - "
+            + "\n  - ".join(bundle.feature_queue.assumptions),
+            border_style="yellow",
+            title="PRD ambiguities resolved by assumption",
+        ))
+        state.metadata["charter_assumptions"] = list(
+            bundle.feature_queue.assumptions
+        )
+
     # Resolve target path now that we have the charter
     target_path = (
         Path(bundle.contract.existing_repo_path).expanduser().resolve()
@@ -399,6 +415,19 @@ def run_pipeline(
         ))
 
     _persist_state(state, run_dir)
+
+    # Structured run report — consolidated observability artifact
+    # (report.json + report.md): features, gauntlet verdicts, charter
+    # assumptions, integration result, and what needs human attention.
+    try:
+        state.completed_steps = completed
+        from ncdev.pipeline.run_report import write_run_report
+
+        report_path = write_run_report(state, run_dir)
+        console.print(f"  [dim]Run report: {report_path}[/dim]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [dim]Run report generation failed: {exc}[/dim]")
+
     return state
 
 

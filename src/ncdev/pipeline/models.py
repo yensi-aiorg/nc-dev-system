@@ -123,6 +123,16 @@ class FeatureQueueDoc(BaseModel):
     generator: str = "ncdev.pipeline.feature_queue"
     project_name: str = ""
     features: list[FeatureStep] = Field(default_factory=list)
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ambiguities in the PRD the charter resolved by a judgment "
+            "call. A PRD is ambiguous by nature; an agent that guesses "
+            "silently is the dominant spec-failure mode. Each entry is "
+            "one assumption stated plainly, surfaced in the run report "
+            "so a human can catch a wrong call early."
+        ),
+    )
     sprint_zero_criteria: list[str] = Field(default_factory=lambda: [
         "App installs without errors",
         "App boots and health endpoint returns OK",
@@ -296,14 +306,16 @@ class VerificationContract(BaseModel):
     # Tests must exist and pass
     backend_test_command: str = ""     # e.g. "cd backend && python -m pytest -q"
     frontend_test_command: str = ""    # e.g. "cd frontend && npm test -- --run"
+    integration_test_command: str = "" # cross-module suite (Gauntlet L3)
     e2e_test_command: str = ""         # e.g. "cd frontend && npx playwright test"
     minimum_test_count: int = 1
 
-    # Code quality + buildability — run by the integration gate. Empty
-    # commands skip the corresponding clause (libraries or lint-free
-    # repos can opt out, but the charter validator strongly encourages
-    # at least one).
-    lint_command: str = ""             # e.g. "ruff check . && mypy ."
+    # Code quality + buildability — run by the integration gate and the
+    # Verification Gauntlet. Empty commands skip the corresponding
+    # clause (libraries or lint-free repos can opt out, but the charter
+    # validator strongly encourages at least one).
+    typecheck_command: str = ""        # e.g. "cd frontend && tsc --noEmit" / "mypy ."
+    lint_command: str = ""             # e.g. "ruff check ."
     build_command: str = ""            # e.g. "cd frontend && npm run build"
 
     # App lifecycle commands for the integration gate. When start_command

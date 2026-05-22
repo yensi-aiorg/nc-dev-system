@@ -110,6 +110,23 @@ Rules:
 - Target 4–12 features for most PRDs. If the PRD is huge, group into
   logical features rather than listing every sub-task.
 
+### `assumptions` — surface what the PRD left ambiguous
+
+A PRD is ambiguous by nature. Wherever you had to make a judgment call
+because the PRD did not say — a stack choice, a scope boundary, an
+auth model, a data shape, a missing non-functional requirement —
+record it as one plain sentence in `feature-queue.json`'s
+`assumptions` array. Example entries:
+
+  - "PRD does not specify auth — assuming email/password via Keycloak."
+  - "PRD says 'fast' with no number — assuming p95 < 300ms for API routes."
+  - "Multi-tenancy not mentioned — assuming single-tenant for v1."
+
+Do NOT silently guess and move on. Every guess goes in `assumptions`
+so a human can catch a wrong call before the build compounds it. An
+empty `assumptions` array claims the PRD was fully unambiguous —
+rarely true.
+
 ### `acceptance` is MANDATORY per feature — no exceptions
 
 Every FeatureStep MUST have a populated `acceptance` block with at
@@ -176,6 +193,7 @@ def _feature_queue_schema_excerpt() -> str:
     return """{
   project_name: str
   features: array<FeatureStep>
+  assumptions: array<str>    # PRD ambiguities resolved by judgment — see below
 }
 
 FeatureStep = {
@@ -426,6 +444,13 @@ def validate_charter_completeness(bundle: CharterBundle) -> list[str]:
     3. Every feature must have at least one ``required_file`` or
        ``required_test`` in its acceptance bag. The state-scanner and
        per-feature verifier need ground truth to check against.
+    4. Semantic integrity (v4 defect #10): the feature queue is
+       non-empty; every feature has a non-blank id, title, description,
+       and at least one prose acceptance criterion; feature ids are
+       unique; and every ``depends_on_features`` entry references a
+       feature that exists in the queue. Pydantic accepts these as
+       structurally valid but they are semantic garbage that would
+       drive the whole run off a cliff.
     """
     violations: list[str] = []
     v = bundle.verification
@@ -456,13 +481,58 @@ def validate_charter_completeness(bundle: CharterBundle) -> list[str]:
             "'docker compose up -d')"
         )
 
-    for feature in bundle.feature_queue.features:
+    features = bundle.feature_queue.features
+    if not features:
+        violations.append(
+            "feature-queue: the feature queue is empty — nothing to build"
+        )
+
+    seen_ids: set[str] = set()
+    for idx, feature in enumerate(features):
+        fid = (feature.feature_id or "").strip()
+        label = fid or f"feature[{idx}]"
+
+        if not fid:
+            violations.append(
+                f"feature[{idx}] has a blank feature_id — every feature "
+                "needs a stable identifier"
+            )
+        elif fid in seen_ids:
+            violations.append(
+                f"duplicate feature_id {fid!r} — feature ids must be unique "
+                "so dependencies and verification can reference them"
+            )
+        else:
+            seen_ids.add(fid)
+
+        if not (feature.title or "").strip():
+            violations.append(f"feature {label!r} has a blank title")
+        if not (feature.description or "").strip():
+            violations.append(f"feature {label!r} has a blank description")
+        if not [crit for crit in feature.acceptance_criteria if crit.strip()]:
+            violations.append(
+                f"feature {label!r} has empty acceptance_criteria — Claude "
+                "needs at least one prose criterion describing what to build"
+            )
+
         accept = feature.acceptance
         if not accept.required_files and not accept.required_tests:
             violations.append(
-                f"feature {feature.feature_id!r} has empty acceptance: "
+                f"feature {label!r} has empty acceptance: "
                 "populate at least one of required_files / required_tests"
             )
+
+    # Dependency references must resolve to features in the queue.
+    valid_ids = {(f.feature_id or "").strip() for f in features}
+    for feature in features:
+        label = (feature.feature_id or "").strip() or "feature"
+        for dep in feature.depends_on_features:
+            dep_id = (dep or "").strip()
+            if dep_id and dep_id not in valid_ids:
+                violations.append(
+                    f"feature {label!r} depends_on unknown feature "
+                    f"{dep_id!r} — not present in the feature queue"
+                )
 
     return violations
 

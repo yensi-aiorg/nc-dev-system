@@ -329,7 +329,12 @@ def seed_design_system(
     CLAUDE.md, so an unknown value is most likely a typo and we shouldn't
     silently produce nothing.
     """
-    spec = ARCHETYPES.get(archetype) or ARCHETYPES["Warm Playfulness"]
+    # Resolve the archetype once. An unknown name falls back to "Warm
+    # Playfulness"; record the *resolved* name everywhere so the doc and
+    # tokens never claim an archetype whose tokens weren't actually used.
+    resolved_archetype = archetype if archetype in ARCHETYPES else "Warm Playfulness"
+    spec = ARCHETYPES[resolved_archetype]
+    archetype = resolved_archetype
     ds_dir = target_path / "docs" / "design-system"
     ds_dir.mkdir(parents=True, exist_ok=True)
 

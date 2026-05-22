@@ -10,8 +10,8 @@ and dispatches to the right concrete runner:
       Claude does implementation itself.
     * ``codex_only`` → Codex CLI session, no skills / subagents / hooks;
       Codex handles the whole task directly.
-    * ``openrouter`` → raises ``NotImplementedError`` (API-only, no CLI
-      tooling). Caller should fall back or surface to the user.
+    * ``openrouter`` → returns a structured failure ``ClaudeSessionResult``
+      (API-only, no CLI tooling). Caller should fall back or surface it.
     * ``custom`` → resolves orchestrator + implementer from the
       hand-tuned ``routing:`` block.
 
@@ -92,6 +92,30 @@ def _resolve_custom_providers(cfg: NCDevConfig) -> tuple[str, str]:
     return orch, impl
 
 
+def _apply_failover(orch: str, impl: str) -> tuple[str, str, str]:
+    """Fail over to the other CLI when the chosen orchestrator is down.
+
+    A frontier CLI can be unavailable — Claude had a multi-hour outage
+    during this project's own development, and the team's standing
+    instruction is that work must continue on Codex when that happens.
+    Rather than fail every feature, if the orchestrator's binary is not
+    on PATH and the other CLI is, switch to it. Returns
+    ``(orch, impl, note)`` — ``note`` is empty when no failover applied.
+    """
+    if orch not in ("claude", "codex"):
+        return orch, impl, ""
+    if shutil.which(orch) is not None:
+        return orch, impl, ""
+    alt = "codex" if orch == "claude" else "claude"
+    if shutil.which(alt) is None:
+        return orch, impl, ""  # neither CLI available — let the runner error
+    logger.warning(
+        "orchestrator %r unavailable — failing over to %r", orch, alt,
+    )
+    # The fallback CLI handles the whole task itself (no cross-delegation).
+    return alt, alt, f"failover: {orch} unavailable, ran on {alt}"
+
+
 def _resolve_config(
     config: NCDevConfig | None,
     workspace: Path | None,
@@ -155,14 +179,30 @@ def run_ai_session(
         orch = MODE_ORCHESTRATOR.get(cfg.mode, "claude")
         impl = MODE_IMPLEMENTER.get(cfg.mode, "codex")
 
-    logger.info("run_ai_session mode=%s orch=%s impl=%s cwd=%s", cfg.mode, orch, impl, cwd)
+    # Availability-aware failover before we commit to a runner.
+    orch, impl, failover_note = _apply_failover(orch, impl)
+
+    logger.info(
+        "run_ai_session mode=%s orch=%s impl=%s cwd=%s%s",
+        cfg.mode, orch, impl, cwd,
+        f" ({failover_note})" if failover_note else "",
+    )
 
     if orch == "openrouter":
-        raise NotImplementedError(
-            "openrouter mode is API-only and cannot spawn a file-editing "
-            "session. Install and configure the Claude or Codex CLI and "
-            "pick a CLI mode (claude_plan_codex_build, claude_only, or "
-            "codex_only)."
+        # openrouter is API-only — it cannot spawn a file-editing CLI
+        # session. Reject cleanly as a structured failure so the caller
+        # can surface it, rather than crashing the run with an uncaught
+        # NotImplementedError mid-pipeline (v4 defect #3).
+        return ClaudeSessionResult(
+            success=False,
+            final_text="",
+            exit_code=-1,
+            error=(
+                "openrouter mode is API-only and cannot spawn a "
+                "file-editing session. Set `mode:` in .nc-dev/config.yaml "
+                "to a CLI mode (claude_plan_codex_build, claude_only, or "
+                "codex_only)."
+            ),
         )
 
     if orch == "codex":

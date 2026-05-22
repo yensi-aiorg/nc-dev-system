@@ -11,6 +11,7 @@ import pytest
 from ncdev.ai_session import (
     MODE_IMPLEMENTER,
     MODE_ORCHESTRATOR,
+    _apply_failover,
     run_ai_session,
     run_codex_session,
 )
@@ -70,6 +71,58 @@ def _claude_result() -> ClaudeSessionResult:
 
 def _codex_result() -> ClaudeSessionResult:
     return ClaudeSessionResult(success=True, final_text="codex did it", exit_code=0)
+
+
+# ---------------------------------------------------------------------------
+# Availability-aware failover (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def _which(*available: str):
+    """Build a shutil.which stub: returns a path only for named binaries."""
+    return lambda binary: f"/usr/bin/{binary}" if binary in available else None
+
+
+def test_failover_noop_when_orchestrator_available(monkeypatch):
+    monkeypatch.setattr("ncdev.ai_session.shutil.which", _which("claude", "codex"))
+    orch, impl, note = _apply_failover("claude", "codex")
+    assert (orch, impl, note) == ("claude", "codex", "")
+
+
+def test_failover_claude_down_switches_to_codex(monkeypatch):
+    monkeypatch.setattr("ncdev.ai_session.shutil.which", _which("codex"))
+    orch, impl, note = _apply_failover("claude", "codex")
+    assert orch == "codex" and impl == "codex"
+    assert "failover" in note
+
+
+def test_failover_codex_down_switches_to_claude(monkeypatch):
+    monkeypatch.setattr("ncdev.ai_session.shutil.which", _which("claude"))
+    orch, impl, note = _apply_failover("codex", "codex")
+    assert orch == "claude" and impl == "claude"
+    assert "failover" in note
+
+
+def test_failover_noop_when_neither_cli_available(monkeypatch):
+    monkeypatch.setattr("ncdev.ai_session.shutil.which", _which())
+    orch, impl, note = _apply_failover("claude", "codex")
+    # No alternative — leave it to the runner to error clearly.
+    assert (orch, impl, note) == ("claude", "codex", "")
+
+
+def test_run_ai_session_fails_over_to_codex_when_claude_missing(tmp_path, monkeypatch):
+    """End to end: claude_plan_codex_build with claude CLI down must run
+    the session on Codex instead of failing the feature."""
+    monkeypatch.setattr("ncdev.ai_session.shutil.which", _which("codex"))
+    cfg = NCDevConfig(mode="claude_plan_codex_build")
+
+    def boom_claude(*a, **k):  # noqa: ARG001
+        raise AssertionError("claude must not run when its CLI is down")
+
+    with patch("ncdev.ai_session.run_claude_session", side_effect=boom_claude):
+        with patch("ncdev.ai_session.run_codex_session", return_value=_codex_result()):
+            result = run_ai_session("x", cwd=tmp_path, config=cfg)
+    assert result.final_text == "codex did it"
 
 
 def test_claude_plan_codex_build_routes_to_claude_with_protocol(tmp_path: Path):
@@ -143,10 +196,15 @@ def test_claude_only_does_not_call_codex(tmp_path: Path):
             run_ai_session("x", cwd=tmp_path, config=cfg)
 
 
-def test_openrouter_raises_not_implemented(tmp_path: Path):
+def test_openrouter_returns_structured_failure(tmp_path: Path):
+    """openrouter mode is API-only — it must reject cleanly as a
+    structured failure, not crash the run with NotImplementedError
+    (v4 defect #3)."""
     cfg = NCDevConfig(mode="openrouter")
-    with pytest.raises(NotImplementedError, match="API-only"):
-        run_ai_session("x", cwd=tmp_path, config=cfg)
+    result = run_ai_session("x", cwd=tmp_path, config=cfg)
+    assert result.success is False
+    assert result.exit_code == -1
+    assert "API-only" in (result.error or "")
 
 
 def test_custom_mode_honours_hand_tuned_routing_claude_everywhere(tmp_path: Path):

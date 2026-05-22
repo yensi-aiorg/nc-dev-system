@@ -7,10 +7,13 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 from ncdev.claude_session import ClaudeSessionResult
 from ncdev.pipeline.asset_manifest import save_feature_manifest
 from ncdev.pipeline.claude_executor import (
+    _ensure_git_identity,
     build_feature_prompt,
     execute_feature_claude_driven,
 )
@@ -70,6 +73,23 @@ def _init_git(path: Path) -> None:
 
 def _seed_manifest(target: Path, feature_id: str) -> None:
     save_feature_manifest(target, AssetManifest(feature_id=feature_id, assets=[]))
+
+
+@pytest.fixture(autouse=True)
+def _stub_gauntlet(monkeypatch):
+    """Keep executor unit tests hermetic w.r.t. the Verification Gauntlet.
+
+    The Gauntlet is a separate subsystem with its own test suite, and
+    its L6/L8 layers spawn real scanners / CLI sessions. Executor tests
+    stub it to a passing report by default; the gauntlet-wiring tests
+    below override this stub explicitly to exercise the integration.
+    """
+    from ncdev.pipeline.gauntlet import GauntletReport
+
+    monkeypatch.setattr(
+        "ncdev.pipeline.gauntlet.run_gauntlet",
+        lambda ctx, **kw: GauntletReport(feature_id=ctx.feature.feature_id),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +193,91 @@ def test_passed_when_session_succeeds_and_commits(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Verification Gauntlet wiring
+# ---------------------------------------------------------------------------
+
+
+def _committing_session(target: Path):
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "app.py").write_text("print('hi')")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01-scaffold): hi"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+    return fake_session
+
+
+def test_blocking_gauntlet_failure_downgrades_feature_to_failed(
+    tmp_path: Path, monkeypatch
+):
+    """A feature that builds and verifies cleanly is still FAILED when
+    the Verification Gauntlet reports a blocking failure."""
+    from ncdev.pipeline.gauntlet import (
+        GauntletLayerResult,
+        GauntletReport,
+        LayerStatus,
+    )
+
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    blocked = GauntletReport(
+        feature_id="f01-scaffold",
+        layers=[GauntletLayerResult(
+            "L7-anti-bypass", LayerStatus.FAILED, True,
+            "anti-bypass: stubbed integration in production code",
+        )],
+    )
+    monkeypatch.setattr(
+        "ncdev.pipeline.gauntlet.run_gauntlet", lambda ctx, **kw: blocked,
+    )
+
+    bundle = _make_bundle()
+    with patch("ncdev.pipeline.claude_executor.run_ai_session",
+               side_effect=_committing_session(target)):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(), target_path=target,
+            run_dir=tmp_path / "run", charter_bundle=bundle,
+            prior_results=[], project_id="myapp",
+        )
+
+    assert result.status == StepStatus.FAILED
+    assert "gauntlet BLOCKED" in result.error_message
+    assert "L7-anti-bypass" in result.error_message
+    # The commit still stands — a real commit, for the repair loop.
+    assert result.commit_sha != ""
+    assert (tmp_path / "run" / "steps" / "f01-scaffold" / "gauntlet.json").exists()
+
+
+def test_run_gauntlet_check_false_skips_the_gauntlet(tmp_path: Path, monkeypatch):
+    """run_gauntlet_check=False must bypass the gauntlet entirely."""
+    def exploding_gauntlet(ctx, **kw):  # noqa: ANN001, ARG001
+        raise AssertionError("gauntlet must not run when disabled")
+
+    monkeypatch.setattr(
+        "ncdev.pipeline.gauntlet.run_gauntlet", exploding_gauntlet,
+    )
+
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    bundle = _make_bundle()
+    with patch("ncdev.pipeline.claude_executor.run_ai_session",
+               side_effect=_committing_session(target)):
+        result = execute_feature_claude_driven(
+            feature=_make_feature(), target_path=target,
+            run_dir=tmp_path / "run", charter_bundle=bundle,
+            prior_results=[], project_id="myapp",
+            run_gauntlet_check=False,
+        )
+
+    assert result.status == StepStatus.PASSED
+
+
+# ---------------------------------------------------------------------------
 # Executor failure paths
 # ---------------------------------------------------------------------------
 
@@ -230,6 +335,59 @@ def test_dirty_working_tree_committed_as_broken(tmp_path: Path):
         cwd=str(target), capture_output=True, text=True, check=True,
     )
     assert "[BROKEN]" in log.stdout
+
+
+def test_ensure_git_identity_sets_fallback_when_none_configured(
+    tmp_path: Path, monkeypatch
+):
+    """v4 defect #6: with no git identity, every commit (including the
+    [BROKEN] recoverability commit) fails and the dirty tree poisons the
+    next cycle. _ensure_git_identity must guarantee commits succeed.
+
+    The host machine usually has a global git identity, which would mask
+    the defect — so we null out global+system config for this test."""
+    empty_global = tmp_path / "empty-gitconfig"
+    empty_global.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_global))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(empty_global))
+
+    target = tmp_path / "noident"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(target), check=True)
+
+    _ensure_git_identity(target)
+
+    email = subprocess.run(
+        ["git", "config", "user.email"],
+        cwd=str(target), capture_output=True, text=True,
+    )
+    assert email.stdout.strip() == "ncdev@localhost"
+    # A commit must now actually succeed.
+    (target / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+    commit = subprocess.run(
+        ["git", "commit", "-m", "test"],
+        cwd=str(target), capture_output=True, text=True,
+    )
+    assert commit.returncode == 0
+
+
+def test_ensure_git_identity_leaves_existing_identity_untouched(tmp_path: Path):
+    target = tmp_path / "hasident"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(target), check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "real@dev.com"],
+        cwd=str(target), check=True,
+    )
+
+    _ensure_git_identity(target)
+
+    email = subprocess.run(
+        ["git", "config", "user.email"],
+        cwd=str(target), capture_output=True, text=True,
+    )
+    assert email.stdout.strip() == "real@dev.com"
 
 
 def test_missing_asset_manifest_causes_verification_failure(tmp_path: Path):
