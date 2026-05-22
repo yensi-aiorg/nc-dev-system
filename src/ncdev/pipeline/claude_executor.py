@@ -280,6 +280,10 @@ def execute_feature_claude_driven(
     )
     (step_dir / "prompt.md").write_text(prompt, encoding="utf-8")
 
+    # Guarantee a commit identity before any commit in this feature —
+    # both Claude's own feature commits and the [BROKEN] fallback.
+    _ensure_git_identity(target_path)
+
     # Snapshot git state so we can detect what changed
     pre_commit = _git_head(target_path)
 
@@ -862,6 +866,35 @@ def _git_head(target_path: Path) -> str:
         return r.stdout.strip() if r.returncode == 0 else ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
+
+
+def _ensure_git_identity(target_path: Path) -> None:
+    """Guarantee the repo has a commit identity (v4 defect #6).
+
+    If neither a global nor a local ``user.email`` is set, every
+    ``git commit`` in the run fails — including the ``[BROKEN]``
+    recoverability commit. A failed ``[BROKEN]`` commit leaves a dirty
+    tree that the next cycle misreads as "Claude made changes". We set
+    a repo-local fallback identity (never global) so commits always
+    succeed; a real configured identity is left untouched.
+    """
+    try:
+        existing = subprocess.run(
+            ["git", "config", "user.email"],
+            cwd=str(target_path), capture_output=True, text=True, timeout=5,
+        )
+        if existing.returncode == 0 and existing.stdout.strip():
+            return  # a real identity is configured — leave it alone
+        for key, value in (
+            ("user.email", "ncdev@localhost"),
+            ("user.name", "NC Dev"),
+        ):
+            subprocess.run(
+                ["git", "config", "--local", key, value],
+                cwd=str(target_path), capture_output=True, text=True, timeout=5,
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("git identity setup skipped: %s", exc)
 
 
 def _git_working_tree_dirty(target_path: Path) -> bool:

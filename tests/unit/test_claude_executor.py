@@ -11,6 +11,7 @@ from unittest.mock import patch
 from ncdev.claude_session import ClaudeSessionResult
 from ncdev.pipeline.asset_manifest import save_feature_manifest
 from ncdev.pipeline.claude_executor import (
+    _ensure_git_identity,
     build_feature_prompt,
     execute_feature_claude_driven,
 )
@@ -230,6 +231,59 @@ def test_dirty_working_tree_committed_as_broken(tmp_path: Path):
         cwd=str(target), capture_output=True, text=True, check=True,
     )
     assert "[BROKEN]" in log.stdout
+
+
+def test_ensure_git_identity_sets_fallback_when_none_configured(
+    tmp_path: Path, monkeypatch
+):
+    """v4 defect #6: with no git identity, every commit (including the
+    [BROKEN] recoverability commit) fails and the dirty tree poisons the
+    next cycle. _ensure_git_identity must guarantee commits succeed.
+
+    The host machine usually has a global git identity, which would mask
+    the defect — so we null out global+system config for this test."""
+    empty_global = tmp_path / "empty-gitconfig"
+    empty_global.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_global))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(empty_global))
+
+    target = tmp_path / "noident"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(target), check=True)
+
+    _ensure_git_identity(target)
+
+    email = subprocess.run(
+        ["git", "config", "user.email"],
+        cwd=str(target), capture_output=True, text=True,
+    )
+    assert email.stdout.strip() == "ncdev@localhost"
+    # A commit must now actually succeed.
+    (target / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+    commit = subprocess.run(
+        ["git", "commit", "-m", "test"],
+        cwd=str(target), capture_output=True, text=True,
+    )
+    assert commit.returncode == 0
+
+
+def test_ensure_git_identity_leaves_existing_identity_untouched(tmp_path: Path):
+    target = tmp_path / "hasident"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(target), check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "real@dev.com"],
+        cwd=str(target), check=True,
+    )
+
+    _ensure_git_identity(target)
+
+    email = subprocess.run(
+        ["git", "config", "user.email"],
+        cwd=str(target), capture_output=True, text=True,
+    )
+    assert email.stdout.strip() == "real@dev.com"
 
 
 def test_missing_asset_manifest_causes_verification_failure(tmp_path: Path):
