@@ -23,10 +23,12 @@ from ncdev.pipeline.gauntlet.layers_command import (
     layer_lint,
     layer_unit_tests,
 )
+from ncdev.pipeline.gauntlet.layers_oracle import layer_oracle
 from ncdev.pipeline.gauntlet.layers_static import (
     layer_anti_bypass,
     layer_security,
 )
+from ncdev.pipeline.gauntlet.layers_visual import layer_visual
 from ncdev.pipeline.gauntlet.models import (
     GauntletLayerResult,
     GauntletReport,
@@ -35,16 +37,19 @@ from ncdev.pipeline.gauntlet.models import (
 
 Layer = Callable[[GauntletContext], GauntletLayerResult]
 
-# The default ladder, in run order. L5 (visual) and L8 (oracle) are
-# appended as they land.
+# The full L0-L8 ladder, in run order. Cheap/deterministic layers run
+# first so an expensive AI layer (L8) is only reached once the code
+# already compiles and its tests pass.
 DEFAULT_LAYERS: tuple[Layer, ...] = (
-    layer_compile,            # L0
-    layer_lint,               # L1
-    layer_unit_tests,         # L2
-    layer_integration_tests,  # L3
-    layer_e2e_tests,          # L4
-    layer_security,           # L6
-    layer_anti_bypass,        # L7
+    layer_compile,            # L0  typecheck + build
+    layer_lint,               # L1  lint / static
+    layer_unit_tests,         # L2  unit tests
+    layer_integration_tests,  # L3  integration tests
+    layer_e2e_tests,          # L4  end-to-end tests
+    layer_visual,             # L5  visual verification
+    layer_security,           # L6  multi-tool SAST
+    layer_anti_bypass,        # L7  bypassed-integration scan
+    layer_oracle,             # L8  independent oracle review
 )
 
 

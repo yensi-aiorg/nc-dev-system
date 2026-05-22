@@ -8,6 +8,8 @@ assert the result.
 """
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,3 +75,23 @@ def tail(text: str, lines: int = 60) -> str:
     if len(rows) <= lines:
         return text.strip()
     return "\n".join(rows[-lines:]).strip()
+
+
+def extract_json_object(text: str) -> dict | None:
+    """Pull the first JSON object out of an LLM response, or None.
+
+    Tolerant of a ```json fenced block or a bare object embedded in
+    prose — the two shapes models actually emit.
+    """
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidate = fenced.group(1) if fenced else None
+    if candidate is None:
+        brace = re.search(r"\{.*\}", text, re.DOTALL)
+        candidate = brace.group(0) if brace else None
+    if candidate is None:
+        return None
+    try:
+        parsed = json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
