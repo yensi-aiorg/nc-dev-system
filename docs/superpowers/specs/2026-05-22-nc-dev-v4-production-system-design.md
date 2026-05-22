@@ -133,6 +133,19 @@ Design rules:
   the charter is never subject to long-horizon multi-feature
   compaction — the failure mode Cognition documented.
 
+- **Phase 4** ✅ — availability-aware failover. `run_ai_session` now
+  checks the orchestrator CLI is on PATH; if not, and the other CLI
+  is, it fails over (Claude↔Codex) rather than failing the feature —
+  directly serving the standing instruction that work continues on
+  Codex during a Claude outage. Honest no-ops found and recorded: the
+  model matrix already uses aliases that auto-track frontier versions
+  (guarded by `test_no_model_literals`), so there is nothing to bump;
+  prompt caching is handled inside the `claude` CLI, not by NC Dev.
+  Defect #7: with top-tier-everywhere the capability matrix's
+  per-capability cost-routing is moot, and its one real value
+  (failover) is now delivered directly in `run_ai_session`; the
+  matrix is retained for future config-driven multi-provider setups.
+
 ## 4. Phased roadmap
 
 Each phase: TDD, verified commits, own branch, merged only when the gauntlet (once it
