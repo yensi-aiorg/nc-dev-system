@@ -307,6 +307,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("quickstart", help="Print the recommended workflow")
     sub.add_parser("doctor", help="Check prerequisites")
 
+    spec = sub.add_parser("spec", help="Generate a behavior contract without building")
+    spec.add_argument("--source", required=True, help="Path to source requirements or spec")
+    spec.add_argument("--target-repo", default=None, help="Existing target repository")
+    spec.add_argument("--workspace", default=None)
+    spec.add_argument("--model", default="auto")
+    spec.add_argument("--timeout", type=int, default=900)
+    spec.add_argument("--max-budget-usd", type=float, default=None)
+    spec.add_argument("--run-id", default=None)
+
     # --- Full: Sequential Verified Sprint Engine ---
     full = sub.add_parser("full", help="Run the full sequential verified sprint pipeline")
     full.add_argument("--source", required=True, help="Path to source requirements or spec")
@@ -520,6 +529,45 @@ def main(argv: list[str] | None = None) -> int:
         ok, report = _doctor_report(workspace)
         console.print(report)
         return 0 if ok else 1
+
+    if args.command == "spec":
+        from ncdev.contracts.behavior_contract import (
+            build_behavior_contract,
+            write_behavior_contract,
+        )
+        from ncdev.pipeline.charter import generate_charter
+        from ncdev.utils import make_run_id
+
+        workspace = _workspace(args.workspace)
+        target_repo = _resolve_target_repo(args.target_repo, workspace)
+        run_id = args.run_id or make_run_id("spec")
+        run_dir = workspace / ".nc-dev" / "runs" / run_id
+        outputs_dir = run_dir / "outputs"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        bundle, session = generate_charter(
+            prd_path=Path(args.source).resolve(),
+            output_dir=outputs_dir,
+            target_repo=target_repo,
+            model=args.model,
+            timeout=args.timeout,
+            max_budget_usd=args.max_budget_usd,
+            log_path=run_dir / "logs" / "charter.jsonl",
+        )
+        if bundle is None:
+            console.print(f"[red]spec generation failed[/red]: {session.summary()}")
+            console.print(f"run_dir={run_dir}")
+            return 1
+        contract = build_behavior_contract(
+            bundle,
+            source_path=Path(args.source).resolve(),
+            output_dir=outputs_dir,
+        )
+        write_behavior_contract(contract, outputs_dir)
+        console.print(f"contract_id={contract.contract_id}")
+        console.print(f"scenarios={len(contract.scenarios)}")
+        console.print(f"contract={outputs_dir / 'behavior-contract.v1.json'}")
+        console.print(f"review={outputs_dir / 'behavior-contract.md'}")
+        return 0
 
     if args.command == "full":
         workspace = _workspace(args.workspace)

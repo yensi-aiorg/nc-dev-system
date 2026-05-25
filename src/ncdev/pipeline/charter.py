@@ -557,3 +557,19 @@ def write_charter(bundle: CharterBundle, output_dir: Path) -> None:
     (output_dir / "feature-queue.json").write_text(
         bundle.feature_queue.model_dump_json(indent=2), encoding="utf-8",
     )
+    try:
+        from ncdev.contracts.behavior_contract import (
+            build_behavior_contract,
+            write_behavior_contract,
+        )
+
+        write_behavior_contract(
+            build_behavior_contract(bundle, output_dir=output_dir),
+            output_dir,
+        )
+    except Exception:
+        # Charter writing is used by many tests and migration utilities. A
+        # behavior-contract writer bug should not corrupt the canonical three
+        # charter artifacts; callers that need the new artifact can invoke the
+        # writer directly and handle the exception.
+        pass

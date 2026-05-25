@@ -141,6 +141,8 @@ def test_write_and_load_charter_roundtrip(tmp_path: Path):
     assert (out / "target-project-contract.json").exists()
     assert (out / "verification-contract.json").exists()
     assert (out / "feature-queue.json").exists()
+    assert (out / "behavior-contract.v1.json").exists()
+    assert (out / "behavior-contract.md").exists()
 
     loaded = load_charter(out)
     assert loaded.contract.project_name == "myapp"
