@@ -552,6 +552,43 @@ def test_factory_probe_test_craftr_passes_debt_to_steward(monkeypatch, tmp_path)
     assert captured_steward_kwargs["last_test_craftr_scores"] == {"core_flow": 80}
 
 
+def test_factory_can_require_test_craftr_probe(monkeypatch, tmp_path):
+    """Fail-closed quality gate mode stops if TestCraftr cannot produce a run."""
+    from ncdev import factory as fac
+
+    fake_state = MagicMock()
+    fake_state.status = "passed"
+    fake_state.run_id = "test"
+    fake_state.run_dir = str(tmp_path / "run")
+    fake_state.target_path = str(tmp_path / "target")
+    fake_state.completed_steps = []
+    Path(fake_state.run_dir).mkdir()
+    Path(fake_state.target_path).mkdir()
+
+    steward = MagicMock()
+    monkeypatch.setattr(fac, "run_pipeline", lambda **kw: fake_state)
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(fac, "_probe_test_craftr", lambda **kw: (None, [], {}))
+    monkeypatch.setattr(fac, "run_product_steward", steward)
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        probe_test_craftr=True,
+        require_test_craftr=True,
+    )
+
+    assert result.stop_reason == FactoryStopReason.TEST_CRAFTR_UNAVAILABLE
+    steward.assert_not_called()
+
+
 def test_pin_per_feature_uses_single_probe_for_all_features(monkeypatch, tmp_path):
     from ncdev import factory as fac
 

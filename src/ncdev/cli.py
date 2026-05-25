@@ -428,6 +428,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     factory.add_argument(
+        "--require-test-craftr",
+        action="store_true",
+        default=False,
+        help=(
+            "Stop the factory if a requested TestCraftr probe cannot "
+            "produce a run. Use for fail-closed quality-gate runs."
+        ),
+    )
+    factory.add_argument(
         "--test-craftr-url",
         default="http://localhost:16630",
         help="TestCraftr base URL.",
@@ -667,6 +676,7 @@ def main(argv: list[str] | None = None) -> int:
                 builder_timeout=args.timeout,
                 max_budget_usd=args.max_budget_usd,
                 probe_test_craftr=args.probe_test_craftr,
+                require_test_craftr=args.require_test_craftr,
                 test_craftr_url=args.test_craftr_url,
                 target_url=args.target_url,
             )
@@ -736,6 +746,7 @@ def main(argv: list[str] | None = None) -> int:
             builder_timeout=args.timeout,
             max_budget_usd=args.max_budget_usd,
             probe_test_craftr=args.probe_test_craftr,
+            require_test_craftr=args.require_test_craftr,
             capture_baseline=args.baseline,
             test_craftr_url=args.test_craftr_url,
             target_url=args.target_url,

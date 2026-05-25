@@ -56,6 +56,7 @@ console = Console()
 class FactoryStopReason(str, Enum):
     STEWARD_CONTINUE_AT_END = "steward_continue_at_end"
     STEWARD_UNRECOVERABLE = "steward_unrecoverable"
+    TEST_CRAFTR_UNAVAILABLE = "test_craftr_unavailable"
     BUDGET_EXHAUSTED = "budget_exhausted"
 
 
@@ -372,6 +373,7 @@ def run_factory(
     max_budget_usd: float | None = None,
     config: NCDevConfig | None = None,
     probe_test_craftr: bool = False,
+    require_test_craftr: bool = False,
     capture_baseline: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
@@ -413,6 +415,7 @@ def run_factory(
         max_budget_usd=max_budget_usd,
         config=config,
         probe_test_craftr=probe_test_craftr,
+        require_test_craftr=require_test_craftr,
         capture_baseline=capture_baseline,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
@@ -433,6 +436,7 @@ def run_factory_from_issues(
     max_budget_usd: float | None = None,
     config: NCDevConfig | None = None,
     probe_test_craftr: bool = False,
+    require_test_craftr: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -466,6 +470,7 @@ def run_factory_from_issues(
         max_budget_usd=max_budget_usd,
         config=config,
         probe_test_craftr=probe_test_craftr,
+        require_test_craftr=require_test_craftr,
         capture_baseline=False,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
@@ -517,6 +522,7 @@ def run_factory_with_bundle(
         max_budget_usd=max_budget_usd,
         config=config,
         probe_test_craftr=False,
+        require_test_craftr=False,
         capture_baseline=False,
         test_craftr_url="http://localhost:16630",
         target_url="http://localhost:23000",
@@ -538,6 +544,7 @@ def _run_factory_cycle_loop(
     max_budget_usd: float | None,
     config: NCDevConfig | None,
     probe_test_craftr: bool,
+    require_test_craftr: bool,
     capture_baseline: bool,
     test_craftr_url: str,
     target_url: str,
@@ -643,6 +650,13 @@ def _run_factory_cycle_loop(
             )
             if run_id:
                 state.test_craftr_runs.append(run_id)
+            elif require_test_craftr:
+                console.print(
+                    "[red]TestCraftr probe was required but returned no run_id; "
+                    "stopping factory before Steward review.[/red]"
+                )
+                state.stop_reason = FactoryStopReason.TEST_CRAFTR_UNAVAILABLE
+                return state
             state.last_product_debt = debt
             steward_kwargs["product_debt"] = debt
             steward_kwargs["last_test_craftr_scores"] = scores
