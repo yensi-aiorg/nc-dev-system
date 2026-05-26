@@ -511,6 +511,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     factory.add_argument(
+        "--strict-contract",
+        action="store_true",
+        default=False,
+        help=(
+            "In local TestCraftr mode, validate that selected verification "
+            "modes are executable before running."
+        ),
+    )
+    factory.add_argument(
         "--test-craftr-url",
         default="http://localhost:16630",
         help="TestCraftr base URL.",
@@ -719,10 +728,12 @@ def main(argv: list[str] | None = None) -> int:
                 builder_timeout=args.timeout,
                 max_budget_usd=getattr(args, "max_budget_usd", None),
                 probe_test_craftr=True,
+                require_test_craftr=True,
                 test_craftr_mode="local",
                 browser_smoke_contract=True,
                 run_required_commands_contract=True,
                 persona_pass_contract=True,
+                strict_contract=True,
                 target_url=args.base_url,
             )
             console.print(
@@ -764,6 +775,7 @@ def main(argv: list[str] | None = None) -> int:
                 visual_checks_contract=args.visual_checks_contract,
                 visual_threshold=args.visual_threshold,
                 persona_pass_contract=args.persona_pass_contract,
+                strict_contract=args.strict_contract,
                 test_craftr_url=args.test_craftr_url,
                 target_url=args.target_url,
             )
@@ -844,6 +856,7 @@ def main(argv: list[str] | None = None) -> int:
             visual_checks_contract=args.visual_checks_contract,
             visual_threshold=args.visual_threshold,
             persona_pass_contract=args.persona_pass_contract,
+            strict_contract=args.strict_contract,
             test_craftr_url=args.test_craftr_url,
             target_url=args.target_url,
         )

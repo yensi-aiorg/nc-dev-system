@@ -328,6 +328,7 @@ def _run_local_test_craftr(
     visual_checks: bool = False,
     visual_threshold: float = 0.01,
     persona_pass: bool = False,
+    strict_contract: bool = False,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any], str | None, bool]:
     """Run TestCraftr's local contract runner and load its report."""
 
@@ -371,6 +372,8 @@ def _run_local_test_craftr(
         cmd.extend(["--visual-checks", "--visual-threshold", str(visual_threshold)])
     if persona_pass:
         cmd.append("--persona-pass")
+    if strict_contract:
+        cmd.append("--strict-contract")
 
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
@@ -579,6 +582,7 @@ def run_factory(
     visual_checks_contract: bool = False,
     visual_threshold: float = 0.01,
     persona_pass_contract: bool = False,
+    strict_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -630,6 +634,7 @@ def run_factory(
         visual_checks_contract=visual_checks_contract,
         visual_threshold=visual_threshold,
         persona_pass_contract=persona_pass_contract,
+        strict_contract=strict_contract,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=project_id,
@@ -659,6 +664,7 @@ def run_factory_from_issues(
     visual_checks_contract: bool = False,
     visual_threshold: float = 0.01,
     persona_pass_contract: bool = False,
+    strict_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -703,6 +709,7 @@ def run_factory_from_issues(
         visual_checks_contract=visual_checks_contract,
         visual_threshold=visual_threshold,
         persona_pass_contract=persona_pass_contract,
+        strict_contract=strict_contract,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
@@ -764,6 +771,7 @@ def run_factory_with_bundle(
         visual_checks_contract=False,
         visual_threshold=0.01,
         persona_pass_contract=False,
+        strict_contract=False,
         test_craftr_url="http://localhost:16630",
         target_url="http://localhost:23000",
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
@@ -795,6 +803,7 @@ def _run_factory_cycle_loop(
     visual_checks_contract: bool,
     visual_threshold: float,
     persona_pass_contract: bool,
+    strict_contract: bool,
     test_craftr_url: str,
     target_url: str,
     project_id: str,
@@ -899,6 +908,7 @@ def _run_factory_cycle_loop(
                         visual_checks=visual_checks_contract,
                         visual_threshold=visual_threshold,
                         persona_pass=persona_pass_contract,
+                        strict_contract=strict_contract,
                     )
                 )
                 if report_path:

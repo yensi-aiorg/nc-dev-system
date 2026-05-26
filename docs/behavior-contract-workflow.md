@@ -46,6 +46,7 @@ python -m tc_core.cli run \
   --run-required-commands \
   --visual-checks \
   --persona-pass \
+  --strict-contract \
   --out .testcraftr/runs/local-001
 ```
 
@@ -66,6 +67,10 @@ captures. With `--persona-pass`, it adds deterministic user/destroyer/inspector
 summaries. AI-driven adversarial flows remain in the server path until they are
 moved behind the same file-mode runner.
 
+With `--strict-contract`, TestCraftr validates that the selected local
+verification modes are executable before running. An unexecutable contract exits
+with code `3` and writes `contract-readiness.v1.json`.
+
 ## Fail-Closed Factory Runs
 
 Use this when TestCraftr verification is mandatory:
@@ -80,6 +85,7 @@ ncdev factory \
   --interaction-smoke-contract \
   --run-required-commands-contract \
   --persona-pass-contract \
+  --strict-contract \
   --require-test-craftr
 ```
 
@@ -88,9 +94,10 @@ runner through `--test-craftr-core-path`, `TEST_CRAFTR_CORE_PATH`, or a sibling
 `test-craftr/tc-core` checkout.
 
 `ncdev full --quality-gate` enables local browser smoke, required-command
-execution, and persona summaries by default because that command is explicitly
-asking for an end-to-end gate. Interaction and visual checks stay opt-in until
-the contract contains stable executable steps and baselines.
+execution, persona summaries, strict contract readiness, and fail-closed
+TestCraftr availability by default because that command is explicitly asking for
+an end-to-end gate. Interaction and visual checks stay opt-in until the contract
+contains stable executable steps and baselines.
 
 With `--require-test-craftr`, the factory stops before Product Steward review if
 TestCraftr cannot produce a run or reports a local infrastructure failure. This

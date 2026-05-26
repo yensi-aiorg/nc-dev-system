@@ -756,6 +756,7 @@ def test_run_local_test_craftr_passes_browser_smoke_flag(monkeypatch, tmp_path):
         visual_checks=True,
         visual_threshold=0.25,
         persona_pass=True,
+        strict_contract=True,
     )
 
     assert run_id == "tc-local-1"
@@ -769,6 +770,7 @@ def test_run_local_test_craftr_passes_browser_smoke_flag(monkeypatch, tmp_path):
     assert "--visual-checks" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--visual-threshold") + 1] == "0.25"
     assert "--persona-pass" in captured["cmd"]
+    assert "--strict-contract" in captured["cmd"]
 
 
 def test_pin_per_feature_uses_single_probe_for_all_features(monkeypatch, tmp_path):
