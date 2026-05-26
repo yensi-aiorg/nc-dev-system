@@ -54,6 +54,7 @@ This writes:
 
 ```text
 .testcraftr/runs/local-001/verification-report.v1.json
+.testcraftr/runs/local-001/evidence-manifest.v1.json
 .testcraftr/runs/local-001/issues.md
 ```
 
@@ -70,6 +71,10 @@ moved behind the same file-mode runner.
 With `--strict-contract`, TestCraftr validates that the selected local
 verification modes are executable before running. An unexecutable contract exits
 with code `3` and writes `contract-readiness.v1.json`.
+
+Every completed local run also writes `evidence-manifest.v1.json`, a hashed
+inventory of the report, issue file, screenshots, and other local evidence. NC
+Dev includes that manifest path in the Product Steward context when present.
 
 ## Fail-Closed Factory Runs
 

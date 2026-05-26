@@ -306,10 +306,14 @@ def _local_test_craftr_scores(
     report_path: Path,
 ) -> dict[str, Any]:
     summary = summarize_verification_report(report)
-    return {
+    scores = {
         **summary,
         "report_path": str(report_path),
     }
+    manifest_path = report_path.parent / "evidence-manifest.v1.json"
+    if manifest_path.exists():
+        scores["evidence_manifest_path"] = str(manifest_path)
+    return scores
 
 
 def _run_local_test_craftr(

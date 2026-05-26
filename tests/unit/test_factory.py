@@ -773,6 +773,26 @@ def test_run_local_test_craftr_passes_browser_smoke_flag(monkeypatch, tmp_path):
     assert "--strict-contract" in captured["cmd"]
 
 
+def test_local_test_craftr_scores_include_evidence_manifest(tmp_path):
+    from ncdev import factory as fac
+    from ncdev.contracts.verification_report import VerificationReport
+
+    report_path = tmp_path / "verification-report.v1.json"
+    manifest_path = tmp_path / "evidence-manifest.v1.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    report = VerificationReport(
+        run_id="tc-local-1",
+        contract_id="bc-1",
+        target_url="http://localhost:3000",
+        verdict="pass",
+    )
+
+    scores = fac._local_test_craftr_scores(report, report_path=report_path)
+
+    assert scores["report_path"] == str(report_path)
+    assert scores["evidence_manifest_path"] == str(manifest_path)
+
+
 def test_pin_per_feature_uses_single_probe_for_all_features(monkeypatch, tmp_path):
     from ncdev import factory as fac
 
