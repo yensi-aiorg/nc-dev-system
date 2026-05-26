@@ -291,6 +291,20 @@ def test_cli_parses_factory_subcommand():
     assert args.max_cycles == 5
 
 
+def test_cli_parses_factory_status_subcommand():
+    from ncdev.cli import build_parser
+
+    args = build_parser().parse_args([
+        "factory-status",
+        "--run-dir",
+        "/tmp/run",
+        "--json",
+    ])
+    assert args.command == "factory-status"
+    assert args.run_dir == "/tmp/run"
+    assert args.json is True
+
+
 def test_cli_parses_factory_baseline_flags():
     from ncdev.cli import build_parser
 
@@ -425,3 +439,44 @@ def test_cli_factory_from_issues_calls_from_issues_runner(monkeypatch, tmp_path)
     assert rc == 0
     assert captured["report_path"] == report.resolve()
     assert captured["target_repo_path"] == target.resolve()
+
+
+def test_cli_factory_status_reads_summary(monkeypatch, tmp_path):
+    from ncdev import cli
+
+    run_dir = tmp_path / ".nc-dev" / "runs" / "factory-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "factory-summary.json").write_text(
+        """
+{
+  "run_dir": "factory-1",
+  "stop_reason": "too_many_failures",
+  "last_pipeline_status": "failed",
+  "cycles_run": 2,
+  "consecutive_failures": 2,
+  "recorded_cost_usd": 0.0,
+  "spend": {"event_count": 3, "unmetered_events": 1},
+  "diagnosis": {
+    "headline": "The consecutive-failure breaker stopped a repeated repair loop.",
+    "next_actions": ["Inspect the latest Steward reasoning."]
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    printed: list[str] = []
+    monkeypatch.setattr(
+        cli.console,
+        "print",
+        lambda *args, **kwargs: printed.append(str(args[0])),
+    )
+
+    rc = cli.main([
+        "factory-status",
+        "--workspace",
+        str(tmp_path),
+    ])
+
+    assert rc == 0
+    assert any("too_many_failures" in line for line in printed)
+    assert any("Next Actions" in line for line in printed)

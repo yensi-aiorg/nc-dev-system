@@ -55,6 +55,8 @@ Every factory run directory now gets:
 
 ```text
 .nc-dev/runs/<run-id>/spend-ledger.jsonl
+.nc-dev/runs/<run-id>/factory-summary.json
+.nc-dev/runs/<run-id>/factory-summary.md
 ```
 
 The ledger records pipeline, TestCraftr, Steward, and guardrail events. Each row
@@ -64,3 +66,32 @@ marks whether the event was metered and includes any available `cost_usd`,
 Local TestCraftr verification is recorded as metered zero-cost work. Agent paths
 without reliable cost telemetry are recorded as `metered=false` so an audit can
 distinguish "free deterministic local check" from "unknown spend".
+
+## Morning Status Check
+
+After an unattended run, inspect the latest factory run with:
+
+```bash
+ncdev factory-status
+```
+
+Or inspect a specific run:
+
+```bash
+ncdev factory-status --run-dir .nc-dev/runs/<run-id>
+ncdev factory-status --run-dir .nc-dev/runs/<run-id> --json
+```
+
+The status view reports the stop reason, diagnosis, cycle count, metered spend,
+unmetered event count, latest Steward decisions, verification reports, and a
+resume command when resuming is appropriate.
+
+For recovery, prefer resuming against the existing charter rather than
+regenerating a new one:
+
+```bash
+ncdev factory \
+  --source ./PRD.md \
+  --target-repo /path/to/app \
+  --resume-charter .nc-dev/runs/<run-id>
+```

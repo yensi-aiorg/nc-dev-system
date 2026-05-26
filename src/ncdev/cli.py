@@ -573,6 +573,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="URL of the running target app (for TestCraftr probes).",
     )
 
+    factory_status = sub.add_parser(
+        "factory-status",
+        help="Inspect the latest or specified factory run summary.",
+    )
+    factory_status.add_argument(
+        "--run-dir",
+        default=None,
+        help="Factory run directory. Defaults to the latest .nc-dev/runs entry.",
+    )
+    factory_status.add_argument("--workspace", default=None)
+    factory_status.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Print machine-readable JSON instead of Markdown.",
+    )
+
     # --- Dev Mode: The Autonomous Senior Engineer ---
     dev_parser = sub.add_parser("dev", help="Autonomous development — Claude + Codex + Citex + Playwright")
     dev_parser.add_argument("--project", required=True, help="Path to the project directory")
@@ -926,6 +943,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.stop_reason in {
             FactoryStopReason.STEWARD_CONTINUE_AT_END,
         } else 1
+
+    if args.command == "factory-status":
+        import json
+        from ncdev.factory_observer import (
+            find_latest_run_dir,
+            load_factory_status,
+            render_factory_status,
+        )
+
+        workspace = _workspace(args.workspace)
+        run_dir = Path(args.run_dir).resolve() if args.run_dir else find_latest_run_dir(workspace)
+        if run_dir is None:
+            console.print("[red]No factory runs found[/red]")
+            return 1
+        summary = load_factory_status(run_dir)
+        if args.json:
+            console.print(json.dumps(summary, indent=2, sort_keys=False))
+        else:
+            console.print(render_factory_status(summary))
+        return 0
 
     if args.command == "dev":
         from ncdev.dev import run_dev
