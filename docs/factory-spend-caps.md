@@ -95,3 +95,26 @@ ncdev factory \
   --target-repo /path/to/app \
   --resume-charter .nc-dev/runs/<run-id>
 ```
+
+Resume now runs a preflight before invoking the factory. It checks:
+
+- the target repo working tree is clean
+- the target repo matches the target recorded in `factory-summary.json`
+- the previous run did not already complete successfully
+- the previous stop reason is not a human-inspection stop by default
+- failed or blocked feature ids can be recovered from `state.json` when present
+
+Preflight blocks unsafe resumes. After reviewing the printed blockers, you can
+override with:
+
+```bash
+ncdev factory \
+  --source ./PRD.md \
+  --target-repo /path/to/app \
+  --resume-charter .nc-dev/runs/<run-id> \
+  --force-resume
+```
+
+Use `--force-resume` only after committing or intentionally preserving target
+repo changes and reading the previous Steward decision. It is an explicit
+operator override, not an unattended default.

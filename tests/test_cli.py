@@ -289,6 +289,7 @@ def test_cli_parses_factory_subcommand():
     assert args.command == "factory"
     assert args.source == "/tmp/prd.md"
     assert args.max_cycles == 5
+    assert args.force_resume is False
 
 
 def test_cli_parses_factory_status_subcommand():
@@ -438,6 +439,146 @@ def test_cli_factory_from_issues_calls_from_issues_runner(monkeypatch, tmp_path)
 
     assert rc == 0
     assert captured["report_path"] == report.resolve()
+    assert captured["target_repo_path"] == target.resolve()
+
+
+def test_cli_factory_resume_blocks_dirty_target(monkeypatch, tmp_path):
+    from ncdev import cli
+
+    source = tmp_path / "prd.md"
+    source.write_text("# fake")
+    target = tmp_path / "app"
+    target.mkdir()
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+    (target / "app.py").write_text("print('x')\n")
+    subprocess.run(["git", "add", "."], cwd=target, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-m",
+            "init",
+        ],
+        cwd=target,
+        check=True,
+    )
+    (target / "dirty.py").write_text("dirty\n")
+
+    run_dir = tmp_path / ".nc-dev" / "runs" / "factory-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "factory-summary.json").write_text(
+        f"""{{
+  "run_dir": "{run_dir}",
+  "source_path": "{source}",
+  "target_path": "{target.resolve()}",
+  "stop_reason": "wall_time_exhausted",
+  "last_pipeline_status": "partial",
+  "cycles_run": 2,
+  "recorded_cost_usd": 0.0,
+  "spend": {{"event_count": 1}},
+  "diagnosis": {{"headline": "stopped", "next_actions": []}}
+}}
+""",
+        encoding="utf-8",
+    )
+
+    factory_runner = []
+    monkeypatch.setattr(
+        cli,
+        "_factory_with_bundle_runner_default",
+        lambda **kw: factory_runner.append(kw),
+        raising=False,
+    )
+    printed: list[str] = []
+    monkeypatch.setattr(
+        cli.console,
+        "print",
+        lambda *args, **kwargs: printed.append(str(args[0])),
+    )
+
+    rc = cli.main([
+        "factory",
+        "--source",
+        str(source),
+        "--target-repo",
+        str(target),
+        "--resume-charter",
+        str(run_dir),
+    ])
+
+    assert rc == 1
+    assert factory_runner == []
+    assert any("Resume preflight blocked" in line for line in printed)
+    assert any("Dirty Target Files" in line for line in printed)
+
+
+def test_cli_factory_resume_force_allows_dirty_target(monkeypatch, tmp_path):
+    from ncdev import cli
+    from ncdev.factory import FactoryRunState, FactoryStopReason
+    from ncdev.pipeline import charter as charter_mod
+
+    source = tmp_path / "prd.md"
+    source.write_text("# fake")
+    target = tmp_path / "app"
+    target.mkdir()
+    (target / "dirty.py").write_text("dirty\n")
+    run_dir = tmp_path / ".nc-dev" / "runs" / "factory-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "factory-summary.json").write_text(
+        f"""{{
+  "run_dir": "{run_dir}",
+  "source_path": "{source}",
+  "target_path": "{target.resolve()}",
+  "stop_reason": "too_many_failures",
+  "last_pipeline_status": "failed",
+  "cycles_run": 2,
+  "recorded_cost_usd": 0.0,
+  "spend": {{"event_count": 1}},
+  "diagnosis": {{"headline": "stopped", "next_actions": []}}
+}}
+""",
+        encoding="utf-8",
+    )
+
+    bundle = SimpleNamespace(feature_queue=SimpleNamespace(features=[]))
+    monkeypatch.setattr(charter_mod, "load_charter", lambda *a, **kw: bundle)
+    captured = {}
+
+    def fake_factory_with_bundle(**kw):
+        captured.update(kw)
+        return FactoryRunState(
+            workspace=tmp_path,
+            source_path=source,
+            cycles_run=1,
+            stop_reason=FactoryStopReason.STEWARD_CONTINUE_AT_END,
+        )
+
+    monkeypatch.setattr(
+        cli,
+        "_factory_with_bundle_runner_default",
+        fake_factory_with_bundle,
+        raising=False,
+    )
+
+    rc = cli.main([
+        "factory",
+        "--source",
+        str(source),
+        "--target-repo",
+        str(target),
+        "--resume-charter",
+        str(run_dir),
+        "--force-resume",
+    ])
+
+    assert rc == 0
+    assert captured["bundle"] is bundle
     assert captured["target_repo_path"] == target.resolve()
 
 

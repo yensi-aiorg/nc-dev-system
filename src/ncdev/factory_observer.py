@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,63 @@ from typing import Any
 SUMMARY_JSON = "factory-summary.json"
 SUMMARY_MD = "factory-summary.md"
 SPEND_LEDGER = "spend-ledger.jsonl"
+
+
+@dataclass
+class ResumePreflight:
+    ok: bool
+    run_dir: Path
+    target_repo: Path
+    stop_reason: str = "unknown"
+    last_pipeline_status: str = "unknown"
+    cycles_run: int = 0
+    failed_feature_ids: list[str] = field(default_factory=list)
+    dirty_files: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    resume_command: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "run_dir": str(self.run_dir),
+            "target_repo": str(self.target_repo),
+            "stop_reason": self.stop_reason,
+            "last_pipeline_status": self.last_pipeline_status,
+            "cycles_run": self.cycles_run,
+            "failed_feature_ids": self.failed_feature_ids,
+            "dirty_files": self.dirty_files,
+            "warnings": self.warnings,
+            "blockers": self.blockers,
+            "resume_command": self.resume_command,
+        }
+
+
+def render_resume_preflight(preflight: ResumePreflight) -> str:
+    lines = [
+        "# Factory Resume Preflight",
+        "",
+        f"- Result: {'ok' if preflight.ok else 'blocked'}",
+        f"- Run: {preflight.run_dir}",
+        f"- Target: {preflight.target_repo}",
+        f"- Previous stop reason: {preflight.stop_reason}",
+        f"- Previous pipeline status: {preflight.last_pipeline_status}",
+        f"- Previous cycles: {preflight.cycles_run}",
+        f"- Failed feature ids: {', '.join(preflight.failed_feature_ids) or '(none found)'}",
+    ]
+    if preflight.dirty_files:
+        lines.extend(["", "## Dirty Target Files", ""])
+        lines.extend(f"- `{line}`" for line in preflight.dirty_files[:20])
+    if preflight.blockers:
+        lines.extend(["", "## Blockers", ""])
+        lines.extend(f"- {blocker}" for blocker in preflight.blockers)
+    if preflight.warnings:
+        lines.extend(["", "## Warnings", ""])
+        lines.extend(f"- {warning}" for warning in preflight.warnings)
+    if preflight.ok:
+        lines.extend(["", "## Resume Command", "", f"`{preflight.resume_command}`"])
+    lines.append("")
+    return "\n".join(lines)
 
 
 def find_latest_run_dir(workspace: Path) -> Path | None:
@@ -19,6 +78,115 @@ def find_latest_run_dir(workspace: Path) -> Path | None:
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _git_status_short(repo: Path) -> list[str]:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ["<git status unavailable>"]
+    if result.returncode != 0:
+        return ["<not a git repository or status failed>"]
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _state_failed_feature_ids(run_dir: Path) -> list[str]:
+    state_path = run_dir / "state.json"
+    if not state_path.exists():
+        return []
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    failed: list[str] = []
+    for step in state.get("completed_steps", []) or []:
+        status = str(step.get("status", "")).lower()
+        if status in {"failed", "blocked", "repairing", "building", "verifying"}:
+            feature_id = str(step.get("feature_id", "")).strip()
+            if feature_id:
+                failed.append(feature_id)
+    return failed
+
+
+def resume_preflight(
+    *,
+    run_dir: Path,
+    target_repo: Path,
+    source_path: Path,
+    force: bool = False,
+) -> ResumePreflight:
+    summary = load_factory_status(run_dir)
+    stop_reason = str(summary.get("stop_reason") or "unknown")
+    dirty_files = _git_status_short(target_repo)
+    failed_feature_ids = _state_failed_feature_ids(run_dir)
+    blockers: list[str] = []
+    warnings: list[str] = []
+    summary_target = str(summary.get("target_path") or "")
+    target_repo_str = str(target_repo.resolve())
+
+    if dirty_files:
+        blockers.append(
+            "target repository has uncommitted changes; commit/stash them "
+            "or rerun with --force-resume"
+        )
+    if summary_target and Path(summary_target).resolve() != target_repo.resolve():
+        blockers.append(
+            "resume target does not match the previous factory target "
+            f"({summary_target})"
+        )
+    if stop_reason == "steward_continue_at_end":
+        blockers.append("previous run already completed successfully")
+    if stop_reason == "unmetered_spend_blocked":
+        blockers.append(
+            "previous run did not start because unmetered spend was blocked"
+        )
+    if stop_reason in {"too_many_failures", "steward_unrecoverable"}:
+        blockers.append(
+            "previous stop reason requires human inspection before resume"
+        )
+    if stop_reason == "test_craftr_unavailable":
+        warnings.append("verify TestCraftr is healthy before resuming")
+    if stop_reason == "budget_exhausted":
+        warnings.append("increase max cycles or spend cap before resuming")
+    if stop_reason == "wall_time_exhausted":
+        warnings.append("increase --max-wall-time-minutes before resuming")
+    if not failed_feature_ids and stop_reason not in {
+        "budget_exhausted",
+        "wall_time_exhausted",
+        "test_craftr_unavailable",
+    }:
+        warnings.append("no failed feature ids were found in state.json")
+
+    if force and blockers:
+        warnings.extend(f"forced past blocker: {blocker}" for blocker in blockers)
+        blockers = []
+
+    resume_command = (
+        "ncdev factory "
+        f"--source {source_path.resolve()} "
+        f"--target-repo {target_repo_str} "
+        f"--resume-charter {run_dir.resolve()}"
+    )
+    return ResumePreflight(
+        ok=not blockers,
+        run_dir=run_dir,
+        target_repo=target_repo,
+        stop_reason=stop_reason,
+        last_pipeline_status=str(summary.get("last_pipeline_status") or "unknown"),
+        cycles_run=int(summary.get("cycles_run") or 0),
+        failed_feature_ids=failed_feature_ids,
+        dirty_files=dirty_files,
+        warnings=warnings,
+        blockers=blockers,
+        resume_command=resume_command,
+    )
 
 
 def read_spend_ledger(path: Path) -> list[dict[str, Any]]:

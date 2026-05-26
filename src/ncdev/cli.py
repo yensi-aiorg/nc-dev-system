@@ -419,6 +419,15 @@ def build_parser() -> argparse.ArgumentParser:
             "the failed/missing ones are (re)built. Requires --target-repo."
         ),
     )
+    factory.add_argument(
+        "--force-resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Bypass resume preflight blockers such as dirty target repo or "
+            "human-inspection stop reasons. Use only after reviewing status."
+        ),
+    )
     factory.add_argument("--target-repo", default=None,
                          help="Existing target repository (brownfield)")
     factory.add_argument("--workspace", default=None)
@@ -863,9 +872,27 @@ def main(argv: list[str] | None = None) -> int:
                     "[red]factory --resume-charter requires --target-repo[/red]"
                 )
                 return 1
-            from ncdev.pipeline.charter import load_charter as _load_charter
+            from ncdev.factory_observer import (
+                render_resume_preflight,
+                resume_preflight,
+            )
 
             resume_dir = Path(args.resume_charter).resolve()
+            preflight = resume_preflight(
+                run_dir=resume_dir,
+                target_repo=target_repo,
+                source_path=Path(args.source).resolve(),
+                force=bool(args.force_resume),
+            )
+            console.print(render_resume_preflight(preflight))
+            if not preflight.ok:
+                console.print(
+                    "[red]Resume preflight blocked. Fix blockers or rerun "
+                    "with --force-resume after review.[/red]"
+                )
+                return 1
+            from ncdev.pipeline.charter import load_charter as _load_charter
+
             charter_dir = (
                 resume_dir / "outputs"
                 if (resume_dir / "outputs").is_dir()
