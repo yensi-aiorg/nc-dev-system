@@ -327,6 +327,27 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Claude model: 'auto' (default, newest) or an explicit pin like claude-opus-4-7")
     full.add_argument("--max-budget-usd", type=float, default=None,
                       help="Cost ceiling per feature session (Claude only — ignored by Codex shell-outs)")
+    full.add_argument(
+        "--max-wall-time-minutes",
+        type=float,
+        default=None,
+        help="Factory quality-gate wall-clock cap for unattended runs.",
+    )
+    full.add_argument(
+        "--max-consecutive-failures",
+        type=int,
+        default=3,
+        help="Factory quality-gate stops after this many consecutive repair cycles.",
+    )
+    full.add_argument(
+        "--allow-unmetered",
+        action="store_true",
+        default=False,
+        help=(
+            "Allow factory quality-gate runs to continue when a delegated "
+            "agent path cannot report reliable spend."
+        ),
+    )
     full.add_argument("--timeout", type=int, default=600, help="Builder timeout per feature (seconds)")
     full.add_argument("--max-repairs", type=int, default=2, help="Max repair attempts per feature")
     full.add_argument("--quality-gate", action="store_true", default=False, help="Run quality gate loop after build completes")
@@ -407,6 +428,28 @@ def build_parser() -> argparse.ArgumentParser:
     factory.add_argument("--timeout", type=int, default=3600,
                          help="Per-feature builder timeout (seconds)")
     factory.add_argument("--max-budget-usd", type=float, default=None)
+    factory.add_argument(
+        "--max-wall-time-minutes",
+        type=float,
+        default=None,
+        help="Stop the whole factory loop after this many wall-clock minutes.",
+    )
+    factory.add_argument(
+        "--max-consecutive-failures",
+        type=int,
+        default=3,
+        help="Stop after this many consecutive non-CONTINUE Steward cycles.",
+    )
+    factory.add_argument(
+        "--allow-unmetered",
+        action="store_true",
+        default=False,
+        help=(
+            "Permit budgeted runs to execute agent paths whose cost cannot "
+            "be measured. Required with --max-budget-usd unless every path "
+            "has reliable spend telemetry."
+        ),
+    )
     factory.add_argument(
         "--baseline",
         action="store_true",
@@ -727,6 +770,13 @@ def main(argv: list[str] | None = None) -> int:
                 builder_model=args.model,
                 builder_timeout=args.timeout,
                 max_budget_usd=getattr(args, "max_budget_usd", None),
+                max_wall_time_minutes=getattr(args, "max_wall_time_minutes", None),
+                max_consecutive_failures=getattr(
+                    args,
+                    "max_consecutive_failures",
+                    3,
+                ),
+                allow_unmetered=bool(getattr(args, "allow_unmetered", False)),
                 probe_test_craftr=True,
                 require_test_craftr=True,
                 test_craftr_mode="local",
@@ -764,6 +814,9 @@ def main(argv: list[str] | None = None) -> int:
                 builder_model=args.model,
                 builder_timeout=args.timeout,
                 max_budget_usd=args.max_budget_usd,
+                max_wall_time_minutes=args.max_wall_time_minutes,
+                max_consecutive_failures=args.max_consecutive_failures,
+                allow_unmetered=args.allow_unmetered,
                 probe_test_craftr=args.probe_test_craftr,
                 require_test_craftr=args.require_test_craftr,
                 test_craftr_mode=args.test_craftr_mode,
@@ -822,6 +875,9 @@ def main(argv: list[str] | None = None) -> int:
                 builder_model=args.model,
                 builder_timeout=args.timeout,
                 max_budget_usd=args.max_budget_usd,
+                max_wall_time_minutes=args.max_wall_time_minutes,
+                max_consecutive_failures=args.max_consecutive_failures,
+                allow_unmetered=args.allow_unmetered,
             )
             console.print(
                 f"factory: cycles={result.cycles_run} "
@@ -844,6 +900,9 @@ def main(argv: list[str] | None = None) -> int:
             builder_model=args.model,
             builder_timeout=args.timeout,
             max_budget_usd=args.max_budget_usd,
+            max_wall_time_minutes=args.max_wall_time_minutes,
+            max_consecutive_failures=args.max_consecutive_failures,
+            allow_unmetered=args.allow_unmetered,
             probe_test_craftr=args.probe_test_craftr,
             require_test_craftr=args.require_test_craftr,
             capture_baseline=args.baseline,

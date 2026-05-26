@@ -302,9 +302,97 @@ def test_factory_exhausts_budget(monkeypatch, tmp_path):
         workspace=tmp_path,
         source_path=prd,
         max_cycles=3,
+        max_consecutive_failures=10,
     )
     assert result.stop_reason == FactoryStopReason.BUDGET_EXHAUSTED
     assert result.cycles_run == 3
+
+
+def test_factory_stops_on_consecutive_failure_cap(monkeypatch, tmp_path):
+    from ncdev import factory as fac
+
+    fake_state = _factory_pipeline_state(tmp_path, status="failed")
+
+    monkeypatch.setattr(fac, "run_pipeline", lambda **kw: fake_state)
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.REPAIR_CURRENT_SLICE,
+            reasoning="still broken",
+            target_feature_ids=["f01"],
+        ),
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=5,
+        max_consecutive_failures=2,
+    )
+
+    assert result.stop_reason == FactoryStopReason.TOO_MANY_FAILURES
+    assert result.cycles_run == 2
+    assert result.consecutive_failures == 2
+
+
+def test_factory_stops_before_pipeline_when_wall_time_cap_is_zero(
+    monkeypatch,
+    tmp_path,
+):
+    from ncdev import factory as fac
+
+    pipeline = MagicMock()
+    monkeypatch.setattr(fac, "run_pipeline", pipeline)
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=3,
+        max_wall_time_minutes=0,
+    )
+
+    assert result.stop_reason == FactoryStopReason.WALL_TIME_EXHAUSTED
+    assert result.cycles_run == 0
+    assert result.spend_ledger_path
+    assert Path(result.spend_ledger_path).exists()
+    pipeline.assert_not_called()
+
+
+def test_factory_blocks_budgeted_unmetered_runs_before_pipeline(
+    monkeypatch,
+    tmp_path,
+):
+    from ncdev import factory as fac
+
+    pipeline = MagicMock()
+    monkeypatch.setattr(fac, "run_pipeline", pipeline)
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=3,
+        max_budget_usd=1.0,
+    )
+
+    assert result.stop_reason == FactoryStopReason.UNMETERED_SPEND_BLOCKED
+    assert result.cycles_run == 0
+    assert result.spend_ledger_path
+    event = json.loads(Path(result.spend_ledger_path).read_text().splitlines()[0])
+    assert event["metered"] is False
+    assert event["status"] == "blocked"
+    pipeline.assert_not_called()
 
 
 def test_factory_stops_on_unrecoverable(monkeypatch, tmp_path):
@@ -469,6 +557,7 @@ def test_factory_reruns_charter_then_continues(monkeypatch, tmp_path):
         target_repo_path=tmp_path / "target",
         builder_model="test-model",
         max_budget_usd=12.5,
+        allow_unmetered=True,
         max_cycles=3,
     )
 

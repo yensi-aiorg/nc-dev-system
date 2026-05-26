@@ -24,6 +24,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -56,6 +57,8 @@ from ncdev.pipeline.product_steward import (
 )
 from ncdev.quality_gate.config import QualityGateConfig
 from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
+from ncdev.run_caps import RunCaps
+from ncdev.spend_ledger import append_spend_event
 from ncdev.utils import make_run_id
 
 logger = logging.getLogger(__name__)
@@ -67,15 +70,22 @@ class FactoryStopReason(str, Enum):
     STEWARD_UNRECOVERABLE = "steward_unrecoverable"
     TEST_CRAFTR_UNAVAILABLE = "test_craftr_unavailable"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    WALL_TIME_EXHAUSTED = "wall_time_exhausted"
+    TOO_MANY_FAILURES = "too_many_failures"
+    UNMETERED_SPEND_BLOCKED = "unmetered_spend_blocked"
 
 
 @dataclass
 class FactoryRunState:
     workspace: Path
     source_path: Path
+    started_at_monotonic: float = field(default_factory=time.monotonic)
     cycles_run: int = 0
     stop_reason: FactoryStopReason | None = None
     last_pipeline_status: str = ""
+    consecutive_failures: int = 0
+    recorded_cost_usd: float = 0.0
+    spend_ledger_path: str | None = None
     decisions: list[StewardDecision] = field(default_factory=list)
     run_dirs: list[str] = field(default_factory=list)
     test_craftr_runs: list[str] = field(default_factory=list)
@@ -173,6 +183,137 @@ def _run_async(coro):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(lambda: asyncio.run(coro)).result()
+
+
+def _ensure_spend_ledger(state: FactoryRunState, run_dir: Path) -> Path:
+    path = run_dir / "spend-ledger.jsonl"
+    state.spend_ledger_path = str(path)
+    return path
+
+
+def _append_factory_spend_event(
+    state: FactoryRunState,
+    *,
+    run_dir: Path,
+    component: str,
+    action: str,
+    cycle: int | None = None,
+    metered: bool,
+    cost_usd: float | None = None,
+    budget_usd: float | None = None,
+    status: str = "ok",
+    details: dict[str, Any] | None = None,
+) -> None:
+    append_spend_event(
+        _ensure_spend_ledger(state, run_dir),
+        component=component,
+        action=action,
+        cycle=cycle,
+        metered=metered,
+        cost_usd=cost_usd,
+        budget_usd=budget_usd,
+        status=status,
+        details=details,
+    )
+
+
+def _elapsed_seconds(state: FactoryRunState) -> float:
+    return time.monotonic() - state.started_at_monotonic
+
+
+def _stop_if_wall_time_exhausted(
+    state: FactoryRunState,
+    *,
+    caps: RunCaps,
+) -> bool:
+    if caps.wall_time_exhausted(elapsed_seconds=_elapsed_seconds(state)):
+        state.stop_reason = FactoryStopReason.WALL_TIME_EXHAUSTED
+        return True
+    return False
+
+
+def _pipeline_cost_usd(pipeline_state: Any) -> float:
+    total = 0.0
+    for step in getattr(pipeline_state, "completed_steps", []) or []:
+        try:
+            total += float(getattr(step, "cost_usd", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _config_mode(config: NCDevConfig | None, workspace: Path) -> str:
+    if config is not None:
+        return config.mode
+    try:
+        from ncdev.core.config import load_config
+
+        return load_config(workspace).mode
+    except Exception:  # noqa: BLE001
+        return NCDevConfig().mode
+
+
+def _uses_unmetered_delegate_path(
+    *,
+    config: NCDevConfig | None,
+    workspace: Path,
+) -> bool:
+    """Return True when a budgeted factory may call unmetered agents.
+
+    Claude-only sessions report cost through Claude's JSON events. Codex
+    sessions and Claude→Codex delegation do not provide reliable spend
+    telemetry to NC Dev today, so budgeted unattended runs must opt in.
+    """
+    return _config_mode(config, workspace) != "claude_only"
+
+
+def _guard_budgeted_unmetered_run(
+    *,
+    state: FactoryRunState,
+    workspace: Path,
+    caps: RunCaps,
+    config: NCDevConfig | None,
+) -> bool:
+    if (
+        not caps.budgeted
+        or caps.allow_unmetered
+        or not _uses_unmetered_delegate_path(config=config, workspace=workspace)
+    ):
+        return False
+    run_dir = workspace / ".nc-dev" / "runs" / make_run_id("factory-guardrail")
+    state.run_dirs.append(str(run_dir))
+    state.stop_reason = FactoryStopReason.UNMETERED_SPEND_BLOCKED
+    _append_factory_spend_event(
+        state,
+        run_dir=run_dir,
+        component="ncdev.factory",
+        action="preflight-budget",
+        metered=False,
+        budget_usd=caps.max_budget_usd,
+        status="blocked",
+        details={
+            "reason": "budgeted run uses a delegate path without reliable cost telemetry",
+            "config_mode": _config_mode(config, workspace),
+            "remediation": "rerun with --allow-unmetered or mode=claude_only",
+        },
+    )
+    return True
+
+
+def _record_cycle_failure(
+    state: FactoryRunState,
+    *,
+    caps: RunCaps,
+    decision: StewardDecision,
+) -> bool:
+    if decision.disposition == Disposition.CONTINUE:
+        state.consecutive_failures = 0
+        return False
+    state.consecutive_failures += 1
+    if state.consecutive_failures >= caps.max_consecutive_failures:
+        state.stop_reason = FactoryStopReason.TOO_MANY_FAILURES
+        return True
+    return False
 
 
 async def _probe_test_craftr_async(
@@ -573,6 +714,9 @@ def run_factory(
     builder_model: str | None = None,
     builder_timeout: int = 3600,
     max_budget_usd: float | None = None,
+    max_wall_time_minutes: float | None = None,
+    max_consecutive_failures: int = 3,
+    allow_unmetered: bool = False,
     config: NCDevConfig | None = None,
     probe_test_craftr: bool = False,
     require_test_craftr: bool = False,
@@ -596,11 +740,26 @@ def run_factory(
     STOP_AS_UNRECOVERABLE, a charter mutation is rejected, or
     ``max_cycles`` has been spent.
     """
+    caps = RunCaps(
+        max_cycles=max_cycles,
+        max_budget_usd=max_budget_usd,
+        max_wall_time_minutes=max_wall_time_minutes,
+        max_consecutive_failures=max_consecutive_failures,
+        allow_unmetered=allow_unmetered,
+    )
     state = FactoryRunState(
         workspace=workspace.resolve(),
         source_path=source_path.resolve(),
     )
     project_id = _factory_test_craftr_project_id(workspace, target_repo_path)
+
+    if _guard_budgeted_unmetered_run(
+        state=state,
+        workspace=workspace,
+        caps=caps,
+        config=config,
+    ):
+        return state
 
     if capture_baseline and not probe_test_craftr:
         logger.warning(
@@ -625,6 +784,7 @@ def run_factory(
         builder_model=builder_model,
         builder_timeout=builder_timeout,
         max_budget_usd=max_budget_usd,
+        caps=caps,
         config=config,
         probe_test_craftr=probe_test_craftr,
         require_test_craftr=require_test_craftr,
@@ -656,6 +816,9 @@ def run_factory_from_issues(
     builder_model: str | None = None,
     builder_timeout: int = 3600,
     max_budget_usd: float | None = None,
+    max_wall_time_minutes: float | None = None,
+    max_consecutive_failures: int = 3,
+    allow_unmetered: bool = False,
     config: NCDevConfig | None = None,
     probe_test_craftr: bool = False,
     require_test_craftr: bool = False,
@@ -691,6 +854,20 @@ def run_factory_from_issues(
         workspace=workspace,
         source_path=report_path,
     )
+    caps = RunCaps(
+        max_cycles=max_cycles,
+        max_budget_usd=max_budget_usd,
+        max_wall_time_minutes=max_wall_time_minutes,
+        max_consecutive_failures=max_consecutive_failures,
+        allow_unmetered=allow_unmetered,
+    )
+    if _guard_budgeted_unmetered_run(
+        state=state,
+        workspace=workspace,
+        caps=caps,
+        config=config,
+    ):
+        return state
     return _run_factory_cycle_loop(
         state=state,
         workspace=workspace,
@@ -700,6 +877,7 @@ def run_factory_from_issues(
         builder_model=builder_model,
         builder_timeout=builder_timeout,
         max_budget_usd=max_budget_usd,
+        caps=caps,
         config=config,
         probe_test_craftr=probe_test_craftr,
         require_test_craftr=require_test_craftr,
@@ -732,6 +910,9 @@ def run_factory_with_bundle(
     builder_model: str | None = None,
     builder_timeout: int = 3600,
     max_budget_usd: float | None = None,
+    max_wall_time_minutes: float | None = None,
+    max_consecutive_failures: int = 3,
+    allow_unmetered: bool = False,
     config: NCDevConfig | None = None,
 ) -> FactoryRunState:
     """Run the factory loop against a caller-supplied charter bundle.
@@ -753,6 +934,20 @@ def run_factory_with_bundle(
         workspace=workspace,
         source_path=source_label,
     )
+    caps = RunCaps(
+        max_cycles=max_cycles,
+        max_budget_usd=max_budget_usd,
+        max_wall_time_minutes=max_wall_time_minutes,
+        max_consecutive_failures=max_consecutive_failures,
+        allow_unmetered=allow_unmetered,
+    )
+    if _guard_budgeted_unmetered_run(
+        state=state,
+        workspace=workspace,
+        caps=caps,
+        config=config,
+    ):
+        return state
     return _run_factory_cycle_loop(
         state=state,
         workspace=workspace,
@@ -762,6 +957,7 @@ def run_factory_with_bundle(
         builder_model=builder_model,
         builder_timeout=builder_timeout,
         max_budget_usd=max_budget_usd,
+        caps=caps,
         config=config,
         probe_test_craftr=False,
         require_test_craftr=False,
@@ -794,6 +990,7 @@ def _run_factory_cycle_loop(
     builder_model: str | None,
     builder_timeout: int,
     max_budget_usd: float | None,
+    caps: RunCaps,
     config: NCDevConfig | None,
     probe_test_craftr: bool,
     require_test_craftr: bool,
@@ -815,6 +1012,25 @@ def _run_factory_cycle_loop(
     skip_charter: bool = False,
 ) -> FactoryRunState:
     for cycle in range(1, max_cycles + 1):
+        if _stop_if_wall_time_exhausted(state, caps=caps):
+            run_dir = workspace / ".nc-dev" / "runs" / make_run_id("factory-guardrail")
+            state.run_dirs.append(str(run_dir))
+            _append_factory_spend_event(
+                state,
+                run_dir=run_dir,
+                component="ncdev.factory",
+                action="wall-time-preflight",
+                cycle=cycle,
+                metered=True,
+                budget_usd=max_budget_usd,
+                status="blocked",
+                details={
+                    "elapsed_seconds": round(_elapsed_seconds(state), 3),
+                    "max_wall_time_minutes": caps.max_wall_time_minutes,
+                },
+            )
+            return state
+
         console.print(Panel(
             f"[bold cyan]Factory cycle {cycle}/{max_cycles}[/bold cyan]",
             border_style="cyan",
@@ -840,6 +1056,52 @@ def _run_factory_cycle_loop(
         state.last_pipeline_status = pipeline_state.status
         state.run_dirs.append(pipeline_state.run_dir)
         target_path = Path(pipeline_state.target_path)
+        run_dir = Path(pipeline_state.run_dir)
+        pipeline_cost = _pipeline_cost_usd(pipeline_state)
+        state.recorded_cost_usd += pipeline_cost
+        pipeline_metered = pipeline_cost > 0 or _config_mode(config, workspace) == "claude_only"
+        _append_factory_spend_event(
+            state,
+            run_dir=run_dir,
+            component="ncdev.pipeline",
+            action="run_pipeline",
+            cycle=cycle,
+            metered=pipeline_metered,
+            cost_usd=pipeline_cost if pipeline_metered else None,
+            budget_usd=max_budget_usd,
+            status=str(pipeline_state.status),
+            details={
+                "run_id": getattr(pipeline_state, "run_id", ""),
+                "target_path": str(target_path),
+                "cost_note": (
+                    "summed StepResult.cost_usd"
+                    if pipeline_metered
+                    else "pipeline used an agent path without reliable cost telemetry"
+                ),
+            },
+        )
+        if (
+            caps.max_budget_usd is not None
+            and state.recorded_cost_usd >= caps.max_budget_usd
+        ):
+            state.stop_reason = FactoryStopReason.BUDGET_EXHAUSTED
+            return state
+        if _stop_if_wall_time_exhausted(state, caps=caps):
+            _append_factory_spend_event(
+                state,
+                run_dir=run_dir,
+                component="ncdev.factory",
+                action="wall-time-after-pipeline",
+                cycle=cycle,
+                metered=True,
+                budget_usd=max_budget_usd,
+                status="blocked",
+                details={
+                    "elapsed_seconds": round(_elapsed_seconds(state), 3),
+                    "max_wall_time_minutes": caps.max_wall_time_minutes,
+                },
+            )
+            return state
         post_cycle_sha = _git_head(target_path)
         changed_files = _files_changed_in_cycle(
             target_path,
@@ -849,8 +1111,6 @@ def _run_factory_cycle_loop(
         state.changed_files_per_cycle.append(changed_files)
 
         # Phase B — judge (Steward)
-        run_dir = Path(pipeline_state.run_dir)
-
         # Pin the run_dir and reuse its charter for every subsequent
         # cycle. Without this, each repair cycle calls run_pipeline with
         # run_id=None + skip_charter=False, which spins up a fresh
@@ -915,6 +1175,26 @@ def _run_factory_cycle_loop(
                         strict_contract=strict_contract,
                     )
                 )
+                _append_factory_spend_event(
+                    state,
+                    run_dir=run_dir,
+                    component="testcraftr.local",
+                    action="verify_contract",
+                    cycle=cycle,
+                    metered=True,
+                    cost_usd=0.0,
+                    budget_usd=max_budget_usd,
+                    status=(
+                        "infrastructure_failure"
+                        if infra_failed
+                        else str(scores.get("verdict", "ok"))
+                    ),
+                    details={
+                        "run_id": run_id,
+                        "report_path": report_path,
+                        "issue_count": len(issues),
+                    },
+                )
                 if report_path:
                     state.verification_reports.append(report_path)
                 if infra_failed and require_test_craftr:
@@ -934,6 +1214,21 @@ def _run_factory_cycle_loop(
                     baseline_run_id=state.baseline_run_id,
                     baseline_per_feature=state.baseline_per_feature or None,
                     changed_files=changed_files,
+                )
+                _append_factory_spend_event(
+                    state,
+                    run_dir=run_dir,
+                    component="testcraftr.http",
+                    action="probe",
+                    cycle=cycle,
+                    metered=False,
+                    budget_usd=max_budget_usd,
+                    status="ok" if run_id else "unavailable",
+                    details={
+                        "run_id": run_id,
+                        "issue_count": len(issues),
+                        "scores": scores,
+                    },
                 )
             debt = classify_issues_to_debt(
                 issues,
@@ -964,6 +1259,37 @@ def _run_factory_cycle_loop(
             **steward_kwargs,
         )
         state.decisions.append(decision)
+        _append_factory_spend_event(
+            state,
+            run_dir=run_dir,
+            component="ncdev.product_steward",
+            action="review",
+            cycle=cycle,
+            metered=False,
+            budget_usd=max_budget_usd,
+            status=decision.disposition.value,
+            details={
+                "reasoning": decision.reasoning[:500],
+                "capability_lessons": list(decision.capability_lessons),
+            },
+        )
+
+        if _stop_if_wall_time_exhausted(state, caps=caps):
+            _append_factory_spend_event(
+                state,
+                run_dir=run_dir,
+                component="ncdev.factory",
+                action="wall-time-after-steward",
+                cycle=cycle,
+                metered=True,
+                budget_usd=max_budget_usd,
+                status="blocked",
+                details={
+                    "elapsed_seconds": round(_elapsed_seconds(state), 3),
+                    "max_wall_time_minutes": caps.max_wall_time_minutes,
+                },
+            )
+            return state
 
         # Phase B.5 — record this cycle in the cross-project capability ledger.
         try:
@@ -987,6 +1313,24 @@ def _run_factory_cycle_loop(
         )
 
         # Phase C — act
+        if _record_cycle_failure(state, caps=caps, decision=decision):
+            _append_factory_spend_event(
+                state,
+                run_dir=run_dir,
+                component="ncdev.factory",
+                action="consecutive-failure-cap",
+                cycle=cycle,
+                metered=True,
+                budget_usd=max_budget_usd,
+                status="blocked",
+                details={
+                    "consecutive_failures": state.consecutive_failures,
+                    "max_consecutive_failures": caps.max_consecutive_failures,
+                    "disposition": decision.disposition.value,
+                },
+            )
+            return state
+
         if decision.disposition == Disposition.CONTINUE:
             # CONTINUE at end-of-run = product is done.
             state.stop_reason = FactoryStopReason.STEWARD_CONTINUE_AT_END

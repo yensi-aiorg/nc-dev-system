@@ -28,6 +28,9 @@ def test_cli_full_defaults() -> None:
     assert args.model == "auto"
     assert args.timeout == 600
     assert args.max_repairs == 2
+    assert args.max_wall_time_minutes is None
+    assert args.max_consecutive_failures == 3
+    assert args.allow_unmetered is False
 
 
 def test_cli_full_custom_options() -> None:
@@ -218,6 +221,9 @@ def test_full_quality_gate_routes_through_factory(monkeypatch, tmp_path):
     assert captured["probe_test_craftr"] is True
     assert captured["require_test_craftr"] is True
     assert captured["max_cycles"] == 3
+    assert captured["max_wall_time_minutes"] is None
+    assert captured["max_consecutive_failures"] == 3
+    assert captured["allow_unmetered"] is False
     assert captured["browser_smoke_contract"] is True
     assert captured["run_required_commands_contract"] is True
     assert captured["persona_pass_contract"] is True
@@ -298,6 +304,11 @@ def test_cli_parses_factory_baseline_flags():
         "http://localhost:16630",
         "--target-url",
         "http://localhost:23000",
+        "--max-wall-time-minutes",
+        "480",
+        "--max-consecutive-failures",
+        "4",
+        "--allow-unmetered",
     ])
     assert args.baseline is True
     assert args.probe_test_craftr is True
@@ -310,6 +321,9 @@ def test_cli_parses_factory_baseline_flags():
     assert args.strict_contract is False
     assert args.test_craftr_url == "http://localhost:16630"
     assert args.target_url == "http://localhost:23000"
+    assert args.max_wall_time_minutes == 480
+    assert args.max_consecutive_failures == 4
+    assert args.allow_unmetered is True
 
 
 def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
@@ -339,6 +353,9 @@ def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
     ])
     assert rc == 0
     assert captured["max_cycles"] == 2
+    assert captured["max_wall_time_minutes"] is None
+    assert captured["max_consecutive_failures"] == 3
+    assert captured["allow_unmetered"] is False
     assert captured["source_path"] == prd.resolve()
     assert captured["probe_test_craftr"] is False
     assert captured["capture_baseline"] is False
