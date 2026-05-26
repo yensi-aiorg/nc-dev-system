@@ -272,6 +272,10 @@ def test_factory_stops_when_steward_says_continue_at_end_of_queue(monkeypatch, t
     )
     assert result.stop_reason == FactoryStopReason.STEWARD_CONTINUE_AT_END
     assert result.cycles_run == 1
+    assert result.summary_path
+    summary = json.loads(Path(result.summary_path).read_text())
+    assert summary["stop_reason"] == "steward_continue_at_end"
+    assert summary["diagnosis"]["headline"]
 
 
 def test_factory_exhausts_budget(monkeypatch, tmp_path):
@@ -341,6 +345,10 @@ def test_factory_stops_on_consecutive_failure_cap(monkeypatch, tmp_path):
     assert result.stop_reason == FactoryStopReason.TOO_MANY_FAILURES
     assert result.cycles_run == 2
     assert result.consecutive_failures == 2
+    assert result.summary_path
+    summary = json.loads(Path(result.summary_path).read_text())
+    assert summary["stop_reason"] == "too_many_failures"
+    assert "Resume command:" in "\n".join(summary["diagnosis"]["next_actions"])
 
 
 def test_factory_stops_before_pipeline_when_wall_time_cap_is_zero(
@@ -364,7 +372,9 @@ def test_factory_stops_before_pipeline_when_wall_time_cap_is_zero(
     assert result.stop_reason == FactoryStopReason.WALL_TIME_EXHAUSTED
     assert result.cycles_run == 0
     assert result.spend_ledger_path
+    assert result.summary_path
     assert Path(result.spend_ledger_path).exists()
+    assert Path(result.summary_path).exists()
     pipeline.assert_not_called()
 
 
@@ -389,9 +399,12 @@ def test_factory_blocks_budgeted_unmetered_runs_before_pipeline(
     assert result.stop_reason == FactoryStopReason.UNMETERED_SPEND_BLOCKED
     assert result.cycles_run == 0
     assert result.spend_ledger_path
+    assert result.summary_path
     event = json.loads(Path(result.spend_ledger_path).read_text().splitlines()[0])
     assert event["metered"] is False
     assert event["status"] == "blocked"
+    summary = json.loads(Path(result.summary_path).read_text())
+    assert summary["stop_reason"] == "unmetered_spend_blocked"
     pipeline.assert_not_called()
 
 

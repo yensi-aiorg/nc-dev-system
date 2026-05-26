@@ -55,6 +55,11 @@ from ncdev.pipeline.product_steward import (
     StewardDecision,
     run_product_steward,
 )
+from ncdev.factory_observer import (
+    spend_summary,
+    stop_diagnostics,
+    write_factory_summary,
+)
 from ncdev.quality_gate.config import QualityGateConfig
 from ncdev.quality_gate.orchestrator import QualityGateOrchestrator
 from ncdev.run_caps import RunCaps
@@ -83,9 +88,11 @@ class FactoryRunState:
     cycles_run: int = 0
     stop_reason: FactoryStopReason | None = None
     last_pipeline_status: str = ""
+    target_path: str = ""
     consecutive_failures: int = 0
     recorded_cost_usd: float = 0.0
     spend_ledger_path: str | None = None
+    summary_path: str | None = None
     decisions: list[StewardDecision] = field(default_factory=list)
     run_dirs: list[str] = field(default_factory=list)
     test_craftr_runs: list[str] = field(default_factory=list)
@@ -189,6 +196,64 @@ def _ensure_spend_ledger(state: FactoryRunState, run_dir: Path) -> Path:
     path = run_dir / "spend-ledger.jsonl"
     state.spend_ledger_path = str(path)
     return path
+
+
+def _primary_run_dir(state: FactoryRunState) -> Path | None:
+    if not state.run_dirs:
+        return None
+    return Path(state.run_dirs[0])
+
+
+def _decision_summary(decision: StewardDecision) -> dict[str, Any]:
+    return {
+        "disposition": decision.disposition.value,
+        "reasoning": decision.reasoning,
+        "target_feature_ids": list(decision.target_feature_ids),
+        "new_feature_count": len(decision.new_features),
+        "amendment_count": len(decision.amendments),
+        "capability_lessons": list(decision.capability_lessons),
+    }
+
+
+def _finish_factory_state(
+    state: FactoryRunState,
+    *,
+    run_dir: Path | None = None,
+) -> FactoryRunState:
+    summary_run_dir = run_dir or _primary_run_dir(state)
+    if summary_run_dir is None:
+        return state
+    diagnosis = stop_diagnostics(
+        stop_reason=state.stop_reason.value if state.stop_reason else None,
+        run_dir=summary_run_dir,
+        source_path=str(state.source_path),
+        target_path=state.target_path,
+    )
+    payload = {
+        "run_dir": str(summary_run_dir),
+        "source_path": str(state.source_path),
+        "target_path": state.target_path,
+        "stop_reason": state.stop_reason.value if state.stop_reason else None,
+        "last_pipeline_status": state.last_pipeline_status,
+        "cycles_run": state.cycles_run,
+        "consecutive_failures": state.consecutive_failures,
+        "recorded_cost_usd": round(state.recorded_cost_usd, 4),
+        "spend_ledger_path": state.spend_ledger_path or str(
+            summary_run_dir / "spend-ledger.jsonl"
+        ),
+        "spend": spend_summary(summary_run_dir),
+        "diagnosis": diagnosis,
+        "run_dirs": list(state.run_dirs),
+        "test_craftr_runs": list(state.test_craftr_runs),
+        "verification_reports": list(state.verification_reports),
+        "baseline_run_id": state.baseline_run_id,
+        "baseline_per_feature": dict(state.baseline_per_feature),
+        "changed_files_per_cycle": list(state.changed_files_per_cycle),
+        "decisions": [_decision_summary(decision) for decision in state.decisions],
+    }
+    paths = write_factory_summary(summary_run_dir, payload)
+    state.summary_path = str(paths["json"])
+    return state
 
 
 def _append_factory_spend_event(
@@ -297,6 +362,7 @@ def _guard_budgeted_unmetered_run(
             "remediation": "rerun with --allow-unmetered or mode=claude_only",
         },
     )
+    _finish_factory_state(state, run_dir=run_dir)
     return True
 
 
@@ -1029,7 +1095,7 @@ def _run_factory_cycle_loop(
                     "max_wall_time_minutes": caps.max_wall_time_minutes,
                 },
             )
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
 
         console.print(Panel(
             f"[bold cyan]Factory cycle {cycle}/{max_cycles}[/bold cyan]",
@@ -1056,6 +1122,7 @@ def _run_factory_cycle_loop(
         state.last_pipeline_status = pipeline_state.status
         state.run_dirs.append(pipeline_state.run_dir)
         target_path = Path(pipeline_state.target_path)
+        state.target_path = str(target_path)
         run_dir = Path(pipeline_state.run_dir)
         pipeline_cost = _pipeline_cost_usd(pipeline_state)
         state.recorded_cost_usd += pipeline_cost
@@ -1085,7 +1152,7 @@ def _run_factory_cycle_loop(
             and state.recorded_cost_usd >= caps.max_budget_usd
         ):
             state.stop_reason = FactoryStopReason.BUDGET_EXHAUSTED
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
         if _stop_if_wall_time_exhausted(state, caps=caps):
             _append_factory_spend_event(
                 state,
@@ -1101,7 +1168,7 @@ def _run_factory_cycle_loop(
                     "max_wall_time_minutes": caps.max_wall_time_minutes,
                 },
             )
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
         post_cycle_sha = _git_head(target_path)
         changed_files = _files_changed_in_cycle(
             target_path,
@@ -1129,7 +1196,7 @@ def _run_factory_cycle_loop(
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]Charter unreadable after build: {exc}[/red]")
             state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
 
         if capture_baseline and state.baseline_run_id and not state.baseline_per_feature:
             feature_ids = _feature_ids_from_bundle(bundle)
@@ -1203,7 +1270,7 @@ def _run_factory_cycle_loop(
                         "failure; stopping factory before Steward review.[/red]"
                     )
                     state.stop_reason = FactoryStopReason.TEST_CRAFTR_UNAVAILABLE
-                    return state
+                    return _finish_factory_state(state, run_dir=run_dir)
             else:
                 run_id, issues, scores = _probe_test_craftr(
                     target_url=target_url,
@@ -1242,7 +1309,7 @@ def _run_factory_cycle_loop(
                     "stopping factory before Steward review.[/red]"
                 )
                 state.stop_reason = FactoryStopReason.TEST_CRAFTR_UNAVAILABLE
-                return state
+                return _finish_factory_state(state, run_dir=run_dir)
             state.last_product_debt = debt
             steward_kwargs["product_debt"] = debt
             steward_kwargs["last_test_craftr_scores"] = scores
@@ -1289,7 +1356,7 @@ def _run_factory_cycle_loop(
                     "max_wall_time_minutes": caps.max_wall_time_minutes,
                 },
             )
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
 
         # Phase B.5 — record this cycle in the cross-project capability ledger.
         try:
@@ -1329,15 +1396,15 @@ def _run_factory_cycle_loop(
                     "disposition": decision.disposition.value,
                 },
             )
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
 
         if decision.disposition == Disposition.CONTINUE:
             # CONTINUE at end-of-run = product is done.
             state.stop_reason = FactoryStopReason.STEWARD_CONTINUE_AT_END
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
         if decision.disposition == Disposition.STOP_AS_UNRECOVERABLE:
             state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
-            return state
+            return _finish_factory_state(state, run_dir=run_dir)
         if decision.disposition == Disposition.REPAIR_CURRENT_SLICE:
             # Repair = next cycle re-runs the affected features. The
             # state scanner will see the FAILED status from this cycle
@@ -1351,7 +1418,7 @@ def _run_factory_cycle_loop(
             except ValueError as exc:
                 console.print(f"[red]Steward feature insertion rejected: {exc}[/red]")
                 state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
-                return state
+                return _finish_factory_state(state, run_dir=run_dir)
             console.print(
                 f"  [green]Inserted {inserted} Steward feature(s); "
                 "re-entering pipeline[/green]"
@@ -1363,7 +1430,7 @@ def _run_factory_cycle_loop(
             except (KeyError, ValueError) as exc:
                 console.print(f"[red]Steward acceptance rewrite rejected: {exc}[/red]")
                 state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
-                return state
+                return _finish_factory_state(state, run_dir=run_dir)
             console.print(
                 f"  [green]Applied {applied} Steward amendment(s); "
                 "re-entering pipeline[/green]"
@@ -1389,9 +1456,9 @@ def _run_factory_cycle_loop(
                     f"{charter_session.summary()}[/red]"
                 )
                 state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
-                return state
+                return _finish_factory_state(state, run_dir=run_dir)
             console.print("  [green]Charter regenerated; re-entering pipeline[/green]")
             continue
 
     state.stop_reason = FactoryStopReason.BUDGET_EXHAUSTED
-    return state
+    return _finish_factory_state(state)
