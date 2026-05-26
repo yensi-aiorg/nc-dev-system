@@ -107,3 +107,6 @@ contains stable executable steps and baselines.
 With `--require-test-craftr`, the factory stops before Product Steward review if
 TestCraftr cannot produce a run or reports a local infrastructure failure. This
 prevents the build loop from silently continuing after missing verification.
+
+For unattended or overnight runs, pair this with the factory-level spend and
+loop caps in [factory-spend-caps.md](./factory-spend-caps.md).
