@@ -472,6 +472,45 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     factory.add_argument(
+        "--interaction-smoke-contract",
+        action="store_true",
+        default=False,
+        help=(
+            "In local TestCraftr mode, execute explicit interaction_steps "
+            "from the behavior contract."
+        ),
+    )
+    factory.add_argument(
+        "--run-required-commands-contract",
+        action="store_true",
+        default=False,
+        help="In local TestCraftr mode, run required_commands from the contract.",
+    )
+    factory.add_argument(
+        "--visual-checks-contract",
+        action="store_true",
+        default=False,
+        help=(
+            "In local TestCraftr mode, compare required_screenshots with "
+            "fresh browser captures."
+        ),
+    )
+    factory.add_argument(
+        "--visual-threshold",
+        type=float,
+        default=0.01,
+        help="Maximum allowed image diff ratio for local visual checks.",
+    )
+    factory.add_argument(
+        "--persona-pass-contract",
+        action="store_true",
+        default=False,
+        help=(
+            "In local TestCraftr mode, include deterministic "
+            "user/destroyer/inspector summaries."
+        ),
+    )
+    factory.add_argument(
         "--test-craftr-url",
         default="http://localhost:16630",
         help="TestCraftr base URL.",
@@ -682,6 +721,8 @@ def main(argv: list[str] | None = None) -> int:
                 probe_test_craftr=True,
                 test_craftr_mode="local",
                 browser_smoke_contract=True,
+                run_required_commands_contract=True,
+                persona_pass_contract=True,
                 target_url=args.base_url,
             )
             console.print(
@@ -718,6 +759,11 @@ def main(argv: list[str] | None = None) -> int:
                 test_craftr_core_path=args.test_craftr_core_path,
                 allow_unexecuted_contract=args.allow_unexecuted_contract,
                 browser_smoke_contract=args.browser_smoke_contract,
+                interaction_smoke_contract=args.interaction_smoke_contract,
+                run_required_commands_contract=args.run_required_commands_contract,
+                visual_checks_contract=args.visual_checks_contract,
+                visual_threshold=args.visual_threshold,
+                persona_pass_contract=args.persona_pass_contract,
                 test_craftr_url=args.test_craftr_url,
                 target_url=args.target_url,
             )
@@ -793,6 +839,11 @@ def main(argv: list[str] | None = None) -> int:
             test_craftr_core_path=args.test_craftr_core_path,
             allow_unexecuted_contract=args.allow_unexecuted_contract,
             browser_smoke_contract=args.browser_smoke_contract,
+            interaction_smoke_contract=args.interaction_smoke_contract,
+            run_required_commands_contract=args.run_required_commands_contract,
+            visual_checks_contract=args.visual_checks_contract,
+            visual_threshold=args.visual_threshold,
+            persona_pass_contract=args.persona_pass_contract,
             test_craftr_url=args.test_craftr_url,
             target_url=args.target_url,
         )

@@ -751,6 +751,11 @@ def test_run_local_test_craftr_passes_browser_smoke_flag(monkeypatch, tmp_path):
         target_repo_path=tmp_path,
         test_craftr_core_path=core,
         browser_smoke=True,
+        interaction_smoke=True,
+        run_required_commands=True,
+        visual_checks=True,
+        visual_threshold=0.25,
+        persona_pass=True,
     )
 
     assert run_id == "tc-local-1"
@@ -759,6 +764,11 @@ def test_run_local_test_craftr_passes_browser_smoke_flag(monkeypatch, tmp_path):
     assert report_path
     assert infra_failed is False
     assert "--browser-smoke" in captured["cmd"]
+    assert "--interaction-smoke" in captured["cmd"]
+    assert "--run-required-commands" in captured["cmd"]
+    assert "--visual-checks" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("--visual-threshold") + 1] == "0.25"
+    assert "--persona-pass" in captured["cmd"]
 
 
 def test_pin_per_feature_uses_single_probe_for_all_features(monkeypatch, tmp_path):

@@ -218,6 +218,8 @@ def test_full_quality_gate_routes_through_factory(monkeypatch, tmp_path):
     assert captured["probe_test_craftr"] is True
     assert captured["max_cycles"] == 3
     assert captured["browser_smoke_contract"] is True
+    assert captured["run_required_commands_contract"] is True
+    assert captured["persona_pass_contract"] is True
 
 
 def test_full_legacy_quality_gate_routes_through_orchestrator(monkeypatch, tmp_path):
@@ -299,6 +301,10 @@ def test_cli_parses_factory_baseline_flags():
     assert args.probe_test_craftr is True
     assert args.test_craftr_mode == "local"
     assert args.browser_smoke_contract is False
+    assert args.interaction_smoke_contract is False
+    assert args.run_required_commands_contract is False
+    assert args.visual_checks_contract is False
+    assert args.persona_pass_contract is False
     assert args.test_craftr_url == "http://localhost:16630"
     assert args.target_url == "http://localhost:23000"
 
@@ -335,6 +341,10 @@ def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
     assert captured["capture_baseline"] is False
     assert captured["test_craftr_mode"] == "local"
     assert captured["browser_smoke_contract"] is False
+    assert captured["interaction_smoke_contract"] is False
+    assert captured["run_required_commands_contract"] is False
+    assert captured["visual_checks_contract"] is False
+    assert captured["persona_pass_contract"] is False
 
 
 def test_cli_factory_from_issues_requires_target_repo(tmp_path):
