@@ -41,6 +41,7 @@ python -m tc_core.cli run \
   --contract /path/to/behavior-contract.v1.json \
   --url http://localhost:3000 \
   --project-path /path/to/app \
+  --browser-smoke \
   --out .testcraftr/runs/local-001
 ```
 
@@ -52,8 +53,10 @@ This writes:
 ```
 
 The local runner currently executes deterministic route, file, and test
-obligations. Browser personas, visual inspection, and adversarial flows remain
-in the server path until they are moved behind the same file-mode runner.
+obligations. With `--browser-smoke`, it also opens required routes in Playwright
+and fails on console errors, failed network requests, or blank render output.
+Browser personas, visual inspection, and adversarial flows remain in the server
+path until they are moved behind the same file-mode runner.
 
 ## Fail-Closed Factory Runs
 
@@ -65,12 +68,16 @@ ncdev factory \
   --target-repo /path/to/app \
   --probe-test-craftr \
   --test-craftr-mode local \
+  --browser-smoke-contract \
   --require-test-craftr
 ```
 
 In CLI runs, `--test-craftr-mode local` is the default. NC Dev finds the local
 runner through `--test-craftr-core-path`, `TEST_CRAFTR_CORE_PATH`, or a sibling
 `test-craftr/tc-core` checkout.
+
+`ncdev full --quality-gate` enables local browser smoke verification by default
+because that command is explicitly asking for an end-to-end gate.
 
 With `--require-test-craftr`, the factory stops before Product Steward review if
 TestCraftr cannot produce a run or reports a local infrastructure failure. This

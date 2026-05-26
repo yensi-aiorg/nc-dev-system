@@ -322,6 +322,7 @@ def _run_local_test_craftr(
     test_craftr_core_path: str | Path | None = None,
     timeout_seconds: float = 10.0,
     allow_unexecuted: bool = False,
+    browser_smoke: bool = False,
 ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any], str | None, bool]:
     """Run TestCraftr's local contract runner and load its report."""
 
@@ -355,6 +356,8 @@ def _run_local_test_craftr(
         cmd.extend(["--project-path", str(target_repo_path)])
     if allow_unexecuted:
         cmd.append("--allow-unexecuted")
+    if browser_smoke:
+        cmd.append("--browser-smoke")
 
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
@@ -552,6 +555,7 @@ def run_factory(
     test_craftr_mode: str = "http",
     test_craftr_core_path: str | Path | None = None,
     allow_unexecuted_contract: bool = False,
+    browser_smoke_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -597,6 +601,7 @@ def run_factory(
         test_craftr_mode=test_craftr_mode,
         test_craftr_core_path=test_craftr_core_path,
         allow_unexecuted_contract=allow_unexecuted_contract,
+        browser_smoke_contract=browser_smoke_contract,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=project_id,
@@ -620,6 +625,7 @@ def run_factory_from_issues(
     test_craftr_mode: str = "http",
     test_craftr_core_path: str | Path | None = None,
     allow_unexecuted_contract: bool = False,
+    browser_smoke_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -658,6 +664,7 @@ def run_factory_from_issues(
         test_craftr_mode=test_craftr_mode,
         test_craftr_core_path=test_craftr_core_path,
         allow_unexecuted_contract=allow_unexecuted_contract,
+        browser_smoke_contract=browser_smoke_contract,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
@@ -713,6 +720,7 @@ def run_factory_with_bundle(
         test_craftr_mode="http",
         test_craftr_core_path=None,
         allow_unexecuted_contract=False,
+        browser_smoke_contract=False,
         test_craftr_url="http://localhost:16630",
         target_url="http://localhost:23000",
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
@@ -738,6 +746,7 @@ def _run_factory_cycle_loop(
     test_craftr_mode: str,
     test_craftr_core_path: str | Path | None,
     allow_unexecuted_contract: bool,
+    browser_smoke_contract: bool,
     test_craftr_url: str,
     target_url: str,
     project_id: str,
@@ -836,6 +845,7 @@ def _run_factory_cycle_loop(
                         target_repo_path=target_path,
                         test_craftr_core_path=test_craftr_core_path,
                         allow_unexecuted=allow_unexecuted_contract,
+                        browser_smoke=browser_smoke_contract,
                     )
                 )
                 if report_path:

@@ -713,6 +713,54 @@ def test_factory_local_test_craftr_required_stops_on_infrastructure_failure(
     steward.assert_not_called()
 
 
+def test_run_local_test_craftr_passes_browser_smoke_flag(monkeypatch, tmp_path):
+    from ncdev import factory as fac
+
+    core = tmp_path / "tc-core"
+    (core / "tc_core" / "cli").mkdir(parents=True)
+    (core / "tc_core" / "cli" / "__main__.py").write_text("", encoding="utf-8")
+    contract = tmp_path / "behavior-contract.v1.json"
+    contract.write_text("{}", encoding="utf-8")
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        out_dir = Path(cmd[cmd.index("--out") + 1])
+        out_dir.mkdir(parents=True)
+        (out_dir / "verification-report.v1.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "tc-local-1",
+                    "contract_id": "bc-1",
+                    "target_url": "http://localhost:3000",
+                    "verdict": "pass",
+                    "suggested_action": "continue",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(fac.subprocess, "run", fake_run)
+
+    run_id, issues, scores, report_path, infra_failed = fac._run_local_test_craftr(
+        contract_path=contract,
+        target_url="http://localhost:3000",
+        out_dir=tmp_path / "out",
+        workspace=tmp_path,
+        target_repo_path=tmp_path,
+        test_craftr_core_path=core,
+        browser_smoke=True,
+    )
+
+    assert run_id == "tc-local-1"
+    assert issues == []
+    assert scores["verdict"] == "pass"
+    assert report_path
+    assert infra_failed is False
+    assert "--browser-smoke" in captured["cmd"]
+
+
 def test_pin_per_feature_uses_single_probe_for_all_features(monkeypatch, tmp_path):
     from ncdev import factory as fac
 
