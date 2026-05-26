@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -29,6 +32,12 @@ from typing import Any
 from rich.console import Console
 from rich.panel import Panel
 
+from ncdev.contracts.verification_report import (
+    VerificationIssue,
+    VerificationReport,
+    load_verification_report,
+    summarize_verification_report,
+)
 from ncdev.core.config import NCDevConfig
 from ncdev.pipeline.charter import generate_charter, load_charter, write_charter
 from ncdev.pipeline.charter_mutation import (
@@ -70,6 +79,7 @@ class FactoryRunState:
     decisions: list[StewardDecision] = field(default_factory=list)
     run_dirs: list[str] = field(default_factory=list)
     test_craftr_runs: list[str] = field(default_factory=list)
+    verification_reports: list[str] = field(default_factory=list)
     baseline_run_id: str | None = None
     baseline_per_feature: dict[str, str] = field(default_factory=dict)
     last_product_debt: list[ProductDebt] = field(default_factory=list)
@@ -221,6 +231,170 @@ def _probe_test_craftr(
     except Exception as exc:  # noqa: BLE001
         logger.warning("TestCraftr probe failed: %s", exc)
         return None, [], {}
+
+
+def _resolve_test_craftr_core_path(
+    *,
+    explicit_path: str | Path | None,
+    workspace: Path,
+    target_repo_path: Path | None,
+) -> Path | None:
+    """Find the lightweight TestCraftr CLI package."""
+
+    candidates: list[Path] = []
+    if explicit_path:
+        candidates.append(Path(explicit_path))
+    env_path = os.getenv("TEST_CRAFTR_CORE_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(workspace.resolve().parent / "test-craftr" / "tc-core")
+    if target_repo_path:
+        candidates.append(
+            target_repo_path.resolve().parent / "test-craftr" / "tc-core"
+        )
+    try:
+        candidates.append(
+            Path(__file__).resolve().parents[3] / "test-craftr" / "tc-core"
+        )
+    except IndexError:
+        pass
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if (resolved / "tc_core" / "cli" / "__main__.py").exists():
+            return resolved
+    return None
+
+
+def _verification_issue_to_debt_input(
+    issue: VerificationIssue,
+    *,
+    report: VerificationReport,
+) -> dict[str, Any]:
+    return {
+        "id": issue.issue_id,
+        "title": issue.title,
+        "type": issue.issue_type or "functionality",
+        "category": issue.issue_type or "functionality",
+        "feature_id": issue.feature_id,
+        "context": {
+            "url": report.target_url,
+            "scenario_id": issue.scenario_id,
+            "expected": issue.expected,
+            "actual": issue.actual,
+        },
+        "evidence": list(issue.evidence_refs),
+    }
+
+
+def _verification_report_to_debt_inputs(
+    report: VerificationReport,
+) -> list[dict[str, Any]]:
+    return [
+        _verification_issue_to_debt_input(issue, report=report)
+        for issue in report.issues
+    ]
+
+
+def _local_test_craftr_scores(
+    report: VerificationReport,
+    *,
+    report_path: Path,
+) -> dict[str, Any]:
+    summary = summarize_verification_report(report)
+    return {
+        **summary,
+        "report_path": str(report_path),
+    }
+
+
+def _run_local_test_craftr(
+    *,
+    contract_path: Path,
+    target_url: str,
+    out_dir: Path,
+    workspace: Path,
+    target_repo_path: Path | None,
+    test_craftr_core_path: str | Path | None = None,
+    timeout_seconds: float = 10.0,
+    allow_unexecuted: bool = False,
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any], str | None, bool]:
+    """Run TestCraftr's local contract runner and load its report."""
+
+    core_path = _resolve_test_craftr_core_path(
+        explicit_path=test_craftr_core_path,
+        workspace=workspace,
+        target_repo_path=target_repo_path,
+    )
+    if core_path is None:
+        logger.warning("Local TestCraftr runner not found")
+        return None, [], {}, None, False
+    if not contract_path.exists():
+        logger.warning("Behavior contract not found: %s", contract_path)
+        return None, [], {}, None, False
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "tc_core.cli",
+        "run",
+        "--contract",
+        str(contract_path),
+        "--url",
+        target_url,
+        "--out",
+        str(out_dir),
+        "--timeout",
+        str(timeout_seconds),
+    ]
+    if target_repo_path:
+        cmd.extend(["--project-path", str(target_repo_path)])
+    if allow_unexecuted:
+        cmd.append("--allow-unexecuted")
+
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(core_path)
+        if not existing_pythonpath
+        else f"{core_path}{os.pathsep}{existing_pythonpath}"
+    )
+    try:
+        subprocess.run(
+            cmd,
+            cwd=str(core_path),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_seconds + 5.0, 15.0),
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("Local TestCraftr runner failed: %s", exc)
+        return None, [], {}, None, False
+
+    report_path = out_dir / "verification-report.v1.json"
+    if not report_path.exists():
+        logger.warning("Local TestCraftr produced no report at %s", report_path)
+        return None, [], {}, None, False
+
+    try:
+        report = load_verification_report(report_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Local TestCraftr report unreadable: %s", exc)
+        return None, [], {}, str(report_path), False
+
+    return (
+        report.run_id,
+        _verification_report_to_debt_inputs(report),
+        _local_test_craftr_scores(report, report_path=report_path),
+        str(report_path),
+        report.is_infrastructure_failure,
+    )
 
 
 def _post_baseline_pin(test_craftr_url: str, payload: dict[str, Any]) -> bool:
@@ -375,6 +549,9 @@ def run_factory(
     probe_test_craftr: bool = False,
     require_test_craftr: bool = False,
     capture_baseline: bool = False,
+    test_craftr_mode: str = "http",
+    test_craftr_core_path: str | Path | None = None,
+    allow_unexecuted_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -417,6 +594,9 @@ def run_factory(
         probe_test_craftr=probe_test_craftr,
         require_test_craftr=require_test_craftr,
         capture_baseline=capture_baseline,
+        test_craftr_mode=test_craftr_mode,
+        test_craftr_core_path=test_craftr_core_path,
+        allow_unexecuted_contract=allow_unexecuted_contract,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=project_id,
@@ -437,6 +617,9 @@ def run_factory_from_issues(
     config: NCDevConfig | None = None,
     probe_test_craftr: bool = False,
     require_test_craftr: bool = False,
+    test_craftr_mode: str = "http",
+    test_craftr_core_path: str | Path | None = None,
+    allow_unexecuted_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
     target_url: str = "http://localhost:23000",
 ) -> FactoryRunState:
@@ -472,6 +655,9 @@ def run_factory_from_issues(
         probe_test_craftr=probe_test_craftr,
         require_test_craftr=require_test_craftr,
         capture_baseline=False,
+        test_craftr_mode=test_craftr_mode,
+        test_craftr_core_path=test_craftr_core_path,
+        allow_unexecuted_contract=allow_unexecuted_contract,
         test_craftr_url=test_craftr_url,
         target_url=target_url,
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
@@ -524,6 +710,9 @@ def run_factory_with_bundle(
         probe_test_craftr=False,
         require_test_craftr=False,
         capture_baseline=False,
+        test_craftr_mode="http",
+        test_craftr_core_path=None,
+        allow_unexecuted_contract=False,
         test_craftr_url="http://localhost:16630",
         target_url="http://localhost:23000",
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
@@ -546,6 +735,9 @@ def _run_factory_cycle_loop(
     probe_test_craftr: bool,
     require_test_craftr: bool,
     capture_baseline: bool,
+    test_craftr_mode: str,
+    test_craftr_core_path: str | Path | None,
+    allow_unexecuted_contract: bool,
     test_craftr_url: str,
     target_url: str,
     project_id: str,
@@ -634,16 +826,38 @@ def _run_factory_cycle_loop(
             probe_test_craftr
             and pipeline_state.status in {"passed", "partial", "integration_failed"}
         ):
-            run_id, issues, scores = _probe_test_craftr(
-                target_url=target_url,
-                source_path=source_path,
-                cycle=cycle,
-                project_id=project_id,
-                test_craftr_url=test_craftr_url,
-                baseline_run_id=state.baseline_run_id,
-                baseline_per_feature=state.baseline_per_feature or None,
-                changed_files=changed_files,
-            )
+            if test_craftr_mode == "local":
+                run_id, issues, scores, report_path, infra_failed = (
+                    _run_local_test_craftr(
+                        contract_path=run_dir / "outputs" / "behavior-contract.v1.json",
+                        target_url=target_url,
+                        out_dir=run_dir / "test-craftr" / f"cycle-{cycle}",
+                        workspace=workspace,
+                        target_repo_path=target_path,
+                        test_craftr_core_path=test_craftr_core_path,
+                        allow_unexecuted=allow_unexecuted_contract,
+                    )
+                )
+                if report_path:
+                    state.verification_reports.append(report_path)
+                if infra_failed and require_test_craftr:
+                    console.print(
+                        "[red]Local TestCraftr verification hit an infrastructure "
+                        "failure; stopping factory before Steward review.[/red]"
+                    )
+                    state.stop_reason = FactoryStopReason.TEST_CRAFTR_UNAVAILABLE
+                    return state
+            else:
+                run_id, issues, scores = _probe_test_craftr(
+                    target_url=target_url,
+                    source_path=source_path,
+                    cycle=cycle,
+                    project_id=project_id,
+                    test_craftr_url=test_craftr_url,
+                    baseline_run_id=state.baseline_run_id,
+                    baseline_per_feature=state.baseline_per_feature or None,
+                    changed_files=changed_files,
+                )
             debt = classify_issues_to_debt(
                 issues,
                 known_routes=_known_routes_from_bundle(bundle),

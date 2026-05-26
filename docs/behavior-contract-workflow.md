@@ -40,6 +40,7 @@ cd /Users/nrupal/dev/yensi/dev/test-craftr/tc-core
 python -m tc_core.cli run \
   --contract /path/to/behavior-contract.v1.json \
   --url http://localhost:3000 \
+  --project-path /path/to/app \
   --out .testcraftr/runs/local-001
 ```
 
@@ -50,9 +51,9 @@ This writes:
 .testcraftr/runs/local-001/issues.md
 ```
 
-The local runner currently executes deterministic route obligations. Browser
-personas, visual inspection, and adversarial flows remain in the server path
-until they are moved behind the same file-mode runner.
+The local runner currently executes deterministic route, file, and test
+obligations. Browser personas, visual inspection, and adversarial flows remain
+in the server path until they are moved behind the same file-mode runner.
 
 ## Fail-Closed Factory Runs
 
@@ -63,10 +64,14 @@ ncdev factory \
   --source ./PRD.md \
   --target-repo /path/to/app \
   --probe-test-craftr \
+  --test-craftr-mode local \
   --require-test-craftr
 ```
 
-With `--require-test-craftr`, the factory stops before Product Steward review
-if TestCraftr cannot produce a run. This prevents the build loop from silently
-continuing after missing verification.
+In CLI runs, `--test-craftr-mode local` is the default. NC Dev finds the local
+runner through `--test-craftr-core-path`, `TEST_CRAFTR_CORE_PATH`, or a sibling
+`test-craftr/tc-core` checkout.
 
+With `--require-test-craftr`, the factory stops before Product Steward review if
+TestCraftr cannot produce a run or reports a local infrastructure failure. This
+prevents the build loop from silently continuing after missing verification.

@@ -296,6 +296,7 @@ def test_cli_parses_factory_baseline_flags():
     ])
     assert args.baseline is True
     assert args.probe_test_craftr is True
+    assert args.test_craftr_mode == "local"
     assert args.test_craftr_url == "http://localhost:16630"
     assert args.target_url == "http://localhost:23000"
 
@@ -330,6 +331,7 @@ def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
     assert captured["source_path"] == prd.resolve()
     assert captured["probe_test_craftr"] is False
     assert captured["capture_baseline"] is False
+    assert captured["test_craftr_mode"] == "local"
 
 
 def test_cli_factory_from_issues_requires_target_repo(tmp_path):

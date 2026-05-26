@@ -589,6 +589,130 @@ def test_factory_can_require_test_craftr_probe(monkeypatch, tmp_path):
     steward.assert_not_called()
 
 
+def test_factory_local_test_craftr_passes_report_to_steward(monkeypatch, tmp_path):
+    """Local contract reports become Steward scores and ProductDebt."""
+    from ncdev import factory as fac
+    from ncdev.pipeline.product_debt import (
+        DebtType,
+        ProductDebt,
+        SuggestedDisposition,
+    )
+
+    fake_state = _factory_pipeline_state(tmp_path)
+    captured_steward_kwargs = {}
+    report_path = (
+        tmp_path
+        / "run"
+        / "test-craftr"
+        / "cycle-1"
+        / "verification-report.v1.json"
+    )
+
+    fake_debt = [
+        ProductDebt(
+            debt_id="d001-behavior",
+            debt_type=DebtType.BROKEN_FLOW,
+            title="Required behavior failed",
+            description="d",
+            suggested_disposition=SuggestedDisposition.FEATURE_RERUN,
+        )
+    ]
+
+    def fake_steward(**kwargs):
+        captured_steward_kwargs.update(kwargs)
+        return StewardDecision(disposition=Disposition.CONTINUE, reasoning="ok")
+
+    monkeypatch.setattr(fac, "run_pipeline", lambda **kw: fake_state)
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(fac, "run_product_steward", fake_steward)
+    monkeypatch.setattr(
+        fac,
+        "_run_local_test_craftr",
+        lambda **kw: (
+            "tc-local-1",
+            [
+                {
+                    "id": "issue-1",
+                    "title": "Required behavior failed",
+                    "type": "functionality",
+                    "context": {"url": "http://localhost:23000/invite"},
+                }
+            ],
+            {"verdict": "fail", "blocking_issue_count": 1},
+            str(report_path),
+            False,
+        ),
+    )
+    monkeypatch.setattr(
+        fac,
+        "classify_issues_to_debt",
+        lambda issues, known_routes=None: fake_debt,
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        probe_test_craftr=True,
+        test_craftr_mode="local",
+    )
+
+    assert result.test_craftr_runs == ["tc-local-1"]
+    assert result.verification_reports == [str(report_path)]
+    assert result.last_product_debt == fake_debt
+    assert captured_steward_kwargs["product_debt"] == fake_debt
+    assert captured_steward_kwargs["last_test_craftr_scores"]["verdict"] == "fail"
+
+
+def test_factory_local_test_craftr_required_stops_on_infrastructure_failure(
+    monkeypatch,
+    tmp_path,
+):
+    from ncdev import factory as fac
+
+    fake_state = _factory_pipeline_state(tmp_path)
+    steward = MagicMock()
+
+    monkeypatch.setattr(fac, "run_pipeline", lambda **kw: fake_state)
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(fac, "run_product_steward", steward)
+    monkeypatch.setattr(
+        fac,
+        "_run_local_test_craftr",
+        lambda **kw: (
+            "tc-local-1",
+            [],
+            {"verdict": "infrastructure_failure"},
+            str(tmp_path / "report.json"),
+            True,
+        ),
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        probe_test_craftr=True,
+        require_test_craftr=True,
+        test_craftr_mode="local",
+    )
+
+    assert result.stop_reason == FactoryStopReason.TEST_CRAFTR_UNAVAILABLE
+    steward.assert_not_called()
+
+
 def test_pin_per_feature_uses_single_probe_for_all_features(monkeypatch, tmp_path):
     from ncdev import factory as fac
 

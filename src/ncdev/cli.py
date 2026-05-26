@@ -437,6 +437,32 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     factory.add_argument(
+        "--test-craftr-mode",
+        choices=["local", "http"],
+        default="local",
+        help=(
+            "TestCraftr execution mode. 'local' runs the file-based "
+            "behavior contract verifier; 'http' uses the server API."
+        ),
+    )
+    factory.add_argument(
+        "--test-craftr-core-path",
+        default=None,
+        help=(
+            "Path to test-craftr/tc-core for --test-craftr-mode=local. "
+            "Defaults to TEST_CRAFTR_CORE_PATH or a sibling checkout."
+        ),
+    )
+    factory.add_argument(
+        "--allow-unexecuted-contract",
+        action="store_true",
+        default=False,
+        help=(
+            "In local TestCraftr mode, do not fail scenarios that have no "
+            "currently executable obligations."
+        ),
+    )
+    factory.add_argument(
         "--test-craftr-url",
         default="http://localhost:16630",
         help="TestCraftr base URL.",
@@ -645,6 +671,7 @@ def main(argv: list[str] | None = None) -> int:
                 builder_timeout=args.timeout,
                 max_budget_usd=getattr(args, "max_budget_usd", None),
                 probe_test_craftr=True,
+                test_craftr_mode="local",
                 target_url=args.base_url,
             )
             console.print(
@@ -677,6 +704,9 @@ def main(argv: list[str] | None = None) -> int:
                 max_budget_usd=args.max_budget_usd,
                 probe_test_craftr=args.probe_test_craftr,
                 require_test_craftr=args.require_test_craftr,
+                test_craftr_mode=args.test_craftr_mode,
+                test_craftr_core_path=args.test_craftr_core_path,
+                allow_unexecuted_contract=args.allow_unexecuted_contract,
                 test_craftr_url=args.test_craftr_url,
                 target_url=args.target_url,
             )
@@ -748,6 +778,9 @@ def main(argv: list[str] | None = None) -> int:
             probe_test_craftr=args.probe_test_craftr,
             require_test_craftr=args.require_test_craftr,
             capture_baseline=args.baseline,
+            test_craftr_mode=args.test_craftr_mode,
+            test_craftr_core_path=args.test_craftr_core_path,
+            allow_unexecuted_contract=args.allow_unexecuted_contract,
             test_craftr_url=args.test_craftr_url,
             target_url=args.target_url,
         )
