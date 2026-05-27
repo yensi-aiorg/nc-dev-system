@@ -299,9 +299,9 @@ def _infer_ports(
     if compose_ports:
         return compose_ports
     if has_frontend:
-        ports["frontend"] = 23000
+        ports["frontend"] = 23300
     if has_backend:
-        ports["backend"] = 23001
+        ports["backend"] = 23301
     return ports
 
 

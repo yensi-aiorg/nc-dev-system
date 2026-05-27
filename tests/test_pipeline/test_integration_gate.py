@@ -26,7 +26,7 @@ from ncdev.pipeline.models import (
 
 def _bundle(
     *,
-    backend_health_url: str = "http://localhost:23001/api/health",
+    backend_health_url: str = "http://localhost:23301/api/health",
     backend_test_command: str = "",
     frontend_test_command: str = "",
     e2e_test_command: str = "",
@@ -63,7 +63,7 @@ def _seed_manifest(target: Path, feature_id: str) -> None:
 
 
 def test_derive_base_url_strips_path() -> None:
-    assert _derive_base_url("http://localhost:23001/api/health") == "http://localhost:23001"
+    assert _derive_base_url("http://localhost:23301/api/health") == "http://localhost:23301"
     assert _derive_base_url("https://api.example.com/v1/healthz") == "https://api.example.com"
 
 
@@ -76,8 +76,8 @@ def test_resolve_url_passes_through_absolute() -> None:
 
 
 def test_resolve_url_joins_relative_to_base() -> None:
-    assert _resolve_url("/api/auth/login", "http://localhost:23001") == "http://localhost:23001/api/auth/login"
-    assert _resolve_url("api/auth/login", "http://localhost:23001/") == "http://localhost:23001/api/auth/login"
+    assert _resolve_url("/api/auth/login", "http://localhost:23301") == "http://localhost:23301/api/auth/login"
+    assert _resolve_url("api/auth/login", "http://localhost:23301/") == "http://localhost:23301/api/auth/login"
 
 
 def test_resolve_url_returns_none_when_no_base() -> None:
@@ -215,8 +215,8 @@ def test_gate_probes_required_routes_for_passed_features(tmp_path: Path) -> None
 
     assert result.routes_probed == 2
     assert result.passed is True
-    assert "http://localhost:23001/api/auth/login" in probed
-    assert "http://localhost:23001/api/auth/logout" in probed
+    assert "http://localhost:23301/api/auth/login" in probed
+    assert "http://localhost:23301/api/auth/logout" in probed
 
 
 def test_gate_fails_when_route_unreachable(tmp_path: Path) -> None:

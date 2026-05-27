@@ -149,7 +149,7 @@ These standards are derived from `/Users/nrupal/dev/yensi/dev/docs-only/technica
 
 - Docker Compose first
 - local development via containerized services and hot reload where appropriate
-- custom sequential ports starting at `23000`
+- custom sequential ports starting at `23300`
 - no default ports such as `3000`, `8000`, `8080`, `27017`, or `5432`
 
 ### Authentication Standard

@@ -169,7 +169,7 @@ requirements and delivers tested, production-ready codebases.
 - Database: MongoDB (Motor driver), Redis (caching/queues)
 - Testing: Playwright (E2E), Vitest (frontend unit), pytest (backend unit)
 - Infrastructure: Docker Compose
-- Ports: Sequential from 23000+ (never use 3000, 5000, 8000, 27017)
+- Ports: Sequential from 23300+ (never use 3000, 5000, 8000, 27017)
 
 ## AI Integration (Adapter Pattern - Mandatory)
 
@@ -535,7 +535,7 @@ Build completes
     │      Features: 8/8 implemented, 7/8 tests passing
     │      Screenshots: [inline gallery]
     │      Known issues: [list]
-    │      To run: docker compose up -d && open http://localhost:23000"
+    │      To run: docker compose up -d && open http://localhost:23300"
     │
     └──→ Delivered via:
           ├── Claude Code Web → appears in conversation

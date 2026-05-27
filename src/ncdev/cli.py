@@ -54,7 +54,7 @@ Recommended flow:
    ncdev factory --source ./docs/README.md
 
 2. Single-pass build (debug / one-shot mode)
-   ncdev full --source ./docs/README.md --base-url http://localhost:23000
+   ncdev full --source ./docs/README.md --base-url http://localhost:23300
 
 3. Factory build with explicit target repo
    ncdev factory --source /path/to/docs --target-repo /path/to/repo
@@ -321,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--source", required=True, help="Path to source requirements or spec")
     full.add_argument("--target-repo", default=None, help="Existing target repository")
     full.add_argument("--workspace", default=None)
-    full.add_argument("--base-url", default="http://localhost:23000")
+    full.add_argument("--base-url", default="http://localhost:23300")
     full.add_argument("--dry-run", action="store_true", help="Do not invoke builders")
     full.add_argument("--model", default="auto",
                       help="Claude model: 'auto' (default, newest) or an explicit pin like claude-opus-4-7")
@@ -578,7 +578,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     factory.add_argument(
         "--target-url",
-        default="http://localhost:23000",
+        default="http://localhost:23300",
         help="URL of the running target app (for TestCraftr probes).",
     )
 

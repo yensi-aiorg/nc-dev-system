@@ -38,13 +38,13 @@ def _fake_charter_bundle() -> CharterBundle:
             language_backend="python",
             language_frontend="typescript",
             deployment_target="docker",
-            ports={"frontend": 23000, "backend": 23001, "mongodb": 23002},
+            ports={"frontend": 23300, "backend": 23301, "mongodb": 23302},
             design_archetype="Technical Elegance",
             design_system_source="stitch",
         ),
         verification=VerificationContract(
-            backend_health_url="http://localhost:23001/api/health",
-            frontend_url="http://localhost:23000",
+            backend_health_url="http://localhost:23301/api/health",
+            frontend_url="http://localhost:23300",
             backend_test_command="cd backend && pytest -q",
             frontend_test_command="cd frontend && npm test -- --run",
             start_command="docker compose up -d",
@@ -126,6 +126,211 @@ def test_prompt_includes_schema_excerpts(tmp_path: Path):
     assert "backend_framework" in prompt
     assert "design_archetype" in prompt
     assert "required_screenshots" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Stack-resolution rules — PRD wins, house defaults fill silence
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_documents_keystone_vs_standalone_auth(tmp_path: Path):
+    """Charter must instruct the LLM to detect Keystone in the PRD and
+    fall back to standalone Keycloak otherwise. Without this the LLM
+    has no way to know about the in-house Keystone platform and will
+    default to whatever it has seen most often (raw Keycloak)."""
+    prompt = build_charter_prompt(
+        prd_path=tmp_path / "prd.md", target_repo=None, output_dir=tmp_path,
+    )
+    assert "keystone" in prompt.lower()
+    assert "keystone-sdk" in prompt
+    assert "@keystone/react" in prompt
+    assert "keycloak_standalone" in prompt
+    # Standalone mode is the mock layer — not a hand-written stub
+    assert "standalone_mode" in prompt
+    assert "dev_users" in prompt
+
+
+def test_prompt_documents_app_owns_auth_ui_invariant(tmp_path: Path):
+    """The application always renders auth UI; Keycloak's hosted login
+    page is never shown. This invariant must be stated in the prompt so
+    the LLM doesn't default to redirecting users to Keycloak's UI."""
+    prompt = build_charter_prompt(
+        prd_path=tmp_path / "prd.md", target_repo=None, output_dir=tmp_path,
+    )
+    assert "auth_ui_owner" in prompt
+    assert "application" in prompt
+    # Direct-grant guidance must appear for both Keystone and standalone
+    # paths — the LLM needs to know to configure clients accordingly.
+    assert "standardFlowEnabled" in prompt
+    assert "directAccessGrantsEnabled" in prompt
+    # Must explicitly warn against the Keycloak login page
+    assert "Keycloak's hosted login page" in prompt or "Keycloak login page" in prompt
+
+
+def test_prompt_documents_social_auth_off_by_default(tmp_path: Path):
+    """Social auth is opt-in via PRD only. The prompt must instruct the
+    LLM not to enable Google/etc unless the PRD explicitly asks."""
+    prompt = build_charter_prompt(
+        prd_path=tmp_path / "prd.md", target_repo=None, output_dir=tmp_path,
+    )
+    assert "social_auth_providers" in prompt
+    assert "OFF by default" in prompt
+    # Keystone's BFF flow paths must be referenced so the LLM knows
+    # the integration surface
+    assert "/api/auth/google/start" in prompt
+
+
+def test_prompt_documents_frontend_state_house_default(tmp_path: Path):
+    """When the PRD is silent on frontend state / data-fetching, the
+    house default (Zustand + Axios with interceptors) is used instead
+    of guessing React Query."""
+    prompt = build_charter_prompt(
+        prd_path=tmp_path / "prd.md", target_repo=None, output_dir=tmp_path,
+    )
+    assert "frontend_state" in prompt
+    assert "frontend_data_fetching" in prompt
+    assert "'zustand'" in prompt
+    assert "'axios_with_interceptors'" in prompt
+    # PRD-wins instruction must be present (line wrapping may insert
+    # whitespace between words — check for the distinctive token)
+    assert "verbatim" in prompt
+    assert "PRD names" in prompt
+
+
+def test_prompt_uses_house_default_port_base(tmp_path: Path):
+    """Port allocation guidance in the prompt must reflect the configured
+    house_defaults.port_base (23300 by default)."""
+    prompt = build_charter_prompt(
+        prd_path=tmp_path / "prd.md", target_repo=None, output_dir=tmp_path,
+    )
+    assert "23300" in prompt
+    assert "23301" in prompt
+    assert "23304" in prompt
+    assert "23305" in prompt
+
+
+def test_prompt_port_base_honours_config_override(tmp_path: Path):
+    """A non-default house_defaults.port_base must flow through to the
+    prompt — confirms the budget-lever character of the config."""
+    from ncdev.core.config import (
+        HouseDefaultsConfig,
+        NCDevConfig,
+    )
+
+    cfg = NCDevConfig(
+        house_defaults=HouseDefaultsConfig(port_base=24500),
+    )
+    prompt = build_charter_prompt(
+        prd_path=tmp_path / "prd.md",
+        target_repo=None,
+        output_dir=tmp_path,
+        config=cfg,
+    )
+    assert "24500" in prompt
+    assert "24505" in prompt
+    # Old base must not leak through
+    assert "23300" not in prompt
+    assert "23304" not in prompt
+
+
+def test_prompt_frontend_state_fallback_honours_config_override(tmp_path: Path):
+    """If a project shop changes the house default state library, the
+    prompt must reflect that — not the original Zustand text."""
+    from ncdev.core.config import (
+        HouseDefaultsConfig,
+        HouseDefaultsFrontendConfig,
+        NCDevConfig,
+    )
+
+    cfg = NCDevConfig(
+        house_defaults=HouseDefaultsConfig(
+            frontend=HouseDefaultsFrontendConfig(
+                state_fallback="jotai",
+                data_fetching_fallback="tanstack_query",
+            ),
+        ),
+    )
+    prompt = build_charter_prompt(
+        prd_path=tmp_path / "prd.md",
+        target_repo=None,
+        output_dir=tmp_path,
+        config=cfg,
+    )
+    assert "'jotai'" in prompt
+    assert "'tanstack_query'" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Contract model — new auth/frontend stack fields
+# ---------------------------------------------------------------------------
+
+
+def test_contract_defaults_for_new_stack_fields():
+    """The new stack fields default to safe empty / invariant values."""
+    contract = TargetProjectContract(project_name="myapp")
+    assert contract.auth_provider == ""
+    assert contract.auth_ui_owner == "application"
+    assert contract.social_auth_providers == []
+    assert contract.frontend_state == ""
+    assert contract.frontend_data_fetching == ""
+
+
+def test_contract_accepts_keystone_auth_provider():
+    """The charter LLM populates auth_provider with the resolved value;
+    "keystone" must round-trip through the model."""
+    contract = TargetProjectContract(
+        project_name="myapp",
+        auth_provider="keystone",
+        social_auth_providers=["google"],
+        frontend_state="zustand",
+        frontend_data_fetching="axios_with_interceptors",
+    )
+    payload = json.loads(contract.model_dump_json())
+    assert payload["auth_provider"] == "keystone"
+    assert payload["auth_ui_owner"] == "application"
+    assert payload["social_auth_providers"] == ["google"]
+    assert payload["frontend_state"] == "zustand"
+    assert payload["frontend_data_fetching"] == "axios_with_interceptors"
+
+
+# ---------------------------------------------------------------------------
+# HouseDefaultsConfig — config wiring
+# ---------------------------------------------------------------------------
+
+
+def test_house_defaults_config_safe_defaults():
+    """The defaults must match the documented contract — Keycloak
+    standalone + Zustand + Axios + port base 23300 + app-owned auth UI."""
+    from ncdev.core.config import NCDevConfig
+
+    cfg = NCDevConfig()
+    house = cfg.house_defaults
+    assert house.auth.fallback == "keycloak_standalone"
+    assert house.auth.ui_owner == "application"
+    assert house.frontend.state_fallback == "zustand"
+    assert house.frontend.data_fetching_fallback == "axios_with_interceptors"
+    assert house.port_base == 23300
+
+
+def test_house_defaults_config_parses_from_yaml_dict():
+    """A YAML-loaded config (the live .nc-dev/config.yaml round-trip)
+    must accept overrides for every house_defaults field."""
+    from ncdev.core.config import NCDevConfig
+
+    cfg = NCDevConfig.model_validate({
+        "house_defaults": {
+            "auth": {"fallback": "keystone", "ui_owner": "application"},
+            "frontend": {
+                "state_fallback": "redux_toolkit",
+                "data_fetching_fallback": "rtk_query",
+            },
+            "port_base": 24000,
+        },
+    })
+    assert cfg.house_defaults.auth.fallback == "keystone"
+    assert cfg.house_defaults.frontend.state_fallback == "redux_toolkit"
+    assert cfg.house_defaults.frontend.data_fetching_fallback == "rtk_query"
+    assert cfg.house_defaults.port_base == 24000
 
 
 # ---------------------------------------------------------------------------

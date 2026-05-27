@@ -685,12 +685,12 @@ def parsed_architecture() -> dict[str, Any]:
         "external_apis": [],
         "auth_required": True,
         "port_allocation": {
-            "frontend": 23000,
-            "backend": 23001,
-            "mongodb": 23002,
-            "redis": 23003,
-            "keycloak": 23004,
-            "keycloak_postgres": 23005,
+            "frontend": 23300,
+            "backend": 23301,
+            "mongodb": 23302,
+            "redis": 23303,
+            "keycloak": 23304,
+            "keycloak_postgres": 23305,
         },
     }
 
@@ -1037,10 +1037,10 @@ def sample_build_prompt() -> str:
         **Port Allocations:**
         | Service | Port |
         |---------|------|
-        | Frontend | 23000 |
-        | Backend | 23001 |
-        | MongoDB | 23002 |
-        | Redis | 23003 |
+        | Frontend | 23300 |
+        | Backend | 23301 |
+        | MongoDB | 23302 |
+        | Redis | 23303 |
     """)
 
 
@@ -1092,12 +1092,12 @@ def sample_config_dict() -> dict[str, Any]:
         "nc_dev_dir": ".nc-dev",
         "worktrees_dir": ".worktrees",
         "ports": {
-            "frontend": 23000,
-            "backend": 23001,
-            "mongodb": 23002,
-            "redis": 23003,
-            "keycloak": 23004,
-            "keycloak_postgres": 23005,
+            "frontend": 23300,
+            "backend": 23301,
+            "mongodb": 23302,
+            "redis": 23303,
+            "keycloak": 23304,
+            "keycloak_postgres": 23305,
         },
         "ollama": {
             "url": "http://localhost:11434",
@@ -1322,9 +1322,9 @@ def scaffolded_project(tmp_project_dir: Path) -> Path:
         "docker-compose.yml": "version: '3.8'\nservices: {}\n",
         "docker-compose.dev.yml": "version: '3.8'\nservices: {}\n",
         "docker-compose.test.yml": "version: '3.8'\nservices: {}\n",
-        ".env.example": "MONGO_URI=mongodb://localhost:23002\nREDIS_URL=redis://localhost:23003\n",
-        ".env.development": "MONGO_URI=mongodb://localhost:23002\nREDIS_URL=redis://localhost:23003\nDEBUG=true\n",
-        ".env.test": "MONGO_URI=mongodb://localhost:23002\nREDIS_URL=redis://localhost:23003\nTESTING=true\n",
+        ".env.example": "MONGO_URI=mongodb://localhost:23302\nREDIS_URL=redis://localhost:23303\n",
+        ".env.development": "MONGO_URI=mongodb://localhost:23302\nREDIS_URL=redis://localhost:23303\nDEBUG=true\n",
+        ".env.test": "MONGO_URI=mongodb://localhost:23302\nREDIS_URL=redis://localhost:23303\nTESTING=true\n",
         "Makefile": "dev:\n\tdocker compose -f docker-compose.dev.yml up\n",
         "README.md": "# Task Management App\n",
         "backend/Dockerfile": "FROM python:3.12-slim\n",
@@ -1358,7 +1358,7 @@ def scaffolded_project(tmp_project_dir: Path) -> Path:
         "backend/tests/conftest.py": "import pytest\n",
         "frontend/Dockerfile": "FROM node:22-alpine AS build\n",
         "frontend/Dockerfile.dev": "FROM node:22-alpine\n",
-        "frontend/nginx.conf": "server { listen 23000; }\n",
+        "frontend/nginx.conf": "server { listen 23300; }\n",
         "frontend/package.json": json.dumps({"name": "task-management-app", "version": "0.1.0"}),
         "frontend/tsconfig.json": json.dumps({"compilerOptions": {"strict": True}}),
         "frontend/vite.config.ts": "import { defineConfig } from 'vite';\n",

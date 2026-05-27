@@ -22,7 +22,7 @@ def test_cli_doctor_parses() -> None:
 def test_cli_full_defaults() -> None:
     parser = build_parser()
     args = parser.parse_args(["full", "--source", "/tmp/requirements.md"])
-    assert args.base_url == "http://localhost:23000"
+    assert args.base_url == "http://localhost:23300"
     assert args.dry_run is False
     assert args.target_repo is None
     assert args.model == "auto"
@@ -318,7 +318,7 @@ def test_cli_parses_factory_baseline_flags():
         "--test-craftr-url",
         "http://localhost:16630",
         "--target-url",
-        "http://localhost:23000",
+        "http://localhost:23300",
         "--max-wall-time-minutes",
         "480",
         "--max-consecutive-failures",
@@ -335,7 +335,7 @@ def test_cli_parses_factory_baseline_flags():
     assert args.persona_pass_contract is False
     assert args.strict_contract is False
     assert args.test_craftr_url == "http://localhost:16630"
-    assert args.target_url == "http://localhost:23000"
+    assert args.target_url == "http://localhost:23300"
     assert args.max_wall_time_minutes == 480
     assert args.max_consecutive_failures == 4
     assert args.allow_unmetered is True

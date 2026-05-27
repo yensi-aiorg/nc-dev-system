@@ -741,7 +741,7 @@ def test_factory_local_test_craftr_passes_report_to_steward(monkeypatch, tmp_pat
                     "id": "issue-1",
                     "title": "Required behavior failed",
                     "type": "functionality",
-                    "context": {"url": "http://localhost:23000/invite"},
+                    "context": {"url": "http://localhost:23300/invite"},
                 }
             ],
             {"verdict": "fail", "blocking_issue_count": 1},
@@ -1218,7 +1218,7 @@ def test_run_factory_from_issues_writes_charter_then_loops(monkeypatch, tmp_path
     report = tmp_path / "tc-report.json"
     report.write_text(json.dumps({
         "run_id": "tc-test-1",
-        "target_url": "http://localhost:23000",
+        "target_url": "http://localhost:23300",
         "issues": [{
             "id": "i001",
             "title": "Dashboard 500s",

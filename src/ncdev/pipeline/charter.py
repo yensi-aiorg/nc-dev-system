@@ -67,7 +67,92 @@ Rules:
   Bold Brand Photography. Pick the one best matching the PRD's tone.
 - `design_system_source` is "stitch" for new UIs unless the brownfield
   repo already has docs/design-system/ populated.
-- `ports` should not collide with existing ports in the repo.
+- `ports` should not collide with existing ports in the repo. For
+  greenfield, allocate from base {port_base} upward in this order:
+  frontend={port_base}, backend={port_base_plus_1},
+  mongodb={port_base_plus_2}, redis={port_base_plus_3},
+  keycloak={port_base_plus_4}, keycloak_postgres={port_base_plus_5}.
+  Only include the keycloak / keycloak_postgres entries when
+  `auth_provider == "keycloak_standalone"`. For
+  `auth_provider == "keystone"`, those services are skipped (Keystone
+  is integrated via the SDK; see auth rules below).
+
+## Stack resolution — PRD wins, house defaults fill silence
+
+The PRD is authoritative whenever it names a specific choice. House
+defaults kick in ONLY when the PRD is silent or vague on a slot. Never
+substitute a different library for one the PRD explicitly named.
+
+### Auth provider (`auth_provider`)
+
+Pick exactly one and record it in the contract:
+
+- **"keystone"** — pick this when the PRD mentions Keystone, "Keystone
+  Platform", "Keycloak via Keystone", "shared YENSI auth", or
+  "keystone-sdk" in any auth context. The app integrates via
+  `keystone-sdk` (Python, FastAPI middleware) and `@keystone/react`
+  (login components, `useAuth`, `<ProtectedRoute>`). DO NOT run a
+  standalone Keycloak — Keystone provides its own. Local dev / tests
+  use Keystone's built-in `standalone_mode: true` with seeded
+  `dev_users:` in a `keystone.dev.yaml`; this IS the mock layer (no
+  hand-written HTTP stub is required). Skip the keycloak /
+  keycloak_postgres port entries entirely.
+- **"keycloak_standalone"** — pick this when the PRD explicitly says
+  "self-hosted Keycloak" / "standalone Keycloak" / similar, OR when the
+  PRD is silent on auth AND the house default fallback is
+  `keycloak_standalone` (which it is by default). The project ships
+  its own Keycloak + Postgres on ports {port_base_plus_4} /
+  {port_base_plus_5}.
+- **"none"** — pick this only when the PRD explicitly opts out of
+  managed auth.
+
+### Auth UI ownership — INVARIANT (not a choice)
+
+`auth_ui_owner` is ALWAYS `"application"`. The application renders its
+own login / signup / password-reset / MFA screens. The user MUST NEVER
+see Keycloak's hosted login page. When `auth_provider == "keystone"`,
+this means using direct-grant flow (Keystone's clients are configured
+with `standardFlowEnabled: false` and `directAccessGrantsEnabled:
+true`). When `auth_provider == "keycloak_standalone"`, the project's
+Keycloak client must be configured the same way and the application
+must call the token endpoint directly from its own UI — never redirect
+the browser to the Keycloak login page.
+
+### Social authentication (`social_auth_providers`)
+
+OFF by default. Only populate this list when the PRD explicitly asks
+for social login. If the PRD says "Sign in with Google" or "Google
+auth" or "social login", add `"google"` to the list — Keystone and
+standalone Keycloak both support Google OAuth out of the box (Keystone
+exposes the BFF flow at `GET /api/auth/google/start` ->
+`GET /api/auth/google/callback`; standalone Keycloak wires Google as
+an identity provider). Do NOT add any social provider the PRD does not
+explicitly require.
+
+### Frontend state & data fetching
+
+Two slots, each PRD-wins / house-default-fills:
+
+- `frontend_state` — set to the library the PRD names verbatim
+  ("zustand", "redux toolkit", "jotai", "valtio", ...). If the PRD is
+  silent or vague ("a state library", "client-side state"), use the
+  house default {frontend_state_default!r}.
+- `frontend_data_fetching` — set to the library the PRD names verbatim
+  ("tanstack query", "react query", "swr", "rtk query",
+  "axios with interceptors", ...). If the PRD is silent or vague, use
+  the house default {frontend_data_default!r}.
+
+When the PRD names Zustand, Axios, or "Axios with interceptors", honour
+it verbatim. When the PRD names TanStack Query / React Query / SWR /
+RTK Query, honour those verbatim too — the house defaults exist to
+prevent guessing, not to override an explicit ask.
+
+Every guess (PRD-silent slot filled with a house default) MUST be
+recorded as an entry in `feature-queue.json`'s `assumptions` array, eg:
+
+  - "PRD silent on frontend state library — using house default
+    zustand."
+  - "PRD silent on auth — using house default keycloak_standalone."
 
 ### 2. verification-contract.json
 
@@ -241,7 +326,10 @@ def build_charter_prompt(
     target_repo: Path | None,
     output_dir: Path,
     project_type_hint: str = "web",
+    config: NCDevConfig | None = None,
 ) -> str:
+    house = (config or NCDevConfig()).house_defaults
+    port_base = house.port_base
     return CHARTER_PROMPT_TEMPLATE.format(
         prd_path=str(prd_path),
         target_repo=str(target_repo) if target_repo else "(none — greenfield)",
@@ -250,6 +338,15 @@ def build_charter_prompt(
         contract_schema=_schema_excerpt(TargetProjectContract),
         verification_schema=_schema_excerpt(VerificationContract),
         feature_queue_schema=_feature_queue_schema_excerpt(),
+        port_base=port_base,
+        port_base_plus_1=port_base + 1,
+        port_base_plus_2=port_base + 2,
+        port_base_plus_3=port_base + 3,
+        port_base_plus_4=port_base + 4,
+        port_base_plus_5=port_base + 5,
+        frontend_state_default=house.frontend.state_fallback,
+        frontend_data_default=house.frontend.data_fetching_fallback,
+        auth_fallback=house.auth.fallback,
     )
 
 
@@ -282,7 +379,9 @@ def generate_charter(
     (``max_retries`` defaults to 1, so worst case 2 charter sessions).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    base_prompt = build_charter_prompt(prd_path, target_repo, output_dir, project_type_hint)
+    base_prompt = build_charter_prompt(
+        prd_path, target_repo, output_dir, project_type_hint, config=config,
+    )
 
     last_session: ClaudeSessionResult | None = None
     last_violations: list[str] = []

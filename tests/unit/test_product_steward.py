@@ -75,13 +75,13 @@ def _bundle():
         contract=TargetProjectContract(
             project_name="salon", project_type="web",
             language="python", database="postgres", auth="keycloak",
-            ports={"frontend": 23000}, design_archetype="Warm Playfulness",
+            ports={"frontend": 23300}, design_archetype="Warm Playfulness",
             design_system_source="claude_generated", uses_citex=False,
             is_brownfield=False, existing_repo_path="",
         ),
         verification=VerificationContract(
             backend_test_command="pytest", frontend_test_command="npm test",
-            backend_health_url="http://localhost:23001/health",
+            backend_health_url="http://localhost:23301/health",
             start_command="docker compose up -d",
             stop_command="docker compose down",
         ),

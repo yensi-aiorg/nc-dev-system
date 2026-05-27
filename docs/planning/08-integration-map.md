@@ -99,7 +99,7 @@ NC Dev System calls Test Crafter during Phase 4:
 1. Submit test run
    test_crafter_run({
      prd_path: "requirements.md",
-     target_url: "http://localhost:23000",
+     target_url: "http://localhost:23300",
      analysis_level: "thorough"
    })
 

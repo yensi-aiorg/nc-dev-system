@@ -273,9 +273,40 @@ class TargetProjectContract(BaseModel):
     backend_framework: str = ""     # fastapi | django | express | none
     frontend_framework: str = ""    # react | vue | svelte | none
     database: str = ""              # mongodb | postgres | sqlite | none
-    auth_system: str = ""           # keycloak | jwt | none
+    auth_system: str = ""           # keycloak | jwt | none — legacy free-form
     language_backend: str = ""
     language_frontend: str = ""
+
+    # Auth resolution — populated by the charter based on the PRD, with
+    # house defaults filling silence. The charter must pick exactly one
+    # ``auth_provider`` value:
+    #   - "keystone"             — integrate via keystone-sdk +
+    #                              @keystone/react. Local dev uses
+    #                              Keystone's ``standalone_mode: true``
+    #                              with seeded ``dev_users``; no
+    #                              standalone Keycloak runs.
+    #   - "keycloak_standalone"  — NC Dev brings up its own Keycloak +
+    #                              Postgres on ports base+4 / base+5.
+    #   - "none"                 — app handles its own session story
+    #                              (explicit PRD opt-out only).
+    # ``auth_ui_owner`` is a fixed invariant: the application always
+    # renders its own login UI; Keycloak's hosted login page is never
+    # exposed to end users. Keystone is configured for direct-grant
+    # (``standardFlowEnabled: false``) when this is "application".
+    # ``social_auth_providers`` lists OIDC social providers the PRD
+    # explicitly required (e.g. ["google"]). Empty means no social
+    # auth — do not silently enable it.
+    auth_provider: str = ""
+    auth_ui_owner: str = "application"
+    social_auth_providers: list[str] = Field(default_factory=list)
+
+    # Frontend stack — PRD wins when explicit; house defaults fill
+    # silence (typically zustand + axios with interceptors). Free-form
+    # strings so the charter LLM can use the exact library name the PRD
+    # asks for.
+    frontend_state: str = ""           # e.g. "zustand", "redux_toolkit"
+    frontend_data_fetching: str = ""   # e.g. "axios_with_interceptors",
+                                       # "tanstack_query", "swr"
 
     # Deployment
     deployment_target: str = "docker"   # docker | k8s | serverless
@@ -303,7 +334,7 @@ class VerificationContract(BaseModel):
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     # App must boot
-    backend_health_url: str = ""       # e.g. http://localhost:23001/api/health
+    backend_health_url: str = ""       # e.g. http://localhost:23301/api/health
     frontend_url: str = ""
     boot_timeout_seconds: int = 60
 

@@ -264,7 +264,7 @@ Frontend: React 19, Vite, TypeScript strict, Tailwind CSS, Zustand
 Backend:  FastAPI, Python 3.12+, Pydantic v2, Motor (async MongoDB)
 Database: MongoDB (Motor), Redis (caching/queues)
 Testing:  Playwright (E2E), Vitest (unit), pytest (backend)
-Infra:    Docker Compose, sequential ports from 23000+
+Infra:    Docker Compose, sequential ports from 23300+
 AI:       Claude CLI (dev) / Open Router (prod) via adapter pattern
 ```
 
@@ -403,8 +403,8 @@ Existing services used:
 
 Generated project ports (per docs-only/technical.md):
 ```
-23000+  Frontend
-23001+  Backend
-23002+  MongoDB
-23003+  Redis
+23300+  Frontend
+23301+  Backend
+23302+  MongoDB
+23303+  Redis
 ```

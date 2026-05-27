@@ -62,7 +62,7 @@ PYTHONPATH=src python -m ncdev.cli prepare-v2 \
 PYTHONPATH=src python -m ncdev.cli full-v2 \
   --source /path/to/requirements-or-doc-folder \
   --target-repo /path/to/target-repo \
-  --base-url http://localhost:23000
+  --base-url http://localhost:23300
 ```
 
 The active operating model is documented in:
@@ -83,13 +83,13 @@ ncdev prepare-v2 --source /path/to/docs --target-repo /path/to/repo
 ncdev execute-v2 --run-id <run-id>
 
 # Verify the prepared target app
-ncdev verify-v2 --run-id <run-id> --base-url http://localhost:23000
+ncdev verify-v2 --run-id <run-id> --base-url http://localhost:23300
 
 # Full loop: prepare -> execute -> verify -> repair -> deliver
-ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000
+ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23300
 
 # Same flow with the live terminal dashboard
-ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23000 --ui headed
+ncdev full-v2 --source /path/to/docs --target-repo /path/to/repo --base-url http://localhost:23300 --ui headed
 
 # Inspect run status
 ncdev status-v2 --run-id <run-id>

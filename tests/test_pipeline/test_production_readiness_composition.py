@@ -46,11 +46,11 @@ def _make_realistic_bundle() -> CharterBundle:
         contract=TargetProjectContract(
             project_name="myapp", project_type="web",
             backend_framework="fastapi", frontend_framework="react",
-            ports={"backend": 23001, "frontend": 23000},
+            ports={"backend": 23301, "frontend": 23300},
             design_archetype="Technical Elegance",
         ),
         verification=VerificationContract(
-            backend_health_url="http://localhost:23001/api/health",
+            backend_health_url="http://localhost:23301/api/health",
             backend_test_command="exit 0",
             frontend_test_command="",
             required_files=["README.md"],

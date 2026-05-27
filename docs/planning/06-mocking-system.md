@@ -387,7 +387,7 @@ from tests.factories import UserFactory, ProjectFactory
 from tests.ollama_fixtures import generate_domain_data
 
 async def seed():
-    client = AsyncIOMotorClient("mongodb://localhost:23002")
+    client = AsyncIOMotorClient("mongodb://localhost:23302")
     db = client["app_dev"]
 
     # Factory-generated base data
@@ -450,8 +450,8 @@ TWILIO_AUTH_TOKEN=
 GOOGLE_MAPS_API_KEY=
 
 # Always available (internal services)
-MONGODB_URI=mongodb://localhost:23002/app
-REDIS_URL=redis://localhost:23003
+MONGODB_URI=mongodb://localhost:23302/app
+REDIS_URL=redis://localhost:23303
 OLLAMA_URL=http://localhost:11434
 ```
 
@@ -467,8 +467,8 @@ class Settings(BaseSettings):
     SENDGRID_API_KEY: str = "SG.mock_key"
 
     # Internal services (always available)
-    MONGODB_URI: str = "mongodb://localhost:23002/app"
-    REDIS_URL: str = "redis://localhost:23003"
+    MONGODB_URI: str = "mongodb://localhost:23302/app"
+    REDIS_URL: str = "redis://localhost:23303"
     OLLAMA_URL: str = "http://localhost:11434"
 
     class Config:

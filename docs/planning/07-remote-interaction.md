@@ -115,7 +115,7 @@ https://github.com/user/task-manager
 git clone https://github.com/user/task-manager
 cd task-manager
 docker compose up -d
-open http://localhost:23000
+open http://localhost:23300
 ```
 
 ## Features Built (8/8)
@@ -282,7 +282,7 @@ git clone [repo-url]
 cd [project-name]
 cp .env.example .env
 docker compose up -d
-open http://localhost:23000
+open http://localhost:23300
 ```
 
 ### Default Credentials
@@ -321,8 +321,8 @@ open http://localhost:23000
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MOCK_APIS` | `true` | Use mock APIs (set false for production) |
-| `MONGODB_URI` | `mongodb://localhost:23002/app` | MongoDB connection |
-| `REDIS_URL` | `redis://localhost:23003` | Redis connection |
+| `MONGODB_URI` | `mongodb://localhost:23302/app` | MongoDB connection |
+| `REDIS_URL` | `redis://localhost:23303` | Redis connection |
 
 ### Switching to Production APIs
 

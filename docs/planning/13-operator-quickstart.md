@@ -98,7 +98,7 @@ For a real run:
 PYTHONPATH=src python -m ncdev.cli full-v2 \
   --source /path/to/requirements-or-doc-folder \
   --target-repo /path/to/target-repo \
-  --base-url http://localhost:23000
+  --base-url http://localhost:23300
 ```
 
 For the same run with the live terminal dashboard:
@@ -107,7 +107,7 @@ For the same run with the live terminal dashboard:
 PYTHONPATH=src python -m ncdev.cli full-v2 \
   --source /path/to/requirements-or-doc-folder \
   --target-repo /path/to/target-repo \
-  --base-url http://localhost:23000 \
+  --base-url http://localhost:23300 \
   --ui headed
 ```
 
@@ -117,7 +117,7 @@ For a rehearsal:
 PYTHONPATH=src python -m ncdev.cli full-v2 \
   --source /path/to/requirements-or-doc-folder \
   --target-repo /path/to/target-repo \
-  --base-url http://localhost:23000 \
+  --base-url http://localhost:23300 \
   --dry-run
 ```
 
@@ -168,7 +168,7 @@ Use an existing repo and let NC Dev System operate directly on it:
 PYTHONPATH=src python -m ncdev.cli full-v2 \
   --source /path/to/docs \
   --target-repo /path/to/existing-repo \
-  --base-url http://localhost:23000
+  --base-url http://localhost:23300
 ```
 
 ### For New Products
@@ -187,7 +187,7 @@ Default operating assumptions:
 - state management is Zustand
 - transport is Axios with interceptors
 - Playwright is mandatory for E2E evidence
-- custom ports start at `23000`
+- custom ports start at `23300`
 - Docker Compose is the default local harness
 
 If your project deviates from these assumptions, make that explicit in the source documents.

@@ -51,7 +51,7 @@ console = Console()
 def run_pipeline(
     workspace: Path,
     source_path: Path,
-    base_url: str = "http://localhost:23000",
+    base_url: str = "http://localhost:23300",
     dry_run: bool = False,
     target_repo_path: Path | None = None,
     run_id: str | None = None,

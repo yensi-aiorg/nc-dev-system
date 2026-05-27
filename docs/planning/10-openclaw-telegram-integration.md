@@ -430,7 +430,7 @@ BOT: 📦 **Build Complete!**
      git clone https://github.com/user/finance-tracker
      cd finance-tracker
      docker compose up -d
-     open http://localhost:23000
+     open http://localhost:23300
      ```
 
      **Features Built**: 5/5

@@ -135,7 +135,7 @@ export default defineConfig({
     ['json', { outputFile: 'test-results/results.json' }]
   ],
   use: {
-    baseURL: process.env.BASE_URL || 'http://localhost:23000',
+    baseURL: process.env.BASE_URL || 'http://localhost:23300',
     trace: 'on-first-retry',
     screenshot: 'on',           // Capture on every test
     video: 'on-first-retry',    // Record video on failures
@@ -156,7 +156,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'docker compose up -d && sleep 5',
-    url: 'http://localhost:23000',
+    url: 'http://localhost:23300',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
   },
@@ -420,7 +420,7 @@ After all features pass Levels 1-3, Test Crafter runs a comprehensive sweep:
 Team Lead triggers Test Crafter:
     │
     ├── Input: Original requirements.md
-    ├── Input: Target URL (http://localhost:23000)
+    ├── Input: Target URL (http://localhost:23300)
     │
     └── Test Crafter autonomously:
         ├── Extracts user flows from requirements
@@ -441,7 +441,7 @@ Team Lead triggers Test Crafter:
 Tool: test_crafter_run
 Input: {
   "prd_path": "/path/to/requirements.md",
-  "target_url": "http://localhost:23000",
+  "target_url": "http://localhost:23300",
   "analysis_level": "thorough",
   "checks": ["functionality", "visual", "accessibility", "performance"]
 }

@@ -235,6 +235,63 @@ class QualityGateConfig(BaseModel):
     require_human_release: bool = True
 
 
+class HouseDefaultsAuthConfig(BaseModel):
+    """Auth defaults used when the PRD is silent on auth provider.
+
+    The PRD is always authoritative. These kick in only when it doesn't
+    say. Vocabulary:
+
+    - ``keycloak_standalone`` — NC Dev brings up its own Keycloak +
+      Postgres (ports 23304 / 23305) and the app talks to it directly.
+    - ``keystone`` — integrate against YENSI's Keystone platform via
+      ``keystone-sdk`` + ``@keystone/react``. Local dev uses Keystone's
+      built-in ``standalone_mode: true`` with seeded ``dev_users:`` so
+      no Keycloak is run in CI / dev. Prod points at the shared
+      Keystone stack.
+    - ``none`` — explicit opt-out; the app handles its own session story.
+    """
+
+    fallback: str = "keycloak_standalone"
+    # The auth UI is ALWAYS rendered by the application — Keycloak's
+    # built-in login page is never shown to end users. Keystone is
+    # configured for direct-grant accordingly (``standardFlowEnabled:
+    # false``). This is an invariant of every project NC Dev produces,
+    # so it is not a tunable; it lives here so the charter prompt can
+    # cite a single source of truth.
+    ui_owner: str = "application"
+
+
+class HouseDefaultsFrontendConfig(BaseModel):
+    """Frontend stack defaults used when the PRD is silent.
+
+    The PRD wins when it explicitly names a stack. These fill the gap
+    when it doesn't, instead of letting the charter LLM reach for the
+    AI-average default (typically React Query / TanStack).
+    """
+
+    state_fallback: str = "zustand"
+    data_fetching_fallback: str = "axios_with_interceptors"
+
+
+class HouseDefaultsConfig(BaseModel):
+    """House defaults applied when the PRD doesn't say.
+
+    Same lever-style role as ``mode:`` — flip one field to change the
+    behaviour of every future charter run without touching prompt code.
+    The charter LLM is told about these via prompt injection and is
+    instructed to honour the PRD first and these defaults only when the
+    PRD is silent or vague.
+    """
+
+    auth: HouseDefaultsAuthConfig = Field(default_factory=HouseDefaultsAuthConfig)
+    frontend: HouseDefaultsFrontendConfig = Field(default_factory=HouseDefaultsFrontendConfig)
+    # Port base for generated projects. Shifting this avoids collisions
+    # when multiple NC Dev-built projects run on the same workstation.
+    # Service ports are derived as base+0..base+5 (frontend / backend /
+    # mongo / redis / keycloak / kc-postgres).
+    port_base: int = 23300
+
+
 class NCDevConfig(BaseModel):
     mode: str = Field(
         default=DEFAULT_MODE,
@@ -279,6 +336,7 @@ class NCDevConfig(BaseModel):
     capability_gate: CapabilityGateConfig = Field(default_factory=CapabilityGateConfig)
     quality_gates: QualityGateConfig = Field(default_factory=QualityGateConfig)
     sentinel: SentinelConfig = Field(default_factory=SentinelConfig)
+    house_defaults: HouseDefaultsConfig = Field(default_factory=HouseDefaultsConfig)
 
     @model_validator(mode="after")
     def _apply_mode_preset(self) -> "NCDevConfig":

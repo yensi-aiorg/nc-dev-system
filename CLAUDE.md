@@ -190,14 +190,46 @@ processing.
 
 ## Ports (for generated projects)
 
+Base allocated from `house_defaults.port_base` (default 23300). Bump the
+base in `.nc-dev/config.yaml` to avoid collisions with other local
+projects.
+
 | Service | Port |
 |---------|------|
-| Frontend | 23000 |
-| Backend | 23001 |
-| MongoDB | 23002 |
-| Redis | 23003 |
-| KeyCloak | 23004 |
-| KeyCloak Postgres | 23005 |
+| Frontend | 23300 |
+| Backend | 23301 |
+| MongoDB | 23302 |
+| Redis | 23303 |
+| KeyCloak (only when `auth_provider=keycloak_standalone`) | 23304 |
+| KeyCloak Postgres (only when `auth_provider=keycloak_standalone`) | 23305 |
+
+When `auth_provider=keystone`, the keycloak / kc-postgres entries are
+skipped — Keystone provides its own auth stack via `keystone-sdk` and
+the shared YENSI Keystone infra (or `standalone_mode: true` for local
+dev / CI). See "House defaults" below.
+
+## House defaults (`.nc-dev/config.yaml` → `house_defaults:`)
+
+The PRD is authoritative for every stack choice it explicitly names.
+House defaults fill the gaps when the PRD is silent — they exist to
+prevent the charter LLM from reaching for AI-average defaults (React
+Query, raw Inter font, etc.) when the user has shop preferences.
+
+Current defaults:
+
+| Slot | Default | Notes |
+|------|---------|-------|
+| `auth.fallback` | `keycloak_standalone` | Use `keystone` only via PRD ask; never substitute the other way. |
+| `auth.ui_owner` | `application` | **Invariant.** App always renders login/signup/MFA UI. Keycloak's hosted login page is never shown. Keystone clients are configured `standardFlowEnabled: false`, `directAccessGrantsEnabled: true`. |
+| `frontend.state_fallback` | `zustand` | PRD-named libraries win (e.g. `redux_toolkit`, `jotai`). |
+| `frontend.data_fetching_fallback` | `axios_with_interceptors` | PRD-named libraries win (e.g. `tanstack_query`, `swr`, `rtk_query`). |
+| `port_base` | `23300` | Generated projects allocate 6 sequential ports from here. |
+
+Social authentication (`google`, etc.) is **off by default** and must
+be opt-in via PRD ("Sign in with Google", "social login"). When the
+PRD asks for it, Keystone exposes the BFF flow at
+`/api/auth/google/start` → `/api/auth/google/callback`; standalone
+Keycloak wires Google as an identity provider in the realm.
 
 ## Git Conventions
 

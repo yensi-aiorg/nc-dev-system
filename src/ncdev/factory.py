@@ -798,7 +798,7 @@ def run_factory(
     persona_pass_contract: bool = False,
     strict_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
-    target_url: str = "http://localhost:23000",
+    target_url: str = "http://localhost:23300",
 ) -> FactoryRunState:
     """Run the build→judge→repeat loop.
 
@@ -899,7 +899,7 @@ def run_factory_from_issues(
     persona_pass_contract: bool = False,
     strict_contract: bool = False,
     test_craftr_url: str = "http://localhost:16630",
-    target_url: str = "http://localhost:23000",
+    target_url: str = "http://localhost:23300",
 ) -> FactoryRunState:
     """Bug-fix mode entrypoint.
 
@@ -1039,7 +1039,7 @@ def run_factory_with_bundle(
         persona_pass_contract=False,
         strict_contract=False,
         test_craftr_url="http://localhost:16630",
-        target_url="http://localhost:23000",
+        target_url="http://localhost:23300",
         project_id=_factory_test_craftr_project_id(workspace, target_repo_path),
         pipeline_run_id=run_id,
         skip_charter=True,

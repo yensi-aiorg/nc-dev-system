@@ -13,7 +13,7 @@ def _write_report(path: Path, issues: list[dict]) -> None:
     path.write_text(
         json.dumps({
             "run_id": "tc-test-1",
-            "target_url": "http://localhost:23000",
+            "target_url": "http://localhost:23300",
             "issues": issues,
         }),
         encoding="utf-8",

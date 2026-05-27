@@ -184,7 +184,7 @@ src/scaffolder/templates/
 - Production Dockerfiles must use multi-stage builds with non-root users
 - The Makefile must include: `dev`, `test-all`, `lint-all`, `format-all`, `clean` targets
 - Docker Compose dev file must use volume mounts for HMR
-- All ports must use the sequential allocation starting at 23000 (NEVER default ports)
+- All ports must use the sequential allocation starting at 23300 (NEVER default ports)
 
 ### 3. Build Orchestrator (Phase 3 engine)
 
@@ -525,7 +525,7 @@ export const useFeatureStore = create<FeatureState>()(
 ```typescript
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:23001/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:23301/api/v1';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -603,12 +603,12 @@ Generated projects with AI features MUST use the adapter pattern:
 
 | Service | Port |
 |---------|------|
-| Frontend | 23000 |
-| Backend | 23001 |
-| MongoDB | 23002 |
-| Redis | 23003 |
-| KeyCloak | 23004 |
-| KeyCloak Postgres | 23005 |
+| Frontend | 23300 |
+| Backend | 23301 |
+| MongoDB | 23302 |
+| Redis | 23303 |
+| KeyCloak | 23304 |
+| KeyCloak Postgres | 23305 |
 
 ### No Incomplete Code (STRICTLY ENFORCED)
 
