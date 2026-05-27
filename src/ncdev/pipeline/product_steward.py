@@ -386,7 +386,24 @@ Reply with a SINGLE JSON object (no prose around it). Schema:
 - `insert_features` - the PRD implies a feature the planner missed.
   Provide full FeatureStep objects in `new_features`.
 - `rewrite_acceptance` - the planned acceptance criteria for a feature
-  are wrong (over- or under-specified). Provide amendments.
+  are wrong (over- or under-specified). Provide `amendments`. Each
+  amendment has the shape:
+  `{{"feature_id": "fNN-...", "field": "<path>", "new_value": <value>, "reason": "..."}}`
+  Valid `field` paths (anything else is rejected):
+    - `description`                              — replace the whole description
+    - `acceptance_criteria`                      — replace the entire list (provide a list)
+    - `acceptance_criteria[1]`                   — replace one item (0-based; negative wraps from end)
+    - `test_requirements`, `test_requirements[N]` — same shapes as above
+    - `acceptance.required_files`                — replace the per-feature required files list
+    - `acceptance.required_files[0]`             — replace one entry
+    - `acceptance.required_routes`, `acceptance.required_routes[N]` — same
+    - `acceptance.required_tests`, `acceptance.required_tests[N]`   — same
+    - `acceptance.required_screenshots`, `acceptance.required_screenshots[N]` — same
+    - `acceptance.verify_app_boots`              — bool
+    - `acceptance.must_mention_feature_id`       — bool
+  Do NOT invent field names that don't appear above (no
+  `acceptance_criteria.criterion_2`, no `acceptance.boots`). When in
+  doubt, replace the entire list with a new full list value.
 - `rerun_charter` - the charter is so off that the cheapest path is a
   fresh planning pass. Use sparingly.
 - `stop_as_unrecoverable` - the product can't be completed within budget

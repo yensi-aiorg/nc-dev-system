@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -88,11 +89,49 @@ def archive_and_clear_charter(output_dir: Path) -> Path:
     return archive_dir
 
 
+_LIST_INDEX_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\[(-?\d+)\]$")
+
+
+def _parse_path_segment(segment: str) -> tuple[str, int | None]:
+    """Parse a single path segment.
+
+    Plain field:        ``"required_files"``        -> ("required_files", None)
+    Indexed list item:  ``"acceptance_criteria[1]"`` -> ("acceptance_criteria", 1)
+
+    Negative indices are allowed (``acceptance_criteria[-1]`` for the
+    last item). The index is validated against the actual list length
+    at apply time, not here.
+    """
+    match = _LIST_INDEX_RE.match(segment)
+    if match:
+        return match.group(1), int(match.group(2))
+    if not segment.isidentifier():
+        raise KeyError(f"invalid amendment field path segment: {segment!r}")
+    return segment, None
+
+
 def _copy_with_dotted_update(
     model: BaseModel,
     field_path: str,
     new_value: Any,
 ) -> BaseModel:
+    """Apply ``new_value`` at ``field_path`` and return a new model copy.
+
+    Supported path forms:
+
+    - ``"description"``                — replace a top-level scalar field
+    - ``"acceptance_criteria"``        — replace an entire list field
+    - ``"acceptance_criteria[1]"``     — replace one item in a list field
+                                         by index (0-based; negative
+                                         indices wrap from the end)
+    - ``"acceptance.required_files"``  — replace a list inside a nested
+                                         BaseModel sub-object
+    - ``"acceptance.required_files[0]"`` — replace one item in such a
+                                           nested list
+
+    Up to three dotted segments are accepted; deeper paths are
+    rejected so the Steward can't reach into internal structures.
+    """
     parts = field_path.split(".")
     if not parts or any(not part for part in parts) or len(parts) > 3:
         raise KeyError(f"invalid amendment field path: {field_path}")
@@ -104,12 +143,38 @@ def _copy_with_path_parts(
     parts: list[str],
     new_value: Any,
 ) -> BaseModel:
-    field_name = parts[0]
+    field_name, index = _parse_path_segment(parts[0])
     if field_name not in model.__class__.model_fields:
         raise KeyError(f"invalid amendment field path: {'.'.join(parts)}")
 
     if len(parts) == 1:
-        return model.model_copy(update={field_name: new_value})
+        if index is None:
+            return model.model_copy(update={field_name: new_value})
+        # Indexed list update on the leaf segment.
+        current = getattr(model, field_name)
+        if not isinstance(current, list):
+            raise KeyError(
+                f"invalid amendment field path: {'.'.join(parts)} "
+                f"(field {field_name} is not a list)"
+            )
+        try:
+            new_list = list(current)
+            new_list[index] = new_value
+        except IndexError as exc:
+            raise KeyError(
+                f"invalid amendment field path: {'.'.join(parts)} "
+                f"(index {index} out of range for {field_name} of len {len(current)})"
+            ) from exc
+        return model.model_copy(update={field_name: new_list})
+
+    if index is not None:
+        # Cannot descend into a list item with further dotted segments
+        # (we don't model list-of-BaseModel today). If the day comes,
+        # extend here.
+        raise KeyError(
+            f"invalid amendment field path: {'.'.join(parts)} "
+            f"(cannot descend into list item {field_name}[{index}])"
+        )
 
     child = getattr(model, field_name)
     if not isinstance(child, BaseModel):
