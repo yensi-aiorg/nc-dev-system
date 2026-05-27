@@ -1320,6 +1320,7 @@ def _run_factory_cycle_loop(
             completed=list(pipeline_state.completed_steps),
             target_path=target_path,
             run_dir=run_dir / "steward" / f"cycle-{cycle}",
+            pipeline_run_dir=run_dir,
             config=config,
             model=builder_model,
             max_budget_usd=max_budget_usd,

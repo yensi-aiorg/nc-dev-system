@@ -76,12 +76,108 @@ def _summarise_completed(completed: list[StepResult]) -> str:
     for r in completed:
         files = len(r.files_created) + len(r.files_modified)
         status = getattr(r.status, "name", str(r.status).upper())
+        # Show the full error_message instead of truncating to 120 chars —
+        # the Gauntlet failure summary (e.g. "L6-security ... L8-oracle ...")
+        # is often longer than 120 and got chopped before. We keep the
+        # actual layer-level *findings* in `_summarise_gauntlet` below so
+        # this line stays a one-liner per feature.
         lines.append(
             f"  - {r.feature_id}: {status} "
             f"({files} files, commit {r.commit_sha[:8] or '(none)'})"
-            + (f" - {r.error_message[:120]}" if r.error_message else "")
+            + (f" - {r.error_message}" if r.error_message else "")
         )
     return "\n".join(lines)
+
+
+def _summarise_gauntlet(
+    run_dir: Path | None,
+    completed: list[StepResult],
+) -> str:
+    """Surface the verbatim findings from each failed feature's Gauntlet.
+
+    Without this, the Steward only sees the high-level
+    ``error_message`` ("gauntlet BLOCKED — L6-security ...; L8-oracle
+    ...") and cannot distinguish a fixable code defect (e.g. bandit
+    flagged real issues) from a false positive (scanner noise) or a
+    bad acceptance criterion (oracle reading the contract wrong).
+
+    Reads ``<run_dir>/steps/<feature_id>/gauntlet.json`` for every
+    completed feature whose status is FAILED/BLOCKED and emits the
+    layer name, summary, detail, and up to three findings per layer.
+    Per-layer detail is truncated at 800 chars to keep the prompt
+    bounded.
+    """
+    if not completed or run_dir is None:
+        return ""
+    blocks: list[str] = []
+    for r in completed:
+        status = getattr(r.status, "name", str(r.status).upper())
+        if status not in {"FAILED", "BLOCKED"}:
+            continue
+        gpath = run_dir / "steps" / r.feature_id / "gauntlet.json"
+        if not gpath.exists():
+            continue
+        try:
+            g = json.loads(gpath.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        failed_layers = [
+            layer for layer in g.get("layers", [])
+            if layer.get("status") == "failed"
+        ]
+        if not failed_layers:
+            continue
+        lines = [
+            f"  - {r.feature_id} (commit {r.commit_sha[:8] or 'none'}):",
+        ]
+        for layer in failed_layers:
+            name = layer.get("layer", "?")
+            summary = layer.get("summary", "")
+            lines.append(f"      [{name}] {summary}")
+            detail = (layer.get("detail") or "").strip()
+            if detail and detail != summary:
+                short = detail[:800] + (
+                    "... [truncated]" if len(detail) > 800 else ""
+                )
+                for dl in short.splitlines():
+                    lines.append(f"          {dl}")
+            findings = layer.get("findings") or []
+            for finding in findings[:3]:
+                f_text = (finding or "").strip()
+                if not f_text or f_text == detail:
+                    continue
+                f_short = f_text[:500] + (
+                    "... [truncated]" if len(f_text) > 500 else ""
+                )
+                for fl in f_short.splitlines():
+                    lines.append(f"          • {fl}")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return ""
+    header = [
+        "### Gauntlet findings on failed features",
+        "",
+        "Each failed feature ran through the multi-layer Gauntlet:",
+        "  L0-compile  L1-lint  L5-visual  L6-security  L7-anti-bypass  L8-oracle",
+        "",
+        "The verbatim findings from each *blocking* layer are below. Use them",
+        "to choose the right disposition:",
+        "",
+        "  - L6-security finding describes a real defect → `repair_current_slice`,",
+        "    name the layer + the file/issue in `reasoning`.",
+        "  - L8-oracle finding names a concrete acceptance gap (e.g. missing",
+        "    UI primitive, missing field, wrong wording) → `repair_current_slice`,",
+        "    quote the gap in `reasoning` so the next session can fix exactly it.",
+        "  - L1-lint / L0-compile finding → almost always `repair_current_slice`",
+        "    (these are mechanical).",
+        "  - L8-oracle finding describes a contract that doesn't match the PRD",
+        "    or that's gated on something the feature legitimately doesn't own",
+        "    → `rewrite_acceptance` with an amendment that fixes the contract.",
+        "  - Repeated failure across cycles on the same finding → consider",
+        "    `stop_as_unrecoverable` only after two prior repair attempts.",
+        "",
+    ]
+    return "\n".join(header + blocks)
 
 
 def _contract_stack(bundle: CharterBundle) -> str:
@@ -184,6 +280,7 @@ def build_steward_prompt(
     last_test_craftr_scores: dict | None = None,
     product_debt: list[ProductDebt] | None = None,
     feature_provenance: dict[str, list[str]] | None = None,
+    run_dir: Path | None = None,
 ) -> str:
     prd_excerpt = prd_path.read_text(encoding="utf-8")[:8000]
     queue_summary = "\n".join(
@@ -197,6 +294,7 @@ def build_steward_prompt(
     )
     product_debt_block = _summarise_product_debt(product_debt)
     feature_provenance_block = _summarise_feature_provenance(feature_provenance)
+    gauntlet_block = _summarise_gauntlet(run_dir, completed)
     performance_status_block = _summarise_performance_status(
         product_debt=product_debt,
         performance_budget=bundle.verification.performance_budget,
@@ -214,6 +312,11 @@ def build_steward_prompt(
     feature_provenance_section = (
         f"\n{feature_provenance_block}\n"
         if feature_provenance_block
+        else ""
+    )
+    gauntlet_section = (
+        f"\n{gauntlet_block}\n"
+        if gauntlet_block
         else ""
     )
     return f"""# Product Steward - judgment session
@@ -256,6 +359,7 @@ if not, what's the cheapest next move?"**
 ```
 {performance_status_section}
 {product_debt_section}
+{gauntlet_section}
 
 ## Your decision
 
@@ -299,14 +403,32 @@ capability ledger and bias future skill selection. Use [] when nothing stands ou
 
 - "f02-auth PASSED but the /dashboard route 404s in the integration
   gate - repair, don't continue" -> `repair_current_slice`
+- "f02-design-system was Gauntlet-blocked: L8-oracle reported 'criterion
+  3: preview page renders Button and Badge but omits Card and Dialog
+  primitives required by criterion'. Real fixable omission." ->
+  `repair_current_slice`, target=[f02-design-system], reasoning quotes
+  the L8 finding verbatim so the next session knows what to add.
+- "f02-design-system L6-security: bandit flagged 20 Low + 1 Medium
+  severity findings in backend/. These are real (default secrets,
+  hardcoded paths) and trivially fixable." -> `repair_current_slice`,
+  target=[f02-design-system], reasoning lists the categories.
 - "PRD says 'manage appointments' but no feature handles cancellation
   flows - insert" -> `insert_features`
 - "Every feature PASSED, integration gate is clean, TestCraftr scored
-  all axes above threshold" -> `continue` (which at end-of-run means
-  "we're done")
+  all axes above threshold, Gauntlet has zero blocking failures on any
+  feature" -> `continue` (which at end-of-run means "we're done")
 - "Three repair attempts on f01 have all failed for the same reason and
   the underlying problem is the contract demanding postgres on a
   sqlite-only host" -> `stop_as_unrecoverable`
+
+### Hard rule: never emit `continue` while ANY feature is FAILED
+
+If any feature in the completed list is in FAILED/BLOCKED status, you
+MUST pick a corrective disposition (`repair_current_slice` /
+`rewrite_acceptance` / `insert_features` / `stop_as_unrecoverable`).
+`continue` is reserved for "everything is green; move on" — emitting it
+while features are failed causes the factory to declare the product done
+and stop, which is exactly the bug we are trying to avoid.
 
 Return the JSON now.
 """
@@ -316,6 +438,24 @@ def _find_provenance_dir(start: Path) -> Path | None:
     cursor = start
     for _ in range(5):
         if (cursor / "provenance.jsonl").exists():
+            return cursor
+        if cursor == cursor.parent:
+            break
+        cursor = cursor.parent
+    return None
+
+
+def _find_pipeline_run_dir(start: Path) -> Path | None:
+    """Walk up to 5 parents from ``start`` looking for a directory that
+    owns ``steps/`` — the convention for a pipeline run root. Returns
+    that directory or None if no parent qualifies.
+
+    Used as the fallback for callers that didn't thread the pipeline
+    run dir explicitly into ``run_product_steward``.
+    """
+    cursor = start
+    for _ in range(5):
+        if (cursor / "steps").is_dir():
             return cursor
         if cursor == cursor.parent:
             break
@@ -354,14 +494,26 @@ def run_product_steward(
     product_debt: list[ProductDebt] | None = None,
     model: str | None = None,
     max_budget_usd: float | None = None,
+    pipeline_run_dir: Path | None = None,
 ) -> StewardDecision:
     """Run one Steward judgment session, return its decision.
 
     A malformed response collapses to STOP_AS_UNRECOVERABLE - silently
     continuing on a Steward that didn't actually emit a decision is the
     failure mode this whole feature exists to prevent.
+
+    ``pipeline_run_dir`` is the root run directory under which
+    ``steps/<feature_id>/gauntlet.json`` lives. ``run_dir`` here is the
+    steward-cycle-local subdirectory (e.g. ``<root>/steward/cycle-2``)
+    used to persist this session's prompt/response. When
+    ``pipeline_run_dir`` is None we fall back to walking up from
+    ``run_dir`` to find the pipeline root that owns ``steps/`` — this
+    keeps backwards compatibility with callers that haven't been
+    threaded through yet.
     """
     feature_provenance = _load_feature_provenance(run_dir)
+    if pipeline_run_dir is None:
+        pipeline_run_dir = _find_pipeline_run_dir(run_dir)
     prompt = build_steward_prompt(
         prd_path=prd_path,
         bundle=bundle,
@@ -370,6 +522,7 @@ def run_product_steward(
         last_test_craftr_scores=last_test_craftr_scores,
         product_debt=product_debt,
         feature_provenance=feature_provenance,
+        run_dir=pipeline_run_dir,
     )
     if model is None and config is not None:
         try:

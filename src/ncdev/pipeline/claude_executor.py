@@ -59,6 +59,105 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _load_prior_gauntlet_findings(
+    feature_id: str,
+    current_run_dir: Path | None,
+) -> str:
+    """Find the most recent prior run's ``gauntlet.json`` for this feature
+    and return a formatted prompt block describing the *specific* blocking
+    layers + findings that rejected the prior commit.
+
+    Returns an empty string when:
+      - no current_run_dir is given,
+      - no prior run dir exists alongside it,
+      - no gauntlet.json exists for this feature in any prior run, or
+      - none of the layers in the most recent gauntlet.json have
+        ``status == "failed"``.
+
+    This is what makes the repair loop actually close: without it, a
+    feature that the Gauntlet rejected is re-attempted with the *same*
+    prompt as the first attempt, so the same omission tends to recur.
+    With it, the next session sees the verbatim L6/L8 findings inline
+    and can act on them.
+    """
+    if current_run_dir is None or not current_run_dir.parent.exists():
+        return ""
+    runs_root = current_run_dir.parent
+    if not runs_root.is_dir():
+        return ""
+    try:
+        candidates = sorted(
+            (
+                p for p in runs_root.iterdir()
+                if p.is_dir() and p != current_run_dir
+            ),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return ""
+    for prior in candidates:
+        gpath = prior / "steps" / feature_id / "gauntlet.json"
+        if not gpath.exists():
+            continue
+        try:
+            g = json.loads(gpath.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        failed_layers = [
+            layer for layer in g.get("layers", [])
+            if layer.get("status") == "failed"
+        ]
+        if not failed_layers:
+            # This prior run actually passed Gauntlet for this feature;
+            # don't surface it as a repair note. (The feature is being
+            # re-attempted because it failed for a different reason, or
+            # was marked failed for a non-Gauntlet reason.) Stop searching.
+            return ""
+        lines: list[str] = [
+            "## Prior Gauntlet findings — fix THESE before re-committing",
+            "",
+            f"This feature was attempted in a prior cycle (run "
+            f"`{prior.name}`) and its commit was rejected by the",
+            "multi-layer Gauntlet. The blocking layers and their verbatim",
+            "findings are below. Address each one in your repair pass; do",
+            "not re-do work already accepted by other layers.",
+            "",
+        ]
+        for layer in failed_layers:
+            name = layer.get("layer", "?")
+            summary = layer.get("summary", "")
+            lines.append(f"### {name} — {summary}")
+            lines.append("")
+            detail = (layer.get("detail") or "").strip()
+            if detail and detail != summary:
+                short = detail[:1500] + (
+                    "... [truncated, see prior gauntlet.json for full output]"
+                    if len(detail) > 1500
+                    else ""
+                )
+                lines.extend(["```", short, "```", ""])
+            for finding in (layer.get("findings") or [])[:5]:
+                f_text = (finding or "").strip()
+                if not f_text or f_text == detail:
+                    continue
+                f_short = f_text[:600] + (
+                    "... [truncated]" if len(f_text) > 600 else ""
+                )
+                lines.append(f"- {f_short}")
+            lines.append("")
+        lines.extend([
+            "Treat these as concrete, structured failure modes — not vague",
+            "suggestions. For each finding, decide whether it's a code fix",
+            "(do it), a missing dependency (add it), or a genuinely",
+            "incorrect acceptance criterion (call out the contract conflict",
+            "explicitly in your final response so the Steward can amend it).",
+            "",
+        ])
+        return "\n".join(lines)
+    return ""
+
+
 def build_feature_prompt(
     feature: FeatureStep,
     target_path: Path,
@@ -67,6 +166,7 @@ def build_feature_prompt(
     project_id: str,
     citex_url: str = "http://localhost:20161",
     implementer_mode: str = "codex",
+    prior_gauntlet_findings: str = "",
 ) -> str:
     """Compose the single prompt handed to Claude for this feature.
 
@@ -148,7 +248,7 @@ def build_feature_prompt(
 - Citex URL:              {citex_url}  (optional — query if reachable; skip if not)
 
 {prior_block}
-
+{prior_gauntlet_findings + chr(10) if prior_gauntlet_findings else ""}
 ## Your feature spec
 
 - ID:          {feature.feature_id}
@@ -291,6 +391,14 @@ def execute_feature_claude_driven(
     cfg_mode = config.mode if config is not None else "claude_plan_codex_build"
     implementer_mode = "claude" if cfg_mode in {"claude_only"} else "codex"
 
+    # If this feature was rejected by the Gauntlet in any prior run,
+    # surface the verbatim L0–L8 findings inline so the next session can
+    # act on them. Empty string when no prior run rejected this feature.
+    prior_gauntlet_findings = _load_prior_gauntlet_findings(
+        feature_id=feature.feature_id,
+        current_run_dir=run_dir,
+    )
+
     prompt = build_feature_prompt(
         feature=feature,
         target_path=target_path,
@@ -299,6 +407,7 @@ def execute_feature_claude_driven(
         project_id=project_id,
         citex_url=citex_url,
         implementer_mode=implementer_mode,
+        prior_gauntlet_findings=prior_gauntlet_findings,
     )
     (step_dir / "prompt.md").write_text(prompt, encoding="utf-8")
 
