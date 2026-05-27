@@ -36,12 +36,28 @@ def _build_review_prompt(ctx: GauntletContext) -> str:
     criteria_block = "\n".join(f"  {i}. {c}" for i, c in enumerate(criteria, 1))
     diff = ctx.diff[:_MAX_DIFF_CHARS]
     truncated = "\n[diff truncated]" if len(ctx.diff) > _MAX_DIFF_CHARS else ""
+    changed_block = (
+        "\n".join(f"  - {p}" for p in ctx.changed_files[:40])
+        if ctx.changed_files
+        else "  (no changed files reported)"
+    )
+    repo = ctx.repo
     return f"""You are an independent code reviewer. You did NOT write this code.
 
-Review the diff below against the feature's acceptance criteria. For
-EACH numbered criterion, decide whether the diff actually satisfies it.
-Be strict: a criterion is "met" only if the diff contains real working
-code for it — stubs, mocks, TODOs, and bypassed integrations are "not_met".
+Decide whether the **cumulative repository state** at `{repo}` satisfies
+each acceptance criterion for this feature. The session under review
+may be a fresh build (large diff) or a repair on top of earlier
+commits (small diff). For repairs, the criteria are typically already
+satisfied by prior commits — your job is to confirm the repo as a
+whole satisfies them, **not** to demand every criterion live in this
+session's diff alone.
+
+You have the **Read**, **Grep**, and **Glob** tools. Use them. For
+each criterion, locate the file / function / test that implements it
+and verify the behaviour is real (not a stub, mock, TODO, or
+bypassed integration). The diff below + the changed-files list tell
+you what changed *this* session, which is useful context but not
+authoritative for "is the criterion met".
 
 Feature: {feature.title}
 Description: {feature.description}
@@ -49,15 +65,28 @@ Description: {feature.description}
 Acceptance criteria:
 {criteria_block}
 
-Diff under review:
+Files changed in this session (for context — the criteria may be
+satisfied by other files committed earlier):
+{changed_block}
+
+Diff for this session (context only — DO NOT judge "met" purely from
+the diff; verify against the repo via Read/Grep):
 ```diff
 {diff}{truncated}
 ```
 
+For EACH numbered criterion: locate the code that proves it (via
+Read/Grep across the repo, not just the diff). A criterion is "met"
+only if real working code for it exists somewhere in the repo —
+stubs, mocks, TODOs, and bypassed integrations are "not_met". If the
+diff is small because most of the criterion was already implemented
+in a prior commit, that's fine — the cumulative state is what
+matters.
+
 Respond with ONLY a JSON object, no prose around it:
 {{
   "criteria": [
-    {{"index": 1, "verdict": "met|not_met|unclear", "reason": "<one line>"}}
+    {{"index": 1, "verdict": "met|not_met|unclear", "reason": "<one line, name the file/symbol that proves it or names what's missing>"}}
   ],
   "overall": "pass|fail"
 }}
