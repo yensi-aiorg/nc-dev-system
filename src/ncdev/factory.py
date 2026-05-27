@@ -48,7 +48,7 @@ from ncdev.pipeline.charter_mutation import (
 )
 from ncdev.pipeline.engine import run_pipeline
 from ncdev.pipeline.issue_charter import synthesize_charter_from_report
-from ncdev.pipeline.models import CharterBundle
+from ncdev.pipeline.models import CharterBundle, PipelineRunState
 from ncdev.pipeline.product_debt import ProductDebt, classify_issues_to_debt
 from ncdev.pipeline.product_steward import (
     Disposition,
@@ -90,6 +90,12 @@ class FactoryRunState:
     last_pipeline_status: str = ""
     target_path: str = ""
     consecutive_failures: int = 0
+    # Tracks the number of PASSED features seen at the end of the
+    # *previous* cycle. Used to detect net progress in the current
+    # cycle for the `too_many_failures` reset logic — if this cycle
+    # added a new PASSED feature, the loop is working and the
+    # consecutive-failures counter resets.
+    prior_passed_count: int = 0
     recorded_cost_usd: float = 0.0
     spend_ledger_path: str | None = None
     summary_path: str | None = None
@@ -371,8 +377,33 @@ def _record_cycle_failure(
     *,
     caps: RunCaps,
     decision: StewardDecision,
+    passed_count_this_cycle: int = 0,
+    passed_count_prior_cycle: int = 0,
 ) -> bool:
+    """Track consecutive failures for the too_many_failures stop gate.
+
+    A cycle is treated as a failure for this counter ONLY when:
+
+    1. The Steward did not say `continue`, AND
+    2. The cycle made no net progress — the number of PASSED features
+       did not increase since the prior cycle.
+
+    Without (2), a long run that builds many features one slice at a
+    time would always hit ``too_many_failures`` after
+    ``max_consecutive_failures`` cycles, even if each cycle landed a
+    fresh feature cleanly. Real-world observed: factory stopped after
+    3 cycles having committed f02, f03, f04 across them (huge net
+    progress) because each Steward verdict was `repair_current_slice`,
+    never `continue`. Reset the counter on progress to give the
+    repair loop the space it needs.
+    """
     if decision.disposition == Disposition.CONTINUE:
+        state.consecutive_failures = 0
+        return False
+    if passed_count_this_cycle > passed_count_prior_cycle:
+        # Net progress this cycle (at least one new feature reached
+        # PASSED). Reset and keep iterating — the repair loop is
+        # working, just hasn't finished the queue yet.
         state.consecutive_failures = 0
         return False
     state.consecutive_failures += 1
@@ -380,6 +411,24 @@ def _record_cycle_failure(
         state.stop_reason = FactoryStopReason.TOO_MANY_FAILURES
         return True
     return False
+
+
+def _count_passed_in_pipeline(pipeline_state: PipelineRunState | None) -> int:
+    """Number of features in PASSED status in the most recent pipeline.
+
+    The pipeline's ``completed_steps`` is the authoritative per-cycle
+    view. State-scanner-skipped features that were already done in
+    prior runs also appear here, so this is a reliable cross-cycle
+    progress signal.
+    """
+    if pipeline_state is None:
+        return 0
+    count = 0
+    for step in getattr(pipeline_state, "completed_steps", []) or []:
+        status_name = getattr(step.status, "name", str(step.status)).upper()
+        if status_name == "PASSED":
+            count += 1
+    return count
 
 
 async def _probe_test_craftr_async(
@@ -1381,7 +1430,17 @@ def _run_factory_cycle_loop(
         )
 
         # Phase C — act
-        if _record_cycle_failure(state, caps=caps, decision=decision):
+        # Detect net progress for the too_many_failures reset gate.
+        # A cycle that landed a new PASSED feature is making progress
+        # even if other features in the queue are still failing.
+        current_passed = _count_passed_in_pipeline(pipeline_state)
+        if _record_cycle_failure(
+            state,
+            caps=caps,
+            decision=decision,
+            passed_count_this_cycle=current_passed,
+            passed_count_prior_cycle=state.prior_passed_count,
+        ):
             _append_factory_spend_event(
                 state,
                 run_dir=run_dir,
@@ -1395,9 +1454,16 @@ def _run_factory_cycle_loop(
                     "consecutive_failures": state.consecutive_failures,
                     "max_consecutive_failures": caps.max_consecutive_failures,
                     "disposition": decision.disposition.value,
+                    "passed_count": current_passed,
+                    "prior_passed_count": state.prior_passed_count,
                 },
             )
             return _finish_factory_state(state, run_dir=run_dir)
+
+        # Carry the current PASSED count forward for the next cycle's
+        # progress comparison. Done AFTER the stop check so a cycle
+        # that doesn't advance still records the high-water mark.
+        state.prior_passed_count = max(state.prior_passed_count, current_passed)
 
         if decision.disposition == Disposition.CONTINUE:
             # CONTINUE at end-of-run = product is done.
