@@ -798,7 +798,14 @@ def test_verification_regex_prohibited_pattern_matches(tmp_path: Path):
     assert any("prohibited" in r.lower() for r in result.verification.failure_reasons)
 
 
-def test_required_files_missing_blocks_pass(tmp_path: Path):
+def test_global_required_files_missing_does_not_block_per_feature(tmp_path: Path):
+    """Per-feature verification must NOT fail when files in the global
+    ``verification-contract.required_files`` list are missing. The
+    global list spans the whole product (e.g. files owned by f03 or
+    f04 are missing during f01's session by definition) and is
+    enforced by the end-of-run integration gate against the
+    cumulative repo state, not per-feature.
+    """
     target = tmp_path / "app"
     target.mkdir()
     _init_git(target)
@@ -811,20 +818,64 @@ def test_required_files_missing_blocks_pass(tmp_path: Path):
                        cwd=str(target), check=True)
         return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
 
+    # docker-compose.yml is in the GLOBAL required_files list but the
+    # feature does NOT own it (acceptance.required_files stays empty).
+    # Pre-fix, this would have failed the feature; post-fix, the global
+    # list is honoured only by integration_gate at end-of-run.
     bundle = _make_bundle(required_files=["docker-compose.yml", "README.md"])
+    feature = _make_feature()
+    feature.acceptance.required_files = []
     with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
         result = execute_feature_claude_driven(
-            feature=_make_feature(),
+            feature=feature,
             target_path=target,
             run_dir=tmp_path / "run",
             charter_bundle=bundle,
             prior_results=[],
             project_id="myapp",
+            run_gauntlet_check=False,
         )
-    # docker-compose.yml missing — verification fails, but README.md already exists from _init_git.
+    # docker-compose.yml is missing from the repo, but it isn't in the
+    # feature's own acceptance — the per-feature verifier should pass
+    # this clause. No "docker-compose.yml" should appear in reasons.
+    reasons = result.verification.failure_reasons
+    assert not any("docker-compose.yml" in r for r in reasons), reasons
+
+
+def test_per_feature_required_file_missing_blocks(tmp_path: Path):
+    """A required file declared in ``feature.acceptance.required_files``
+    that is missing from the repo must block the per-feature verifier
+    (clause 8). This is the post-fix replacement for the old
+    global-required-files check.
+    """
+    target = tmp_path / "app"
+    target.mkdir()
+    _init_git(target)
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        _seed_manifest(target, "f01-scaffold")
+        (target / "thing.py").write_text("x=1")
+        subprocess.run(["git", "add", "-A"], cwd=str(target), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat(f01): x"],
+                       cwd=str(target), check=True)
+        return ClaudeSessionResult(success=True, final_text="done", exit_code=0)
+
+    bundle = _make_bundle(required_files=[])
+    feature = _make_feature()
+    feature.acceptance.required_files = ["docker-compose.yml"]
+    with patch("ncdev.pipeline.claude_executor.run_ai_session", side_effect=fake_session):
+        result = execute_feature_claude_driven(
+            feature=feature,
+            target_path=target,
+            run_dir=tmp_path / "run",
+            charter_bundle=bundle,
+            prior_results=[],
+            project_id="myapp",
+            run_gauntlet_check=False,
+        )
     assert result.status == StepStatus.FAILED
     reasons = result.verification.failure_reasons
-    assert any("docker-compose.yml" in r for r in reasons)
+    assert any("docker-compose.yml" in r for r in reasons), reasons
 
 
 def test_must_mention_default_false_does_not_fail(tmp_path):

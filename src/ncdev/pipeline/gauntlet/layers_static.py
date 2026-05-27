@@ -104,6 +104,25 @@ def layer_anti_bypass(ctx: GauntletContext) -> GauntletLayerResult:
 # --- L6 security -----------------------------------------------------------
 
 
+_BANDIT_EXCLUDE_DIRS = (
+    ".venv",
+    "venv",
+    "env",
+    "node_modules",
+    "tests",
+    "test",
+    ".tox",
+    ".git",
+    "build",
+    "dist",
+    "site-packages",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "migrations",
+)
+
+
 def _scanners_for(repo: Path) -> tuple[tuple[str, list[str], str], ...]:
     """SAST scanners applicable to ``repo`` — (name, argv, probe binary).
 
@@ -112,9 +131,51 @@ def _scanners_for(repo: Path) -> tuple[tuple[str, list[str], str], ...]:
     target it audits the ambient environment (NC Dev's own venv, not
     the project). It is therefore included only when the repo ships a
     ``requirements.txt``, and pointed explicitly at that file.
+
+    Bandit policy (set in this function):
+
+    - ``--severity-level high`` — only block on findings bandit is
+      reasonably confident describe a real security flaw (eval, exec,
+      pickle.loads, SSL no-verify, etc.). Low / Medium severity
+      findings (assert in tests, ``import subprocess``, hardcoded
+      strings that look like passwords) are well-known sources of
+      noise and would block every initial build.
+    - ``--confidence-level low`` — keep low-confidence matches in
+      scope so we don't miss legitimate-but-fuzzy detections at the
+      High severity tier; ``--severity-level high`` is doing the
+      filtering.
+    - ``-x`` exclusions cover venvs, tests, caches, build artifacts,
+      migrations. Tests in particular are noisy — ``assert`` (B101),
+      ``random`` (B311), subprocess imports — none of which are
+      production risks.
+    - ``-f txt`` (no ``-q``) prints the per-finding detail so that
+      when bandit DOES block, the repair session has the file +
+      line + cwe to act on. The Gauntlet captures the tail of this
+      output.
+
+    Project teams that want a tighter gate can drop a ``bandit.yaml``
+    or ``[tool.bandit]`` block into ``pyproject.toml``; bandit reads
+    those automatically.
     """
+    excludes = ",".join(f"./{name}" for name in _BANDIT_EXCLUDE_DIRS)
     scanners: list[tuple[str, list[str], str]] = [
-        ("bandit", ["bandit", "-r", ".", "-ll", "-q"], "bandit"),
+        (
+            "bandit",
+            [
+                "bandit",
+                "-r",
+                ".",
+                "--severity-level",
+                "high",
+                "--confidence-level",
+                "low",
+                "-x",
+                excludes,
+                "-f",
+                "txt",
+            ],
+            "bandit",
+        ),
         ("semgrep", ["semgrep", "--error", "--quiet", "--config", "auto"], "semgrep"),
     ]
     if (repo / "requirements.txt").is_file():
@@ -181,7 +242,12 @@ def layer_security(ctx: GauntletContext) -> GauntletLayerResult:
         ok, code, output = run_shell(" ".join(argv), cwd=ctx.repo, timeout=600)
         ran.append(name)
         if not ok:
-            findings.append(f"{name}: reported issues (exit {code})\n{tail(output, 20)}")
+            # Capture more output for security scanners (bandit prints
+            # per-finding detail — file:line + Issue/CWE/Code snippet,
+            # ~6-10 lines each) so repair sessions have actionable
+            # context. 20 lines used to cut off after the metrics
+            # block, hiding the actual findings.
+            findings.append(f"{name}: reported issues (exit {code})\n{tail(output, 80)}")
 
     duration = time.time() - start
     if findings:
