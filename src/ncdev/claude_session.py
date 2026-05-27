@@ -393,6 +393,17 @@ def run_claude_session(
                     on_event(event)
                 except Exception:  # noqa: BLE001
                     pass
+
+            # The Claude CLI emits exactly one terminal `result` event per
+            # session. After that, the CLI sometimes lingers on stdout
+            # without closing it (background hook handlers, slow shutdown,
+            # MCP server drain, etc.) which would block `for line in
+            # proc.stdout` until the wall-clock watchdog fires — hours in
+            # practice when --timeout is generous. Break out as soon as we
+            # see the result; the finally block's proc.wait(30) + kill is
+            # the post-result grace period for a clean exit.
+            if event.get("type") == "result":
+                break
     finally:
         # Always wait for the process and join the stderr reader so we
         # capture its output and don't leave zombies. The watchdog will
