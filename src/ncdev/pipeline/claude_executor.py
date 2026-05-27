@@ -508,10 +508,17 @@ def _post_session_verification(
     ver = StepVerification()
     reasons: list[str] = []
 
-    # 1. Required files from the verification contract must all exist
-    for req in bundle.verification.required_files:
-        if not (target_path / req).exists():
-            reasons.append(f"required file missing: {req}")
+    # 1. Required files — REMOVED from per-feature scope.
+    #    The verification-contract's global ``required_files`` list spans
+    #    the whole product (e.g. frontend/src/stores/auth.ts comes from
+    #    f03, frontend/src/stores/projects.ts from f04). Demanding every
+    #    feature produce all of them is the same anti-pattern previously
+    #    fixed for ``required_screenshots`` (clause 4 below): f02-design-
+    #    system can't write auth.ts before f03 has even run.
+    #    Per-feature required files are enforced under
+    #    ``feature.acceptance.required_files`` (clause 8 below). The
+    #    global list is enforced by the end-of-run integration gate
+    #    (``integration_gate.py``) against the cumulative repo state.
 
     # 2. Asset manifest must exist and cover code references
     if bundle.verification.assets_manifest_required:
