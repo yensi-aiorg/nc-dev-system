@@ -428,6 +428,19 @@ def build_parser() -> argparse.ArgumentParser:
             "human-inspection stop reasons. Use only after reviewing status."
         ),
     )
+    factory.add_argument(
+        "--no-auto-resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the default auto-resume behaviour. By default, when a "
+            "prior factory run exists for this --target-repo in this "
+            "workspace, the latest prior charter is reused (charter "
+            "generation is non-deterministic and feature IDs drift "
+            "between invocations, which confuses the state-scanner). "
+            "Pass --no-auto-resume to force a fresh charter."
+        ),
+    )
     factory.add_argument("--target-repo", default=None,
                          help="Existing target repository (brownfield)")
     factory.add_argument("--workspace", default=None)
@@ -936,6 +949,82 @@ def main(argv: list[str] | None = None) -> int:
                 "--baseline was provided without --probe-test-craftr; "
                 "baseline capture is a no-op"
             )
+
+        # Auto-resume: if a prior factory run exists for this target_repo
+        # in this workspace and the operator did NOT request a fresh
+        # charter (no --no-auto-resume flag), reuse the latest prior
+        # charter instead of generating a new one. Charter generation
+        # is non-deterministic — feature IDs drift between invocations
+        # (f02-design-system → f02-design-system-baseline) and the
+        # state-scanner can no longer recognise commits from prior runs.
+        # That turns every restart into a near-rebuild.
+        #
+        # Skipped when:
+        #   - no target_repo (greenfield generated scaffold)
+        #   - --no-auto-resume passed
+        #   - no prior run found, or no prior run has a complete charter
+        auto_resume_dir: Path | None = None
+        if target_repo is not None and not getattr(args, "no_auto_resume", False):
+            from ncdev.factory_observer import find_latest_run_for_target
+
+            auto_resume_dir = find_latest_run_for_target(workspace, target_repo)
+        if auto_resume_dir is not None:
+            from ncdev.factory_observer import (
+                render_resume_preflight,
+                resume_preflight,
+            )
+            from ncdev.pipeline.charter import load_charter as _load_charter
+
+            preflight = resume_preflight(
+                run_dir=auto_resume_dir,
+                target_repo=target_repo,
+                source_path=Path(args.source).resolve(),
+                force=True,  # auto-resume; user can pass --no-auto-resume to force fresh
+            )
+            console.print(
+                f"[cyan]factory: auto-resuming from {auto_resume_dir.name} "
+                "(charter reuse — pass --no-auto-resume for a fresh charter)[/cyan]"
+            )
+            console.print(render_resume_preflight(preflight))
+            charter_dir = (
+                auto_resume_dir / "outputs"
+                if (auto_resume_dir / "outputs").is_dir()
+                else auto_resume_dir
+            )
+            try:
+                bundle = _load_charter(charter_dir, strict=False)
+            except Exception as exc:  # noqa: BLE001
+                console.print(
+                    f"[yellow]Could not load charter from {charter_dir}: {exc} "
+                    "— falling through to fresh charter[/yellow]"
+                )
+                auto_resume_dir = None
+            else:
+                console.print(
+                    f"[cyan]Resuming against charter from {charter_dir} "
+                    f"({len(bundle.feature_queue.features)} features)[/cyan]"
+                )
+                result = _factory_with_bundle_runner_default(
+                    workspace=workspace,
+                    bundle=bundle,
+                    target_repo_path=target_repo,
+                    source_label=Path(args.source).resolve(),
+                    max_cycles=args.max_cycles,
+                    builder_model=args.model,
+                    builder_timeout=args.timeout,
+                    max_budget_usd=args.max_budget_usd,
+                    max_wall_time_minutes=args.max_wall_time_minutes,
+                    max_consecutive_failures=args.max_consecutive_failures,
+                    allow_unmetered=args.allow_unmetered,
+                )
+                console.print(
+                    f"factory: cycles={result.cycles_run} "
+                    f"stop_reason={result.stop_reason.value if result.stop_reason else 'none'}"
+                )
+                return 0 if result.stop_reason in {
+                    FactoryStopReason.STEWARD_CONTINUE_AT_END,
+                } else 1
+
         result = _factory_runner(
             workspace=workspace,
             source_path=Path(args.source).resolve(),

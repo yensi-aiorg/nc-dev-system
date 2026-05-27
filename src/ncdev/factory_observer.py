@@ -80,6 +80,51 @@ def find_latest_run_dir(workspace: Path) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def find_latest_run_for_target(
+    workspace: Path,
+    target_repo: Path,
+) -> Path | None:
+    """Return the most recent run dir whose state.json points at ``target_repo``.
+
+    Used by factory auto-resume to find a usable prior charter when the
+    user relaunches the factory against the same project (typical after
+    fixing an nc-dev-system bug and restarting). Returns None if no
+    prior run targets this repo OR if none have a loadable charter.
+    """
+    runs_dir = workspace / ".nc-dev" / "runs"
+    if not runs_dir.exists():
+        return None
+    target_resolved = str(target_repo.resolve())
+    matches: list[Path] = []
+    for candidate in runs_dir.iterdir():
+        if not candidate.is_dir():
+            continue
+        state_path = candidate / "state.json"
+        if not state_path.exists():
+            continue
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if state.get("target_path") != target_resolved:
+            continue
+        # Must have a full charter on disk to be resumable; an empty
+        # or partial outputs/ directory is no better than a fresh
+        # charter.
+        outputs = candidate / "outputs"
+        required = (
+            "feature-queue.json",
+            "target-project-contract.json",
+            "verification-contract.json",
+        )
+        if not all((outputs / name).exists() for name in required):
+            continue
+        matches.append(candidate)
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
 def _git_status_short(repo: Path) -> list[str]:
     try:
         result = subprocess.run(
