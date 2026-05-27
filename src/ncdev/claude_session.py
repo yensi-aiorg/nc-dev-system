@@ -352,6 +352,15 @@ def run_claude_session(
     watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
     watchdog_thread.start()
 
+    # Tracks whether the CLI emitted its terminal ``result`` event. The
+    # event is the authoritative signal for "the agent finished its work
+    # cleanly" — the exit code after that is incidental, because we
+    # break out of the stdout loop on result and the finally block's
+    # 30s wait + kill produces SIGTERM (exit 143) when the CLI lingers
+    # for any reason (background hook handlers, MCP drain, etc.).
+    result_event_seen = False
+    result_success_event = False
+
     try:
         for line in proc.stdout:
             line = line.strip()
@@ -403,6 +412,9 @@ def run_claude_session(
             # see the result; the finally block's proc.wait(30) + kill is
             # the post-result grace period for a clean exit.
             if event.get("type") == "result":
+                result_event_seen = True
+                if (event.get("subtype") or "").lower() == "success":
+                    result_success_event = True
                 break
     finally:
         # Always wait for the process and join the stderr reader so we
@@ -449,8 +461,17 @@ def run_claude_session(
                     final_text = text
                     break
 
+    # The result/success event is the authoritative "agent finished
+    # cleanly" signal. Exit code only matters when no result event
+    # arrived (true failure: crash, OOM, infrastructure error). When
+    # the CLI emitted result/success and we then sent SIGTERM (because
+    # it lingered after result), exit code 143 is OUR signal, not a
+    # session failure.
+    logical_success = result_success_event or (
+        result_event_seen and exit_code == 0
+    ) or exit_code == 0
     return _maybe_retry(ClaudeSessionResult(
-        success=exit_code == 0,
+        success=logical_success,
         final_text=final_text,
         exit_code=exit_code,
         events=result_events,
@@ -462,7 +483,11 @@ def run_claude_session(
         total_cost_usd=total_cost,
         duration_seconds=duration,
         stderr=stderr_text,
-        error=None if exit_code == 0 else f"claude exited with code {exit_code}",
+        error=(
+            None
+            if logical_success
+            else f"claude exited with code {exit_code}"
+        ),
     ), model)
 
 

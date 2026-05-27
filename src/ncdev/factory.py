@@ -414,19 +414,22 @@ def _record_cycle_failure(
 
 
 def _count_passed_in_pipeline(pipeline_state: PipelineRunState | None) -> int:
-    """Number of features in PASSED status in the most recent pipeline.
+    """Number of features DONE (PASSED or SKIPPED) in the pipeline.
 
-    The pipeline's ``completed_steps`` is the authoritative per-cycle
-    view. State-scanner-skipped features that were already done in
-    prior runs also appear here, so this is a reliable cross-cycle
-    progress signal.
+    "Done" deliberately includes SKIPPED: a state-scanner skip is the
+    factory's way of saying "this feature is already implemented in
+    the repo and verified" — for progress purposes that's equivalent
+    to "this cycle passed it cleanly". If we counted only PASSED, a
+    cycle where the scanner detected prior work and then a new
+    repair landed cleanly would still look like no-progress relative
+    to the previous cycle's all-skipped baseline.
     """
     if pipeline_state is None:
         return 0
     count = 0
     for step in getattr(pipeline_state, "completed_steps", []) or []:
         status_name = getattr(step.status, "name", str(step.status)).upper()
-        if status_name == "PASSED":
+        if status_name in {"PASSED", "SKIPPED"}:
             count += 1
     return count
 
