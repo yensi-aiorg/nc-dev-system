@@ -80,16 +80,52 @@ def find_latest_run_dir(workspace: Path) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def _count_done_in_run_state(run_dir: Path) -> int:
+    """Count features that are DONE in this run's state.json.
+
+    "Done" = PASSED (built and verified this run) OR SKIPPED
+    (state-scanner detected the work was already in the target repo
+    from a prior run). Both statuses mean a charter's feature_id
+    matched a real commit + working acceptance, which is exactly
+    what makes a charter useful to resume against.
+
+    Used by ``find_latest_run_for_target`` to prefer charters that
+    actually built features over charters that only failed.
+    Statuses persist as lowercase strings ("passed", "skipped",
+    "failed", "blocked") because PipelineRunState dumps StepStatus
+    via Pydantic's default enum serialization.
+    """
+    state_path = run_dir / "state.json"
+    if not state_path.exists():
+        return 0
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return 0
+    count = 0
+    for step in state.get("completed_steps", []) or []:
+        status = str((step or {}).get("status", "")).lower()
+        if status in {"passed", "skipped"}:
+            count += 1
+    return count
+
+
 def find_latest_run_for_target(
     workspace: Path,
     target_repo: Path,
 ) -> Path | None:
-    """Return the most recent run dir whose state.json points at ``target_repo``.
+    """Return the best prior run dir to resume from for ``target_repo``.
 
-    Used by factory auto-resume to find a usable prior charter when the
-    user relaunches the factory against the same project (typical after
-    fixing an nc-dev-system bug and restarting). Returns None if no
-    prior run targets this repo OR if none have a loadable charter.
+    "Best" means: highest count of features that reached PASSED in
+    that run, recency as a tiebreaker. This prefers a charter that
+    actually got work done over a more recent charter that only
+    failed — important because each fresh charter generation is
+    non-deterministic (feature IDs drift) and a charter whose
+    feature_ids match prior commits is the only one the
+    state-scanner can use to skip already-done work.
+
+    Returns None if no prior run targets this repo OR if none have
+    a complete charter on disk.
     """
     runs_dir = workspace / ".nc-dev" / "runs"
     if not runs_dir.exists():
@@ -108,9 +144,7 @@ def find_latest_run_for_target(
             continue
         if state.get("target_path") != target_resolved:
             continue
-        # Must have a full charter on disk to be resumable; an empty
-        # or partial outputs/ directory is no better than a fresh
-        # charter.
+        # Must have a full charter on disk to be resumable.
         outputs = candidate / "outputs"
         required = (
             "feature-queue.json",
@@ -122,7 +156,11 @@ def find_latest_run_for_target(
         matches.append(candidate)
     if not matches:
         return None
-    return max(matches, key=lambda p: p.stat().st_mtime)
+    # Prefer (done_count desc, mtime desc).
+    return max(
+        matches,
+        key=lambda p: (_count_done_in_run_state(p), p.stat().st_mtime),
+    )
 
 
 def _git_status_short(repo: Path) -> list[str]:
