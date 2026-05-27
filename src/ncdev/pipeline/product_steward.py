@@ -378,7 +378,10 @@ Reply with a SINGLE JSON object (no prose around it). Schema:
 
 ### Disposition meanings
 
-- `continue` - current slice is in good shape; build the next feature(s).
+- `continue` - current slice is in good shape. If the latest pipeline
+  state is fully green, the factory treats this as product complete;
+  otherwise it re-enters the pipeline and lets the state scanner skip
+  already-done features so the next unfinished slice runs.
 - `repair_current_slice` - last slice has a fixable problem; re-run the
   feature(s) listed in `target_feature_ids` with the issue noted in
   `reasoning`. Use for: feature claimed PASSED but routes don't actually
@@ -431,6 +434,9 @@ capability ledger and bias future skill selection. Use [] when nothing stands ou
   target=[f02-design-system], reasoning lists the categories.
 - "PRD says 'manage appointments' but no feature handles cancellation
   flows - insert" -> `insert_features`
+- "f02-auth PASSED and the queue still has unbuilt downstream features
+  with no current failures" -> `continue` (the factory advances to the
+  next slice; it does NOT stop unless machine state is fully green).
 - "Every feature PASSED, integration gate is clean, TestCraftr scored
   all axes above threshold, Gauntlet has zero blocking failures on any
   feature" -> `continue` (which at end-of-run means "we're done")
@@ -443,9 +449,9 @@ capability ledger and bias future skill selection. Use [] when nothing stands ou
 If any feature in the completed list is in FAILED/BLOCKED status, you
 MUST pick a corrective disposition (`repair_current_slice` /
 `rewrite_acceptance` / `insert_features` / `stop_as_unrecoverable`).
-`continue` is reserved for "everything is green; move on" — emitting it
-while features are failed causes the factory to declare the product done
-and stop, which is exactly the bug we are trying to avoid.
+`continue` is reserved for "this cycle is green enough to advance" —
+the factory independently checks whether the whole product is green
+before it stops.
 
 Return the JSON now.
 """

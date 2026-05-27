@@ -486,11 +486,18 @@ def build_parser() -> argparse.ArgumentParser:
     factory.add_argument(
         "--probe-test-craftr",
         action="store_true",
-        default=False,
+        default=True,
         help=(
             "Probe TestCraftr at end of each cycle and feed findings to "
-            "the Product Steward."
+            "the Product Steward. Enabled by default; use "
+            "--no-probe-test-craftr to skip."
         ),
+    )
+    factory.add_argument(
+        "--no-probe-test-craftr",
+        dest="probe_test_craftr",
+        action="store_false",
+        help="Skip the default TestCraftr behavior-contract probe.",
     )
     factory.add_argument(
         "--require-test-craftr",

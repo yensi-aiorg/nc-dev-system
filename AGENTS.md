@@ -85,6 +85,14 @@ Under `<target>/.ncdev/assets-needed/`:
 - `<feature_id>.json` — per-feature manifest of images/GIFs/SVGs/videos needed
 - `_all.json` — aggregate for batch processing (Nano Banana 2, human)
 
+Under `<target>/.ncdev/recovery/<run_id>/`:
+
+- `checkpoint.json` — branch/run/stage metadata for restart recovery
+- `outputs/*.json` — compact charter/behavior/design artifacts needed to continue from another checkout
+- `state.json`, `provenance.jsonl`, `steps/*/result.json` — progress metadata mirrored after feature steps
+
+NC Dev creates or reuses an `ncdev/<project>-<run_id>` branch in the target repo and commits this recovery snapshot before feature implementation starts. Feature sessions still make the real source/test commits; `.nc-dev/runs` remains local run storage and is not committed wholesale.
+
 ## 6. Hooks (enforced at commit time)
 
 Every Claude session gets the default hook config wired via `--settings`. Hooks block:
@@ -138,7 +146,7 @@ Sentinel POSTs production failure reports to `ncdev serve` (port 16650). Each re
 
 ## 9. The three things NC Dev is strict about
 
-1. **Greenfield UI without a design system → hard fail.** Either Stitch MCP is configured, or `docs/design-system/` is pre-populated. No exceptions. (Brownfield without designs lets Claude decide.)
+1. **Greenfield UI must have a design system before feature work.** Prefer Stitch when configured and explicitly enabled; otherwise NC Dev writes deterministic seed tokens under `docs/design-system/` before implementation starts. Do not let feature code proceed with undefined styling.
 2. **Asset manifest is mandatory** for features that ship UI. Code that references assets without a manifest entry fails verification.
 3. **Conventional Commits are enforced by hook.** Your commit won't land without it. This is on purpose — it drives the `[BROKEN]` recovery path and feeds changelog generation.
 

@@ -241,6 +241,7 @@ def build_feature_prompt(
 
 - Project charter:        {charter_dir}/target-project-contract.json
 - Verification contract:  {charter_dir}/verification-contract.json
+- Behavior contract:      {charter_dir}/behavior-contract.v1.json
 - Design system:          {charter_dir}/design-system.json  (if present)
 - Feature queue:          {charter_dir}/feature-queue.json
 - Target repository:      {target_path}
@@ -278,15 +279,20 @@ the run by default. Plan your work so each clause is satisfied.
 
 1. **Read** the charter artifacts listed above. They are the hard
    constraints for stack, ports, auth, deployment. Do not override them.
+   Build inside the target repository's normal source/test structure;
+   `.nc-dev/` is NC Dev's private run storage and must not contain
+   implementation code.
 2. **Query Citex** at `{citex_url}` if it is reachable, for context on
    prior features and data models. If Citex is not running, skip this
    step rather than retrying — it is optional infrastructure.
 3. **Use the `writing-plans` skill** if this is a high-complexity
    feature. For low complexity, go straight to step 4.
-4. **Use the `test-driven-development` skill**. Write failing tests
-   first that target the structured acceptance above (each
-   `required_test` file must exist, mention the feature_id, and
-   eventually pass).
+4. **Use the `test-driven-development` skill against the behavior
+   contract.** Read `{charter_dir}/behavior-contract.v1.json`, find the
+   scenario(s) for `{feature.feature_id}`, and write failing tests first
+   for those observable behaviours before implementation. Each
+   `required_test` file must exist, target the structured acceptance
+   above, and eventually pass.
 5. {impl_step}
 6. **Emit the asset manifest** as you build — see the schema below.
 7. **The engine records what your session touched** automatically — you

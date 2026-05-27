@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,6 +66,145 @@ def test_run_pipeline_persists_brownfield_skips_in_progress_state(tmp_path: Path
     assert state.completed_features == 1
     assert len(state.completed_steps) == 1
     assert state.completed_steps[0].status == StepStatus.SKIPPED
+
+
+def test_run_pipeline_creates_recovery_branch_and_checkpoint_before_feature(
+    tmp_path: Path,
+    monkeypatch,
+):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    source = workspace / "prd.md"
+    source.write_text("# PRD\n")
+    target = workspace / "target"
+    target.mkdir()
+
+    feature = FeatureStep(
+        feature_id="f1",
+        title="First",
+        description="",
+        acceptance_criteria=["x"],
+    )
+    bundle = _bundle(feature)
+    monkeypatch.setattr(
+        "ncdev.pipeline.engine.generate_charter",
+        lambda **kwargs: (bundle, SimpleNamespace(summary=lambda: "ok")),
+    )
+    monkeypatch.setattr(
+        "ncdev.pipeline.engine.run_design_phase",
+        lambda **kwargs: SimpleNamespace(skipped=True, hard_failed=False, design_doc=None),
+    )
+    monkeypatch.setattr(
+        "ncdev.pipeline.state_scanner.scan_completed_features",
+        lambda target_path, features: [],
+    )
+
+    observed: dict[str, str] = {}
+
+    def fake_executor(*, feature, target_path, run_dir, **kwargs):  # noqa: ARG001
+        observed["branch"] = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=target_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        observed["log"] = subprocess.run(
+            ["git", "log", "-1", "--pretty=%s"],
+            cwd=target_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        return StepResult(feature_id=feature.feature_id, status=StepStatus.FAILED)
+
+    monkeypatch.setattr("ncdev.pipeline.engine.execute_feature_claude_driven", fake_executor)
+
+    state = run_pipeline(
+        workspace=workspace,
+        source_path=source,
+        target_repo_path=target,
+        skip_integration_gate=True,
+    )
+
+    assert observed["branch"].startswith("ncdev/proj-")
+    assert observed["log"].startswith("chore(ncdev): checkpoint ")
+    run_id = state.run_id
+    checkpoint = target / ".ncdev" / "recovery" / run_id / "checkpoint.json"
+    assert checkpoint.exists()
+    data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert data["branch"] == observed["branch"]
+    assert data["feature_ids"] == ["f1"]
+    assert (target / ".ncdev" / "recovery" / run_id / "outputs" / "feature-queue.json").exists()
+
+
+def test_recovery_checkpoint_does_not_commit_existing_staged_work(
+    tmp_path: Path,
+    monkeypatch,
+):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    source = workspace / "prd.md"
+    source.write_text("# PRD\n")
+    target = workspace / "target"
+    target.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=target, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=target, check=True)
+    (target / "README.md").write_text("init\n")
+    subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "chore: init"], cwd=target, check=True)
+    (target / "user-work.txt").write_text("do not commit me\n")
+    subprocess.run(["git", "add", "user-work.txt"], cwd=target, check=True)
+
+    feature = FeatureStep(
+        feature_id="f1",
+        title="First",
+        description="",
+        acceptance_criteria=["x"],
+    )
+    bundle = _bundle(feature)
+    monkeypatch.setattr(
+        "ncdev.pipeline.engine.generate_charter",
+        lambda **kwargs: (bundle, SimpleNamespace(summary=lambda: "ok")),
+    )
+    monkeypatch.setattr(
+        "ncdev.pipeline.engine.run_design_phase",
+        lambda **kwargs: SimpleNamespace(skipped=True, hard_failed=False, design_doc=None),
+    )
+    monkeypatch.setattr(
+        "ncdev.pipeline.state_scanner.scan_completed_features",
+        lambda target_path, features: [],
+    )
+    monkeypatch.setattr(
+        "ncdev.pipeline.engine.execute_feature_claude_driven",
+        lambda **kwargs: StepResult(feature_id="f1", status=StepStatus.FAILED),
+    )
+
+    run_pipeline(
+        workspace=workspace,
+        source_path=source,
+        target_repo_path=target,
+        skip_integration_gate=True,
+    )
+
+    last_commit_files = subprocess.run(
+        ["git", "show", "--name-only", "--pretty=", "HEAD"],
+        cwd=target,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    status = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=target,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    assert "user-work.txt" not in last_commit_files
+    assert "A  user-work.txt" in status
 
 
 def _two_feature_bundle() -> CharterBundle:

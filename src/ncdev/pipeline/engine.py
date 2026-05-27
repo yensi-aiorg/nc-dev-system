@@ -25,6 +25,11 @@ command doesn't need to change.
 
 from __future__ import annotations
 
+import json
+import re
+import shutil
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
@@ -34,7 +39,10 @@ from rich.table import Table
 from ncdev.utils import make_run_id
 from ncdev.core.config import NCDevConfig, ensure_default_config
 from ncdev.pipeline.charter import generate_charter, load_charter
-from ncdev.pipeline.claude_executor import execute_feature_claude_driven
+from ncdev.pipeline.claude_executor import (
+    _ensure_git_identity,
+    execute_feature_claude_driven,
+)
 from ncdev.pipeline.design_phase import run_design_phase
 from ncdev.pipeline.integration_gate import IntegrationResult, run_integration_gate
 from ncdev.pipeline.models import (
@@ -46,6 +54,8 @@ from ncdev.pipeline.models import (
 from ncdev.pipeline.provenance import append_provenance
 
 console = Console()
+
+RECOVERY_DIR = ".ncdev/recovery"
 
 
 def run_pipeline(
@@ -63,6 +73,7 @@ def run_pipeline(
     halt_on_failed: bool = True,
     skip_integration_gate: bool = False,
     skip_charter: bool = False,
+    target_feature_ids: list[str] | None = None,
     # Retained for CLI signature compat; Claude's systematic-debugging
     # skill handles repair now, so this is a no-op.
     max_repair_attempts: int | None = None,
@@ -175,6 +186,26 @@ def run_pipeline(
             bundle.feature_queue.assumptions
         )
 
+    if bundle is not None and not (outputs_dir / "behavior-contract.v1.json").exists():
+        try:
+            from ncdev.contracts.behavior_contract import (
+                build_behavior_contract,
+                write_behavior_contract,
+            )
+
+            write_behavior_contract(
+                build_behavior_contract(
+                    bundle,
+                    source_path=source_path,
+                    output_dir=outputs_dir,
+                ),
+                outputs_dir,
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(
+                f"  [yellow]Behavior contract generation failed: {exc}[/yellow]"
+            )
+
     # Resolve target path now that we have the charter
     target_path = (
         Path(bundle.contract.existing_repo_path).expanduser().resolve()
@@ -183,6 +214,23 @@ def run_pipeline(
     )
     target_path.mkdir(parents=True, exist_ok=True)
     state.target_path = str(target_path)
+
+    recovery_branch = ""
+    if not dry_run and bundle is not None:
+        recovery_branch = _prepare_recovery_branch(
+            target_path=target_path,
+            run_id=run_id,
+            run_dir=run_dir,
+            source_path=source_path,
+            project_name=bundle.contract.project_name,
+            stage="charter-ready",
+            outputs_dir=outputs_dir,
+            state=state,
+            bundle=bundle,
+        )
+        if recovery_branch:
+            state.metadata["recovery_branch"] = recovery_branch
+            _persist_state(state, run_dir)
 
     # ── Phase 3: Design system ───────────────────────────────────────────
     state.phase = "design"
@@ -215,6 +263,19 @@ def run_pipeline(
         else:
             src = design.design_doc.source if design.design_doc else "?"
             console.print(f"  [green]✓[/green] Design system ready (source={src})")
+        if recovery_branch:
+            _commit_recovery_checkpoint(
+                target_path=target_path,
+                run_id=run_id,
+                run_dir=run_dir,
+                source_path=source_path,
+                branch=recovery_branch,
+                project_name=bundle.contract.project_name,
+                stage="design-ready",
+                outputs_dir=outputs_dir,
+                state=state,
+                bundle=bundle,
+            )
 
     # ── Phase 4: Brownfield context ingestion ────────────────────────────
     state.phase = "ingestion"
@@ -253,9 +314,20 @@ def run_pipeline(
 
         # Brownfield: skip features already implemented
         remaining = _filter_completed_features(target_path, features, completed)
+        if target_feature_ids:
+            targets = set(target_feature_ids)
+            remaining = [f for f in remaining if f.feature_id in targets]
         _sync_progress_state(state, completed)
         _persist_state(state, run_dir)
-        console.print(f"\n[bold]Phase 5: Building {len(remaining)} features sequentially[/bold]")
+        target_note = (
+            f" (targeted: {', '.join(target_feature_ids)})"
+            if target_feature_ids
+            else ""
+        )
+        console.print(
+            f"\n[bold]Phase 5: Building {len(remaining)} features "
+            f"sequentially{target_note}[/bold]"
+        )
 
         for feature in remaining:
             state.current_step = feature.feature_id
@@ -304,6 +376,21 @@ def run_pipeline(
                 config=config,
             )
             completed.append(result)
+            if bundle.contract.uses_citex:
+                try:
+                    from ncdev.pipeline.context_ingestion import ingest_feature_result
+
+                    ingest_feature_result(
+                        feature=feature,
+                        result=result,
+                        target_path=target_path,
+                        project_id=bundle.contract.project_name,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    console.print(
+                        f"  [yellow]Citex feature-result ingest skipped: "
+                        f"{exc}[/yellow]"
+                    )
             # Persist provenance — what this feature session actually
             # touched. Replaces marker-policing as the source of truth
             # for feature→artifact mapping.
@@ -316,6 +403,19 @@ def run_pipeline(
             ))
             _sync_progress_state(state, completed)
             _persist_state(state, run_dir)
+            if recovery_branch:
+                _commit_recovery_checkpoint(
+                    target_path=target_path,
+                    run_id=run_id,
+                    run_dir=run_dir,
+                    source_path=source_path,
+                    branch=recovery_branch,
+                    project_name=bundle.contract.project_name,
+                    stage=f"{result.feature_id}-{result.status.value}",
+                    outputs_dir=outputs_dir,
+                    state=state,
+                    bundle=bundle,
+                )
 
             status_style = "green" if result.status == StepStatus.PASSED else "red"
             duration_min = (result.build_duration_seconds or 0) / 60
@@ -506,6 +606,274 @@ def _filter_completed_features(target_path: Path, features, completed: list[Step
     remaining = [f for f in features if f.feature_id not in done_ids]
     console.print(f"  [dim]Skipping {len(done_ids)} features already implemented[/dim]")
     return remaining
+
+
+def _prepare_recovery_branch(
+    *,
+    target_path: Path,
+    run_id: str,
+    run_dir: Path,
+    source_path: Path,
+    project_name: str,
+    stage: str,
+    outputs_dir: Path,
+    state: PipelineRunState,
+    bundle,
+) -> str:
+    """Create/switch to an NC Dev branch and land an early checkpoint.
+
+    Feature sessions commit their own work, but the operator still needs
+    a recoverable branch before the first feature session returns. This
+    helper keeps that branch local and commits only compact recovery
+    metadata under ``.ncdev/recovery``; the noisy workspace
+    ``.nc-dev/runs`` directory remains out of the product repo.
+    """
+    try:
+        _ensure_git_repo(target_path)
+        _ensure_git_identity(target_path)
+        current = _git_stdout(target_path, ["branch", "--show-current"])
+        branch = (
+            current
+            if current.startswith("ncdev/")
+            else _recovery_branch_name(project_name or target_path.name, run_id)
+        )
+        if current != branch:
+            if _branch_exists(target_path, branch):
+                switched = _git(target_path, ["switch", branch])
+            else:
+                switched = _git(target_path, ["switch", "-c", branch])
+            if switched.returncode != 0:
+                console.print(
+                    f"  [yellow]Recovery branch setup skipped: "
+                    f"{(switched.stderr or switched.stdout).strip()}[/yellow]"
+                )
+                return ""
+        _commit_recovery_checkpoint(
+            target_path=target_path,
+            run_id=run_id,
+            run_dir=run_dir,
+            source_path=source_path,
+            branch=branch,
+            project_name=project_name,
+            stage=stage,
+            outputs_dir=outputs_dir,
+            state=state,
+            bundle=bundle,
+        )
+        console.print(f"  [green]✓[/green] Recovery branch ready: {branch}")
+        return branch
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"  [yellow]Recovery branch setup skipped: {exc}[/yellow]")
+        return ""
+
+
+def _commit_recovery_checkpoint(
+    *,
+    target_path: Path,
+    run_id: str,
+    run_dir: Path,
+    source_path: Path,
+    branch: str,
+    project_name: str,
+    stage: str,
+    outputs_dir: Path,
+    state: PipelineRunState,
+    bundle,
+) -> None:
+    rels = _write_recovery_snapshot(
+        target_path=target_path,
+        run_id=run_id,
+        run_dir=run_dir,
+        source_path=source_path,
+        branch=branch,
+        project_name=project_name,
+        stage=stage,
+        outputs_dir=outputs_dir,
+        state=state,
+        bundle=bundle,
+    )
+    if not rels:
+        return
+    add = _git(target_path, ["add", "-f", *rels])
+    if add.returncode != 0:
+        console.print(
+            f"  [yellow]Recovery checkpoint add failed: "
+            f"{(add.stderr or add.stdout).strip()}[/yellow]"
+        )
+        return
+    changed = _git(target_path, ["diff", "--cached", "--quiet", "--", *rels])
+    if changed.returncode == 0:
+        return
+    commit_args = [
+        "commit",
+        "--no-verify",
+        "-m",
+        f"chore(ncdev): checkpoint {run_id}",
+        "--",
+        *rels,
+    ]
+    commit = _git(target_path, commit_args)
+    if commit.returncode != 0 and "nothing to commit" not in (
+        commit.stderr or commit.stdout
+    ).lower():
+        console.print(
+            f"  [yellow]Recovery checkpoint commit failed: "
+            f"{(commit.stderr or commit.stdout).strip()}[/yellow]"
+        )
+
+
+def _write_recovery_snapshot(
+    *,
+    target_path: Path,
+    run_id: str,
+    run_dir: Path,
+    source_path: Path,
+    branch: str,
+    project_name: str,
+    stage: str,
+    outputs_dir: Path,
+    state: PipelineRunState,
+    bundle,
+) -> list[str]:
+    root = target_path / RECOVERY_DIR / run_id
+    root.mkdir(parents=True, exist_ok=True)
+    feature_ids = [
+        str(getattr(feature, "feature_id", ""))
+        for feature in getattr(bundle.feature_queue, "features", []) or []
+        if getattr(feature, "feature_id", "")
+    ]
+    checkpoint = {
+        "version": 1,
+        "run_id": run_id,
+        "branch": branch,
+        "project_name": project_name,
+        "stage": stage,
+        "status": state.status,
+        "phase": state.phase,
+        "current_step": state.current_step,
+        "source_path": str(source_path.resolve()),
+        "workspace_run_dir": str(run_dir.resolve()),
+        "target_path": str(target_path.resolve()),
+        "feature_ids": feature_ids,
+        "completed_features": state.completed_features,
+        "total_features": state.total_features,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (root / "checkpoint.json").write_text(
+        json.dumps(checkpoint, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    rels = [_rel_to_repo(target_path, root / "checkpoint.json")]
+    rels.extend(_copy_recovery_artifacts(run_dir=run_dir, outputs_dir=outputs_dir, root=root))
+    rels.extend(_write_bundle_recovery_outputs(target_path=target_path, root=root, bundle=bundle))
+    return rels
+
+
+def _copy_recovery_artifacts(*, run_dir: Path, outputs_dir: Path, root: Path) -> list[str]:
+    rels: list[str] = []
+    target_repo = root.parents[2]
+    output_names = [
+        "target-project-contract.json",
+        "verification-contract.json",
+        "feature-queue.json",
+        "behavior-contract.v1.json",
+        "behavior-contract.md",
+        "design-system.json",
+    ]
+    for name in output_names:
+        src = outputs_dir / name
+        if not src.exists() or not src.is_file():
+            continue
+        dest = root / "outputs" / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        rels.append(_rel_to_repo(target_repo, dest))
+
+    for src in [run_dir / "state.json", run_dir / "provenance.jsonl"]:
+        if not src.exists() or not src.is_file():
+            continue
+        dest = root / src.name
+        shutil.copyfile(src, dest)
+        rels.append(_rel_to_repo(target_repo, dest))
+
+    for src in sorted((run_dir / "steps").glob("*/result.json")):
+        dest = root / "steps" / src.parent.name / "result.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        rels.append(_rel_to_repo(target_repo, dest))
+    for src in sorted((run_dir / "steps").glob("*/signals.json")):
+        dest = root / "steps" / src.parent.name / "signals.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        rels.append(_rel_to_repo(target_repo, dest))
+    return rels
+
+
+def _write_bundle_recovery_outputs(*, target_path: Path, root: Path, bundle) -> list[str]:
+    """Ensure core charter files exist in the branch even in mocked runs.
+
+    Real charter generation writes these files under ``.nc-dev/runs`` and
+    they are copied above. Tests and some caller-supplied bundle flows may
+    only have the in-memory bundle, so write the canonical three-file
+    charter directly into the recovery snapshot if needed.
+    """
+    outputs = root / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    specs = {
+        "target-project-contract.json": bundle.contract,
+        "verification-contract.json": bundle.verification,
+        "feature-queue.json": bundle.feature_queue,
+    }
+    rels: list[str] = []
+    for name, model in specs.items():
+        dest = outputs / name
+        if not dest.exists():
+            dest.write_text(model.model_dump_json(indent=2), encoding="utf-8")
+        rels.append(_rel_to_repo(target_path, dest))
+    return rels
+
+
+def _ensure_git_repo(target_path: Path) -> None:
+    if _git(target_path, ["rev-parse", "--is-inside-work-tree"]).returncode == 0:
+        return
+    init = _git(target_path, ["init", "-q"])
+    if init.returncode != 0:
+        raise RuntimeError((init.stderr or init.stdout).strip() or "git init failed")
+
+
+def _recovery_branch_name(project_name: str, run_id: str) -> str:
+    project = _slug(project_name)[:48] or "project"
+    run = _slug(run_id)[:64] or "run"
+    return f"ncdev/{project}-{run}"
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9._-]+", "-", value.lower()).strip("-._")
+
+
+def _branch_exists(repo: Path, branch: str) -> bool:
+    return _git(repo, ["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode == 0
+
+
+def _git_stdout(repo: Path, args: list[str]) -> str:
+    result = _git(repo, args)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git(repo: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+
+def _rel_to_repo(repo: Path, path: Path) -> str:
+    return path.relative_to(repo).as_posix()
 
 
 def _print_summary_table(completed: list[StepResult]) -> None:

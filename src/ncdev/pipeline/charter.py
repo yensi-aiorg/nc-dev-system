@@ -437,6 +437,7 @@ def generate_charter(
             )
             return None, session
 
+        _write_behavior_contract_best_effort(bundle, prd_path, output_dir)
         return bundle, session
 
     # Unreachable — the loop returns on every branch — but defensively
@@ -671,4 +672,36 @@ def write_charter(bundle: CharterBundle, output_dir: Path) -> None:
         # behavior-contract writer bug should not corrupt the canonical three
         # charter artifacts; callers that need the new artifact can invoke the
         # writer directly and handle the exception.
+        pass
+
+
+def _write_behavior_contract_best_effort(
+    bundle: CharterBundle,
+    source_path: Path | None,
+    output_dir: Path,
+) -> None:
+    """Persist the behavior contract companion for generated charters.
+
+    The three charter JSON files are the canonical planning artifacts, but
+    the factory's local behavior verifier consumes behavior-contract.v1.json.
+    Treating it as a normal charter companion keeps the verification path
+    available for every run, not just tests and synthetic bundles.
+    """
+    try:
+        from ncdev.contracts.behavior_contract import (
+            build_behavior_contract,
+            write_behavior_contract,
+        )
+
+        write_behavior_contract(
+            build_behavior_contract(
+                bundle,
+                source_path=source_path,
+                output_dir=output_dir,
+            ),
+            output_dir,
+        )
+    except Exception:
+        # The canonical charter is still valid; callers that require the
+        # behavior contract will fail explicitly when the verifier runs.
         pass

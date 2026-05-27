@@ -372,7 +372,7 @@ def test_cli_factory_calls_run_factory(monkeypatch, tmp_path):
     assert captured["max_consecutive_failures"] == 3
     assert captured["allow_unmetered"] is False
     assert captured["source_path"] == prd.resolve()
-    assert captured["probe_test_craftr"] is False
+    assert captured["probe_test_craftr"] is True
     assert captured["capture_baseline"] is False
     assert captured["test_craftr_mode"] == "local"
     assert captured["browser_smoke_contract"] is False
