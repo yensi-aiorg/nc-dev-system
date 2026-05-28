@@ -389,6 +389,46 @@ def test_generate_charter_success_loads_bundle(tmp_path: Path):
     assert result_bundle.contract.project_name == "myapp"
 
 
+def test_generate_charter_writes_behavior_contract_for_plain_three_file_output(
+    tmp_path: Path,
+):
+    """Real charter sessions write the three JSON files; NC Dev writes the
+    behavior-contract companion so factory verification has an executable
+    contract to run."""
+    bundle = _fake_charter_bundle()
+
+    def fake_session(prompt, **kwargs):  # noqa: ARG001
+        out = kwargs["cwd"]
+        (out / "target-project-contract.json").write_text(
+            bundle.contract.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        (out / "verification-contract.json").write_text(
+            bundle.verification.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        (out / "feature-queue.json").write_text(
+            bundle.feature_queue.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        return ClaudeSessionResult(
+            success=True, final_text="charter written",
+            exit_code=0, duration_seconds=1.0,
+        )
+
+    outputs = tmp_path / "outputs"
+    with patch("ncdev.pipeline.charter.run_ai_session", side_effect=fake_session):
+        result_bundle, session = generate_charter(
+            prd_path=tmp_path / "prd.md",
+            output_dir=outputs,
+        )
+
+    assert session.success is True
+    assert result_bundle is not None
+    assert (outputs / "behavior-contract.v1.json").exists()
+    assert (outputs / "behavior-contract.md").exists()
+
+
 def test_generate_charter_hard_fails_on_charter_error_file(tmp_path: Path):
     """Greenfield UI without design system: Claude writes charter-error.json."""
     def fake_session(prompt, **kwargs):  # noqa: ARG001

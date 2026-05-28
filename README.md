@@ -54,10 +54,16 @@ ncdev factory --source prd.md
     │       feature-queue.json             # ordered FeatureStep list
     │
     ├─ Phase 3: Design system (one Claude session)
-    │     ├─ Greenfield UI + Stitch MCP available    → Stitch tokens + screens
+    │     ├─ Greenfield UI + Stitch MCP + NCDEV_USE_STITCH=1 → Stitch tokens + screens
     │     ├─ Brownfield + docs/design-system/ exists → Claude summarises
-    │     ├─ Brownfield + no designs + no Stitch     → frontend-design skill
-    │     └─ Greenfield UI + neither                 → HARD FAIL (intentional)
+    │     └─ No usable design system / Stitch unavailable → deterministic seed tokens
+    │
+    ├─ Recovery branch checkpoint
+    │     NC Dev creates/switches to ncdev/<project>-<run_id> in the
+    │     target repo and commits compact recovery metadata under
+    │     .ncdev/recovery/<run_id>/ before feature work starts.
+    │     Later checkpoints copy state + result metadata there without
+    │     committing the noisy .nc-dev/runs logs.
     │
     ├─ Phase 4: Brownfield Citex ingestion (when applicable)
     │     Existing code chunked + synthesised into Citex RAG so feature
@@ -193,7 +199,7 @@ Run any subcommand with `--help` for its full flag set.
 - **Docker + Docker Compose** (for generated projects' local infra)
 - **Node.js 20+** (for generated projects' frontends)
 - **GitHub CLI** (`gh`) — for repo / PR operations
-- *Optional:* Stitch MCP for greenfield UI design generation
+- *Optional:* Stitch MCP for greenfield UI design generation (`NCDEV_USE_STITCH=1`)
 - *Optional:* Ollama (any recent GPU) for mock generation and local
   vision pre-screening
 
@@ -216,11 +222,11 @@ nc-dev-system/
 │   ├── contracts/                  # Behavior contract schema + writer
 │   └── pipeline/
 │       ├── charter.py              # Phase 2 — generates the 3 charter artifacts
-│       ├── design_phase.py         # Phase 3 — Stitch / existing / claude_generated / hard-fail
+│       ├── design_phase.py         # Phase 3 — Stitch / existing / deterministic seed
 │       ├── context_ingestion.py    # Phase 4 — brownfield → Citex RAG
 │       ├── claude_executor.py      # Phase 5 — per-feature Claude session
 │       ├── product_steward.py      # Phase 6 — closed-loop judge
-│       ├── engine.py               # `ncdev full` top-level orchestrator
+│       ├── engine.py               # Top-level orchestrator + recovery checkpoints
 │       ├── state_scanner.py        # Skip features already implemented
 │       ├── asset_manifest.py       # Per-feature image/GIF/SVG manifest
 │       ├── integration_gate.py     # Cross-feature verification gate

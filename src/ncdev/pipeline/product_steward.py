@@ -30,6 +30,7 @@ from ncdev.pipeline.models import (
 )
 from ncdev.pipeline.product_debt import DebtType, ProductDebt
 from ncdev.pipeline.provenance import load_provenance
+from ncdev.pipeline.project_runbook import ProjectRunbook, load_project_runbook
 
 
 class Disposition(str, Enum):
@@ -237,6 +238,34 @@ def _summarise_feature_provenance(
     return "\n".join(lines)
 
 
+def _summarise_project_runbook(runbook: ProjectRunbook | None) -> str:
+    if runbook is None:
+        return ""
+    lines = [
+        "### Project process runbook",
+        "",
+        f"- source: {runbook.source}",
+        f"- backend root: {runbook.backend.root or '(none)'}",
+        f"- backend single-test command: {runbook.backend.single_test_command or '(none)'}",
+        f"- frontend root: {runbook.frontend.root or '(none)'}",
+        f"- frontend single-test command: {runbook.frontend.single_test_command or '(none)'}",
+    ]
+    if runbook.protected_files:
+        lines.append("- protected files:")
+        lines.extend(f"  - {path}" for path in runbook.protected_files[:20])
+    if runbook.mandates:
+        lines.append("- mandates:")
+        lines.extend(f"  - {mandate}" for mandate in runbook.mandates[:12])
+    lines.extend([
+        "",
+        "Use this runbook when judging whether a failure is a real product",
+        "defect or a process/verifier mismatch. If the automated verifier",
+        "ignored this runbook, prefer `repair_current_slice` with reasoning",
+        "that names the process mismatch over `stop_as_unrecoverable`.",
+    ])
+    return "\n".join(lines)
+
+
 def _summarise_performance_status(
     *,
     product_debt: list[ProductDebt] | None,
@@ -294,6 +323,9 @@ def build_steward_prompt(
     )
     product_debt_block = _summarise_product_debt(product_debt)
     feature_provenance_block = _summarise_feature_provenance(feature_provenance)
+    process_runbook_block = _summarise_project_runbook(
+        load_project_runbook(target_path)
+    )
     gauntlet_block = _summarise_gauntlet(run_dir, completed)
     performance_status_block = _summarise_performance_status(
         product_debt=product_debt,
@@ -312,6 +344,11 @@ def build_steward_prompt(
     feature_provenance_section = (
         f"\n{feature_provenance_block}\n"
         if feature_provenance_block
+        else ""
+    )
+    process_runbook_section = (
+        f"\n{process_runbook_block}\n"
+        if process_runbook_block
         else ""
     )
     gauntlet_section = (
@@ -348,6 +385,7 @@ if not, what's the cheapest next move?"**
 ### Completed so far
 {_summarise_completed(completed)}
 {feature_provenance_section}
+{process_runbook_section}
 
 ### Current repo
 - target_path: {target_path}
@@ -378,7 +416,10 @@ Reply with a SINGLE JSON object (no prose around it). Schema:
 
 ### Disposition meanings
 
-- `continue` - current slice is in good shape; build the next feature(s).
+- `continue` - current slice is in good shape. If the latest pipeline
+  state is fully green, the factory treats this as product complete;
+  otherwise it re-enters the pipeline and lets the state scanner skip
+  already-done features so the next unfinished slice runs.
 - `repair_current_slice` - last slice has a fixable problem; re-run the
   feature(s) listed in `target_feature_ids` with the issue noted in
   `reasoning`. Use for: feature claimed PASSED but routes don't actually
@@ -431,6 +472,9 @@ capability ledger and bias future skill selection. Use [] when nothing stands ou
   target=[f02-design-system], reasoning lists the categories.
 - "PRD says 'manage appointments' but no feature handles cancellation
   flows - insert" -> `insert_features`
+- "f02-auth PASSED and the queue still has unbuilt downstream features
+  with no current failures" -> `continue` (the factory advances to the
+  next slice; it does NOT stop unless machine state is fully green).
 - "Every feature PASSED, integration gate is clean, TestCraftr scored
   all axes above threshold, Gauntlet has zero blocking failures on any
   feature" -> `continue` (which at end-of-run means "we're done")
@@ -443,9 +487,9 @@ capability ledger and bias future skill selection. Use [] when nothing stands ou
 If any feature in the completed list is in FAILED/BLOCKED status, you
 MUST pick a corrective disposition (`repair_current_slice` /
 `rewrite_acceptance` / `insert_features` / `stop_as_unrecoverable`).
-`continue` is reserved for "everything is green; move on" — emitting it
-while features are failed causes the factory to declare the product done
-and stop, which is exactly the bug we are trying to avoid.
+`continue` is reserved for "this cycle is green enough to advance" —
+the factory independently checks whether the whole product is green
+before it stops.
 
 Return the JSON now.
 """

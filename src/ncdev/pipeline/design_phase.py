@@ -10,16 +10,17 @@ and a summary :class:`DesignSystemDoc` artifact. Three paths:
     * ``source="existing"`` — brownfield case: ``docs/design-system/`` is
                               already populated; Claude reads it and
                               summarises into the artifact.
-    * ``source="claude_generated"`` — fallback when Stitch is
-                              unavailable AND the project is brownfield.
-                              Claude's ``frontend-design`` skill produces
-                              the tokens itself.
+    * ``source="claude_generated"`` — deterministic seed fallback when
+                              Stitch is unavailable or not explicitly
+                              enabled. The seed writes real tokens and
+                              component guidance so builds never proceed
+                              with an undefined design system.
 
-Hard-fail rule (enforces the user's ask):
+Stitch rule:
 
-    Greenfield UI project + no Stitch available + no existing design
-    system on disk → fail the run with an actionable error. We will NOT
-    let a build proceed without defined designs.
+    Stitch is opt-in via ``NCDEV_USE_STITCH=1``. If Stitch is configured
+    but the spawned session cannot invoke it, the phase falls back to the
+    deterministic seed instead of stopping the product build.
 """
 
 from __future__ import annotations

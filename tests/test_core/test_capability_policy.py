@@ -1,5 +1,13 @@
+from ncdev.core.capability_ledger import LedgerEntry
 from ncdev.core.capability_policy import resolve_model
+from ncdev.core.capability_policy import resolve_model as _rm
+from ncdev.core.capability_policy import (
+    is_model_rejection_error,
+    next_alias_down,
+    resolve_codex_options,
+)
 from ncdev.core.capability_probe import probe_claude, probe_codex
+from ncdev.core.config import CapabilityGateConfig
 
 
 def _claude_snap(monkeypatch, available=True):
@@ -50,9 +58,6 @@ def test_unavailable_provider_still_resolves_to_default(monkeypatch):
     assert resolve_model("anthropic_claude_code", "auto", snap) == "opus"
 
 
-from ncdev.core.capability_policy import resolve_codex_options
-
-
 def test_reasoning_effort_translates_to_codex_config_flag():
     args = resolve_codex_options({"reasoning_effort": "high"})
     assert args == ["-c", 'model_reasoning_effort="high"']
@@ -66,11 +71,6 @@ def test_empty_defaults_yield_no_args():
 def test_unknown_defaults_keys_are_ignored():
     args = resolve_codex_options({"base_url": "http://x", "reasoning_effort": "low"})
     assert args == ["-c", 'model_reasoning_effort="low"']
-
-
-# Append to tests/test_core/test_capability_policy.py
-from ncdev.core.capability_ledger import LedgerEntry
-from ncdev.core.capability_policy import resolve_model as _rm
 
 
 def _led(model, fpsr, n=1):
@@ -108,10 +108,6 @@ def test_gate_does_not_apply_to_explicit_pin(monkeypatch):
     assert _rm("anthropic_claude_code", "claude-opus-4-7", snap, ledger_entries=ledger) == "claude-opus-4-7"
 
 
-# Append to tests/test_core/test_capability_policy.py
-from ncdev.core.capability_policy import is_model_rejection_error, next_alias_down
-
-
 def test_is_model_rejection_error_matches_known_phrases():
     assert is_model_rejection_error("Error: model not found")
     assert is_model_rejection_error("you do not have access to this model")
@@ -126,10 +122,6 @@ def test_next_alias_down_steps_through_the_chain():
     assert next_alias_down("anthropic_claude_code", "haiku") is None
     assert next_alias_down("anthropic_claude_code", "claude-opus-4-7") is None
     assert next_alias_down("openai_codex", "gpt-5.5") is None
-
-
-# Append to tests/test_core/test_capability_policy.py
-from ncdev.core.config import CapabilityGateConfig
 
 
 def test_capability_gate_config_defaults_match_constants():

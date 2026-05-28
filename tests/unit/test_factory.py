@@ -278,6 +278,88 @@ def test_factory_stops_when_steward_says_continue_at_end_of_queue(monkeypatch, t
     assert summary["diagnosis"]["headline"]
 
 
+def test_factory_continue_does_not_complete_failed_pipeline(monkeypatch, tmp_path):
+    """Steward `continue` means advance unless the machine state is green."""
+    from ncdev import factory as fac
+
+    fake_state = _factory_pipeline_state(tmp_path, status="failed")
+
+    monkeypatch.setattr(fac, "run_pipeline", lambda **kw: fake_state)
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(
+        fac,
+        "run_product_steward",
+        lambda **kw: StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="advance, but not complete",
+        ),
+    )
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=1,
+        max_consecutive_failures=10,
+    )
+
+    assert result.stop_reason == FactoryStopReason.BUDGET_EXHAUSTED
+    assert result.stop_reason != FactoryStopReason.STEWARD_CONTINUE_AT_END
+
+
+def test_factory_repair_targets_next_pipeline_pass(monkeypatch, tmp_path):
+    """Repair cycles should rerun the Steward-targeted feature, not the whole queue."""
+    from ncdev import factory as fac
+
+    pipeline_states = iter([
+        _make_pipeline_state(tmp_path, 1, "failed"),
+        _make_pipeline_state(tmp_path, 2, "passed"),
+    ])
+    pipeline_kwargs: list[dict] = []
+
+    def fake_pipeline(**kw):
+        pipeline_kwargs.append(kw)
+        return next(pipeline_states)
+
+    decisions = iter([
+        StewardDecision(
+            disposition=Disposition.REPAIR_CURRENT_SLICE,
+            reasoning="fix f02 only",
+            target_feature_ids=["f02-auth"],
+        ),
+        StewardDecision(
+            disposition=Disposition.CONTINUE,
+            reasoning="done",
+        ),
+    ])
+
+    monkeypatch.setattr(fac, "run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        fac,
+        "load_charter_bundle_from_run",
+        lambda run_dir: MagicMock(feature_queue=MagicMock(features=[])),
+    )
+    monkeypatch.setattr(fac, "run_product_steward", lambda **kw: next(decisions))
+
+    prd = tmp_path / "prd.md"
+    prd.write_text("# fake")
+    result = run_factory(
+        workspace=tmp_path,
+        source_path=prd,
+        max_cycles=2,
+        max_consecutive_failures=10,
+    )
+
+    assert result.stop_reason == FactoryStopReason.STEWARD_CONTINUE_AT_END
+    assert pipeline_kwargs[0].get("target_feature_ids") is None
+    assert pipeline_kwargs[1].get("target_feature_ids") == ["f02-auth"]
+
+
 def test_factory_exhausts_budget(monkeypatch, tmp_path):
     """If the Steward keeps asking for repairs, the factory stops at max_cycles."""
     from ncdev import factory as fac

@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from ncdev.pipeline.gauntlet import (
     DEFAULT_LAYERS,
     GauntletContext,
@@ -15,7 +13,6 @@ from ncdev.pipeline.gauntlet import (
 )
 from ncdev.pipeline.gauntlet.layers_command import (
     layer_compile,
-    layer_e2e_tests,
     layer_lint,
     layer_unit_tests,
 )
@@ -60,7 +57,7 @@ def test_report_blocked_by_blocking_failure() -> None:
         ],
     )
     assert report.passed is False
-    assert [l.layer for l in report.blocking_failures] == ["L2"]
+    assert [layer.layer for layer in report.blocking_failures] == ["L2"]
 
 
 def test_non_blocking_failure_does_not_block() -> None:
@@ -69,7 +66,7 @@ def test_non_blocking_failure_does_not_block() -> None:
         layers=[GauntletLayerResult("L8", LayerStatus.FAILED, False, "advisory")],
     )
     assert report.passed is True
-    assert [l.layer for l in report.advisory_failures] == ["L8"]
+    assert [layer.layer for layer in report.advisory_failures] == ["L8"]
 
 
 def test_error_in_blocking_layer_blocks() -> None:
@@ -148,7 +145,7 @@ def test_run_gauntlet_blocks_on_failing_layer(tmp_path: Path) -> None:
     contract = VerificationContract(backend_test_command="exit 1")
     report = run_gauntlet(_ctx(tmp_path, contract))
     assert report.passed is False
-    assert any(l.layer == "L2-unit" for l in report.blocking_failures)
+    assert any(layer.layer == "L2-unit" for layer in report.blocking_failures)
 
 
 def test_run_gauntlet_catches_crashing_layer_as_nonblocking_error(

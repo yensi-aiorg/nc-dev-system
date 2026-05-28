@@ -377,6 +377,7 @@ def _record_cycle_failure(
     *,
     caps: RunCaps,
     decision: StewardDecision,
+    product_complete: bool = False,
     passed_count_this_cycle: int = 0,
     passed_count_prior_cycle: int = 0,
 ) -> bool:
@@ -397,7 +398,7 @@ def _record_cycle_failure(
     never `continue`. Reset the counter on progress to give the
     repair loop the space it needs.
     """
-    if decision.disposition == Disposition.CONTINUE:
+    if decision.disposition == Disposition.CONTINUE and product_complete:
         state.consecutive_failures = 0
         return False
     if passed_count_this_cycle > passed_count_prior_cycle:
@@ -432,6 +433,35 @@ def _count_passed_in_pipeline(pipeline_state: PipelineRunState | None) -> int:
         if status_name in {"PASSED", "SKIPPED"}:
             count += 1
     return count
+
+
+def _pipeline_is_product_complete(pipeline_state: PipelineRunState | None) -> bool:
+    """True only when the latest pipeline pass proves the whole product green.
+
+    A Steward may use `continue` in the human sense of "advance to the
+    next slice". The factory must not translate that into "stop, product
+    done" unless the machine state is also green. This closes the observed
+    failure where a run stopped with steward_continue_at_end while the
+    latest pipeline status was still failed.
+    """
+    if pipeline_state is None or getattr(pipeline_state, "status", "") != "passed":
+        return False
+    for step in getattr(pipeline_state, "completed_steps", []) or []:
+        status_name = getattr(step.status, "name", str(step.status)).upper()
+        if status_name in {"FAILED", "BLOCKED", "PENDING", "BUILDING", "VERIFYING", "REPAIRING"}:
+            return False
+    return True
+
+
+def _failed_feature_ids(pipeline_state: PipelineRunState | None) -> list[str]:
+    if pipeline_state is None:
+        return []
+    out: list[str] = []
+    for step in getattr(pipeline_state, "completed_steps", []) or []:
+        status_name = getattr(step.status, "name", str(step.status)).upper()
+        if status_name == "FAILED" and getattr(step, "feature_id", ""):
+            out.append(step.feature_id)
+    return out
 
 
 async def _probe_test_craftr_async(
@@ -1129,6 +1159,8 @@ def _run_factory_cycle_loop(
     pipeline_run_id: str | None = None,
     skip_charter: bool = False,
 ) -> FactoryRunState:
+    next_target_feature_ids: list[str] | None = None
+
     for cycle in range(1, max_cycles + 1):
         if _stop_if_wall_time_exhausted(state, caps=caps):
             run_dir = workspace / ".nc-dev" / "runs" / make_run_id("factory-guardrail")
@@ -1166,10 +1198,12 @@ def _run_factory_cycle_loop(
             config=config,
             run_id=pipeline_run_id,
             skip_charter=skip_charter,
+            target_feature_ids=next_target_feature_ids,
             # Factory owns halting via Steward — engine should always
             # surface FAILED features instead of returning early.
             halt_on_failed=False,
         )
+        next_target_feature_ids = None
         state.cycles_run = cycle
         state.last_pipeline_status = pipeline_state.status
         state.run_dirs.append(pipeline_state.run_dir)
@@ -1437,10 +1471,12 @@ def _run_factory_cycle_loop(
         # A cycle that landed a new PASSED feature is making progress
         # even if other features in the queue are still failing.
         current_passed = _count_passed_in_pipeline(pipeline_state)
+        product_complete = _pipeline_is_product_complete(pipeline_state)
         if _record_cycle_failure(
             state,
             caps=caps,
             decision=decision,
+            product_complete=product_complete,
             passed_count_this_cycle=current_passed,
             passed_count_prior_cycle=state.prior_passed_count,
         ):
@@ -1469,18 +1505,26 @@ def _run_factory_cycle_loop(
         state.prior_passed_count = max(state.prior_passed_count, current_passed)
 
         if decision.disposition == Disposition.CONTINUE:
-            # CONTINUE at end-of-run = product is done.
-            state.stop_reason = FactoryStopReason.STEWARD_CONTINUE_AT_END
-            return _finish_factory_state(state, run_dir=run_dir)
+            if product_complete:
+                # CONTINUE + green machine state = product is done.
+                state.stop_reason = FactoryStopReason.STEWARD_CONTINUE_AT_END
+                return _finish_factory_state(state, run_dir=run_dir)
+            # Steward used "continue" in the advance-the-sprint sense.
+            # Re-enter the pipeline; state-scanner will skip already-done
+            # features and the next unfinished slice will run.
+            continue
         if decision.disposition == Disposition.STOP_AS_UNRECOVERABLE:
             state.stop_reason = FactoryStopReason.STEWARD_UNRECOVERABLE
             return _finish_factory_state(state, run_dir=run_dir)
         if decision.disposition == Disposition.REPAIR_CURRENT_SLICE:
             # Repair = next cycle re-runs the affected features. The
             # state scanner will see the FAILED status from this cycle
-            # and not skip them. (The next slice will tighten this to
-            # only re-run target_feature_ids; for now we re-enter the
-            # whole pipeline.)
+            # and not skip them.
+            next_target_feature_ids = (
+                list(decision.target_feature_ids)
+                or _failed_feature_ids(pipeline_state)
+                or None
+            )
             continue
         if decision.disposition == Disposition.INSERT_FEATURES:
             try:

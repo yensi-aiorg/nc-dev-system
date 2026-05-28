@@ -38,6 +38,10 @@ from pathlib import Path
 from rich.console import Console
 
 from ncdev.pipeline.models import FeatureStep, StepResult, StepStatus
+from ncdev.pipeline.project_runbook import (
+    command_for_test_from_runbook,
+    load_project_runbook,
+)
 
 console = Console()
 
@@ -208,18 +212,26 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
     instead of ``npx vitest run`` (vitest's default config typically
     excludes e2e/ anyway).
 
-    For Python tests, prefers the project's own venv python (so
-    project-installed packages like sqlalchemy are visible) over
-    NC Dev's interpreter. Looks for .venv/bin/python or
-    venv/bin/python in the marker directory and ancestors up to the
-    target_path.
+    For Python tests, uses the project's own venv python only when that
+    interpreter can run pytest. Brownfield repos sometimes contain a stale
+    backend/.venv without test tooling; in that case falling back to the
+    configured shell pytest is more accurate than failing on the dead venv.
     """
+    runbook_command = command_for_test_from_runbook(
+        load_project_runbook(target_path),
+        test_path=test_path,
+        target_path=target_path,
+    )
+    if runbook_command is not None:
+        return runbook_command
+
     suffix = test_path.suffix
     if suffix == ".py":
         marker_name = "pyproject.toml"
-        # Default to a stable Python launcher; we may switch to the project's
-        # venv python below once we've located the marker directory.
-        cmd_template = [_default_python_runner(), "-m", "pytest", "-q", "-x"]
+        # Prefer the same command shape most verification contracts use.
+        # We may switch to a project venv python below once we've proved that
+        # interpreter can actually run pytest.
+        cmd_template = _default_pytest_cmd_template()
     elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
         marker_name = "package.json"
         if _looks_like_playwright_test(test_path):
@@ -231,12 +243,17 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
 
     # Walk up from the test file looking for the project marker.
     project_root = target_path
+    found_marker = False
     cursor = test_path.parent
     while cursor != cursor.parent and cursor.is_relative_to(target_path):
         if (cursor / marker_name).exists():
             project_root = cursor
+            found_marker = True
             break
         cursor = cursor.parent
+
+    if suffix == ".py" and not found_marker:
+        cmd_template = [_default_python_runner(), "-m", "pytest", "-q", "-x"]
 
     # If we found a python project, swap NC Dev's interpreter for the
     # project's venv python when one exists. Without this, project deps
@@ -244,11 +261,18 @@ def _runner_for_test(test_path: Path, target_path: Path) -> tuple[Path | None, l
     # with ModuleNotFoundError even when the project itself works.
     if suffix == ".py":
         venv_py = _find_project_python(project_root, target_path)
-        if venv_py is not None:
+        if venv_py is not None and _python_can_run_pytest(venv_py):
             cmd_template = [str(venv_py), "-m", "pytest", "-q", "-x"]
 
     rel = test_path.relative_to(project_root) if test_path.is_relative_to(project_root) else test_path
     return project_root, [*cmd_template, str(rel)]
+
+
+def _default_pytest_cmd_template() -> list[str]:
+    """Return the default command template for Python test files."""
+    if shutil.which("pytest"):
+        return ["pytest", "-q", "-x"]
+    return [_default_python_runner(), "-m", "pytest", "-q", "-x"]
 
 
 def _default_python_runner() -> str:
@@ -258,6 +282,20 @@ def _default_python_runner() -> str:
     if shutil.which("python"):
         return "python"
     return sys.executable
+
+
+def _python_can_run_pytest(python_path: Path) -> bool:
+    """True when ``python_path -m pytest`` is available."""
+    try:
+        result = subprocess.run(
+            [str(python_path), "-m", "pytest", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError):
+        return False
+    return result.returncode == 0
 
 
 def _find_project_python(project_root: Path, target_path: Path) -> Path | None:

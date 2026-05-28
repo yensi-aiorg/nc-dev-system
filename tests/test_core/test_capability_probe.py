@@ -1,10 +1,16 @@
 from ncdev.core.capability_probe import (
     CLAUDE_MODEL_ALIASES,
     detect_cli_version,
+    load_snapshot,
+    parse_supported_flags,
+    persist_capability_snapshot,
     probe_claude,
     probe_codex,
+    probe_toolchain,
+    scan_installed_skills,
+    write_snapshot,
 )
-from ncdev.core.models import ProviderCapabilitySnapshot
+from ncdev.core.models import CapabilitySnapshotDoc, ProviderCapabilitySnapshot
 
 
 def test_detect_cli_version_parses_semver():
@@ -44,11 +50,6 @@ def test_probe_codex_records_version(monkeypatch):
     assert snap.version == "0.130.0"
 
 
-from pathlib import Path
-
-from ncdev.core.capability_probe import scan_installed_skills
-
-
 def test_scan_installed_skills_finds_skill_dirs(tmp_path, monkeypatch):
     home_skills = tmp_path / "home" / ".claude" / "skills"
     (home_skills / "systematic-debugging").mkdir(parents=True)
@@ -68,14 +69,6 @@ def test_scan_installed_skills_finds_skill_dirs(tmp_path, monkeypatch):
 def test_scan_installed_skills_handles_missing_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr("ncdev.core.capability_probe.Path.home", lambda: tmp_path / "nope")
     assert scan_installed_skills(tmp_path / "also-nope") == []
-
-
-from ncdev.core.capability_probe import (
-    load_snapshot,
-    probe_toolchain,
-    write_snapshot,
-)
-from ncdev.core.models import CapabilitySnapshotDoc
 
 
 def test_probe_toolchain_returns_snapshot_doc(tmp_path, monkeypatch):
@@ -113,9 +106,6 @@ def test_load_snapshot_corrupt_returns_none(tmp_path):
     assert load_snapshot(bad) is None
 
 
-from ncdev.core.capability_probe import parse_supported_flags
-
-
 def test_parse_supported_flags_extracts_long_flags():
     help_text = """Usage: claude [options]
       --model <name>      The model
@@ -136,9 +126,6 @@ def test_probe_claude_records_flags_in_notes(monkeypatch):
     )
     snap = probe_claude()
     assert any("flags:" in note and "--model" in note for note in snap.notes)
-
-
-from ncdev.core.capability_probe import persist_capability_snapshot
 
 
 def test_persist_capability_snapshot_writes_to_workspace(tmp_path, monkeypatch):

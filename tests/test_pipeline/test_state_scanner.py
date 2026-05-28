@@ -12,6 +12,8 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from ncdev.pipeline.models import FeatureAcceptance, FeatureStep, StepStatus
 from ncdev.pipeline.state_scanner import (
     build_skip_results,
@@ -276,8 +278,71 @@ def test_runner_for_test_python_finds_pyproject(tmp_path: Path) -> None:
     project_root, cmd = _runner_for_test(test_file, tmp_path)
     assert project_root == tmp_path / "backend"
     assert cmd is not None
-    assert cmd[0].endswith("python") or cmd[0].endswith("python3")
+    assert cmd[:3] == ["pytest", "-q", "-x"] or (
+        cmd[0].endswith("python") or cmd[0].endswith("python3")
+    )
     assert cmd[-1] == "tests/test_x.py"
+
+
+def test_runner_for_test_ignores_venv_without_pytest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ncdev.pipeline import state_scanner
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    monkeypatch.setattr(
+        state_scanner.shutil,
+        "which",
+        lambda name: "/usr/local/bin/pytest" if name == "pytest" else None,
+    )
+
+    backend = tmp_path / "backend"
+    (backend / ".venv" / "bin").mkdir(parents=True)
+    stale_python = backend / ".venv" / "bin" / "python"
+    stale_python.write_text("#!/bin/sh\nexit 1\n")
+    stale_python.chmod(0o755)
+    (backend / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (backend / "tests").mkdir()
+    test_file = backend / "tests" / "test_x.py"
+    test_file.write_text("def test_x(): pass\n")
+
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+
+    assert project_root == backend
+    assert cmd == ["pytest", "-q", "-x", "tests/test_x.py"]
+
+
+def test_runner_for_test_uses_project_runbook_before_heuristics(tmp_path: Path) -> None:
+    from ncdev.pipeline.project_runbook import ProjectRunbook, TestCommandPolicy
+    from ncdev.pipeline.project_runbook import write_project_runbook
+    from ncdev.pipeline.state_scanner import _runner_for_test
+
+    backend = tmp_path / "backend"
+    (backend / ".venv" / "bin").mkdir(parents=True)
+    stale_python = backend / ".venv" / "bin" / "python"
+    stale_python.write_text("#!/bin/sh\nexit 1\n")
+    stale_python.chmod(0o755)
+    (backend / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (backend / "tests").mkdir()
+    test_file = backend / "tests" / "test_x.py"
+    test_file.write_text("def test_x(): pass\n")
+    write_project_runbook(
+        ProjectRunbook(
+            project_name="x",
+            backend=TestCommandPolicy(
+                root="backend",
+                test_command="pytest -q",
+                single_test_command="pytest -q -x {test_path}",
+            ),
+        ),
+        target_path=tmp_path,
+        output_dir=tmp_path / "run" / "outputs",
+    )
+
+    project_root, cmd = _runner_for_test(test_file, tmp_path)
+
+    assert project_root == backend
+    assert cmd == ["pytest", "-q", "-x", "tests/test_x.py"]
 
 
 def test_runner_for_test_frontend_finds_package_json(tmp_path: Path) -> None:
@@ -303,6 +368,7 @@ def test_runner_for_test_falls_back_when_no_marker(tmp_path: Path) -> None:
     # No marker → root falls back to target_path; absolute test path used
     assert project_root == tmp_path
     assert cmd is not None
+    assert cmd[1:4] == ["-m", "pytest", "-q"]
 
 
 def test_runner_for_test_returns_none_for_unknown_suffix(tmp_path: Path) -> None:

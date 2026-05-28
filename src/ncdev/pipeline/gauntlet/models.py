@@ -77,10 +77,18 @@ class GauntletReport:
         ]
 
     def summary_line(self) -> str:
-        passed = sum(1 for l in self.layers if l.status == LayerStatus.PASSED)
-        failed = sum(1 for l in self.layers if l.status == LayerStatus.FAILED)
-        skipped = sum(1 for l in self.layers if l.status == LayerStatus.SKIPPED)
-        errored = sum(1 for l in self.layers if l.status == LayerStatus.ERROR)
+        passed = sum(
+            1 for layer in self.layers if layer.status == LayerStatus.PASSED
+        )
+        failed = sum(
+            1 for layer in self.layers if layer.status == LayerStatus.FAILED
+        )
+        skipped = sum(
+            1 for layer in self.layers if layer.status == LayerStatus.SKIPPED
+        )
+        errored = sum(
+            1 for layer in self.layers if layer.status == LayerStatus.ERROR
+        )
         verdict = "PASS" if self.passed else "BLOCKED"
         return (
             f"gauntlet {verdict} [{self.feature_id}] — "

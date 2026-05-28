@@ -3,7 +3,11 @@ from ncdev.core.capability_ledger import (
     append_entry,
     ledger_path,
     read_entries,
+    recent_lessons,
+    record_cycle,
 )
+from ncdev.pipeline.metrics import RunMetrics
+from ncdev.pipeline.models import StepResult, StepStatus
 
 
 def _entry(**over):
@@ -50,9 +54,6 @@ def test_read_entries_skips_corrupt_lines(monkeypatch, tmp_path):
     assert [e.run_id for e in entries] == ["good"]
 
 
-from ncdev.pipeline.models import StepResult, StepStatus
-
-
 def test_step_result_has_capability_fields_with_safe_defaults():
     step = StepResult(feature_id="f1", status=StepStatus.PASSED)
     assert step.resolved_provider == ""
@@ -67,10 +68,6 @@ def test_step_result_accepts_capability_fields():
         skills_steered=["systematic-debugging"],
     )
     assert step.resolved_model == "gpt-5.5"
-
-
-from ncdev.core.capability_ledger import record_cycle
-from ncdev.pipeline.metrics import RunMetrics
 
 
 def test_record_cycle_writes_entry_from_metrics(monkeypatch, tmp_path):
@@ -129,9 +126,6 @@ def test_record_cycle_no_steps_uses_metrics_builder(monkeypatch, tmp_path):
     assert e.provider == "openai_codex"
     assert e.model == "gpt-5.5"
     assert e.broken_rate == 0.0
-
-
-from ncdev.core.capability_ledger import recent_lessons
 
 
 def test_recent_lessons_flattens_capability_lessons(monkeypatch, tmp_path):

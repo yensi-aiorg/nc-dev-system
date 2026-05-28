@@ -235,6 +235,18 @@ class QualityGateConfig(BaseModel):
     require_human_release: bool = True
 
 
+class ProcessFlowConfig(BaseModel):
+    """Controls the model-authored process policy layer.
+
+    When enabled, NC Dev asks an AI model to produce a schema-validated
+    project runbook that captures repo-specific commands and mandates.
+    Python still executes and enforces the runbook.
+    """
+
+    ai_runbook_enabled: bool = False
+    ai_runbook_timeout_seconds: int = 180
+
+
 class HouseDefaultsAuthConfig(BaseModel):
     """Auth defaults used when the PRD is silent on auth provider.
 
@@ -335,6 +347,7 @@ class NCDevConfig(BaseModel):
     capabilities: CapabilityMatrixConfig = Field(default_factory=CapabilityMatrixConfig)
     capability_gate: CapabilityGateConfig = Field(default_factory=CapabilityGateConfig)
     quality_gates: QualityGateConfig = Field(default_factory=QualityGateConfig)
+    process_flow: ProcessFlowConfig = Field(default_factory=ProcessFlowConfig)
     sentinel: SentinelConfig = Field(default_factory=SentinelConfig)
     house_defaults: HouseDefaultsConfig = Field(default_factory=HouseDefaultsConfig)
 

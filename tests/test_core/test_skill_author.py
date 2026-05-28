@@ -1,8 +1,13 @@
+import pytest
+
+from ncdev.core.skill_author import author_skill
 from ncdev.core.skill_author import (
     candidate_skills_dir,
     list_pending_skills,
+    promote_skill,
     skills_install_dir,
 )
+from ncdev.core.skill_candidate import SkillCandidate
 
 
 def test_candidate_dir_is_under_home_ncdev(monkeypatch, tmp_path):
@@ -27,11 +32,6 @@ def test_list_pending_skills_finds_dirs_with_skill_md(monkeypatch, tmp_path):
 def test_list_pending_skills_empty_when_no_dir(monkeypatch, tmp_path):
     monkeypatch.setattr("ncdev.core.skill_author.Path.home", lambda: tmp_path)
     assert list_pending_skills() == []
-
-
-import pytest
-
-from ncdev.core.skill_author import promote_skill
 
 
 def _make_pending(tmp_path, name):
@@ -61,10 +61,6 @@ def test_promote_refuses_to_overwrite_existing_skill(monkeypatch, tmp_path):
     (tmp_path / ".claude" / "skills" / "retry-helper").mkdir(parents=True)
     with pytest.raises(FileExistsError):
         promote_skill("retry-helper")
-
-
-from ncdev.core.skill_author import author_skill
-from ncdev.core.skill_candidate import SkillCandidate
 
 
 def test_author_skill_spawns_session_into_pending_dir(monkeypatch, tmp_path):
