@@ -212,6 +212,7 @@ def run_ai_session(
             timeout=timeout,
             model=model,
             log_path=log_path,
+            on_event=on_event,
             extra_args=extra_args,
         )
 
@@ -252,6 +253,7 @@ def run_codex_session(
     log_path: Path | None = None,
     extra_args: list[str] | None = None,
     codex_options: list[str] | None = None,
+    on_event: Callable[[dict], None] | None = None,
     max_bytes_per_stream: int = _CODEX_CAPTURE_MAX_BYTES,
 ) -> ClaudeSessionResult:
     """Run a Codex session. No skills, no subagents, no NC Dev hooks.
@@ -315,18 +317,23 @@ def run_codex_session(
     stdout_buf = _TailBuffer(max_bytes_per_stream)
     stderr_buf = _TailBuffer(max_bytes_per_stream)
 
-    def _drain(stream, buf: "_TailBuffer") -> None:
+    def _drain(stream, buf: "_TailBuffer", stream_name: str) -> None:
         try:
             for line in stream:
                 buf.append(line)
+                if on_event is not None:
+                    try:
+                        on_event({"type": f"codex_{stream_name}", "text": line})
+                    except Exception:  # noqa: BLE001
+                        pass
         except Exception:  # noqa: BLE001
             pass
 
     stdout_thread = threading.Thread(
-        target=_drain, args=(proc.stdout, stdout_buf), daemon=True,
+        target=_drain, args=(proc.stdout, stdout_buf, "stdout"), daemon=True,
     )
     stderr_thread = threading.Thread(
-        target=_drain, args=(proc.stderr, stderr_buf), daemon=True,
+        target=_drain, args=(proc.stderr, stderr_buf, "stderr"), daemon=True,
     )
     stdout_thread.start()
     stderr_thread.start()

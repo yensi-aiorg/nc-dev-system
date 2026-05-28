@@ -340,6 +340,7 @@ def seed_design_system(
 
     tokens = {
         "version": "1.0",
+        "generated_by": "ncdev.design_seed",
         "generated_at": _utc_now(),
         "archetype": archetype,
         "summary": spec["summary"],

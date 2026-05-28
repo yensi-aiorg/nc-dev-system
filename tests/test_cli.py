@@ -72,6 +72,15 @@ def test_cli_serve_parses() -> None:
     assert args.port == 8080
 
 
+def test_cli_monitor_parses() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["monitor", "--port", "16652", "--run-dir", "/tmp/run"])
+    assert args.command == "monitor"
+    assert args.port == 16652
+    assert args.host == "127.0.0.1"
+    assert args.run_dir == "/tmp/run"
+
+
 def test_cli_qa_import_parses(tmp_path: Path) -> None:
     parser = build_parser()
     args = parser.parse_args([

@@ -221,10 +221,9 @@ def is_ui_project(contract: TargetProjectContract) -> bool:
 def _existing_design_was_seeded_by_ncdev(target_path: Path) -> bool:
     """True if docs/design-system/tokens.json was emitted by our seed.
 
-    The deterministic seed writes a top-level ``"owned_by_feature"`` key.
-    User-authored token files won't have it. We use this to decide
-    whether to re-run the seed (overwriting our output) or invoke the
-    Claude summariser (preserving the user's tokens).
+    Only files with the explicit seed marker are considered disposable seed
+    output. ``owned_by_feature`` is provenance, not authorship: later feature
+    work can legitimately own richer tokens and must not be overwritten.
     """
     tokens_path = target_path / "docs" / "design-system" / "tokens.json"
     if not tokens_path.exists():
@@ -232,7 +231,10 @@ def _existing_design_was_seeded_by_ncdev(target_path: Path) -> bool:
     try:
         import json as _j
         data = _j.loads(tokens_path.read_text(encoding="utf-8"))
-        return isinstance(data, dict) and "owned_by_feature" in data
+        return (
+            isinstance(data, dict)
+            and data.get("generated_by") == "ncdev.design_seed"
+        )
     except (OSError, ValueError):
         return False
 

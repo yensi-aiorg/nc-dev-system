@@ -168,8 +168,8 @@ def command_for_test_from_runbook(
     )
     rel_text = rel_to_target.as_posix()
 
-    policies = [runbook.backend, runbook.frontend]
-    for policy in policies:
+    policies = [("backend", runbook.backend), ("frontend", runbook.frontend)]
+    for area, policy in policies:
         if not policy.root:
             continue
         root = target_path / policy.root
@@ -186,6 +186,8 @@ def command_for_test_from_runbook(
         )
         if not template:
             continue
+        if area == "frontend" and _looks_like_playwright_test(test_path):
+            return root, ["npx", "playwright", "test", rel_to_root]
         command = template.format(
             test_path=rel_to_root,
             repo_test_path=rel_text,
@@ -194,6 +196,19 @@ def command_for_test_from_runbook(
         return root, shlex.split(command)
 
     return None
+
+
+def _looks_like_playwright_test(test_path: Path) -> bool:
+    """True for browser E2E specs that must not be routed through vitest."""
+
+    parts = {part.lower() for part in test_path.parts}
+    if "e2e" in parts:
+        return True
+    try:
+        head = test_path.read_text(encoding="utf-8", errors="ignore")[:4096]
+    except OSError:
+        return False
+    return "@playwright/test" in head
 
 
 def parse_runbook_response(text: str) -> ProjectRunbook | None:

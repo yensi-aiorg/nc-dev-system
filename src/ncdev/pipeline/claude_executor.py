@@ -38,6 +38,7 @@ from ncdev.claude_session import (
     DEFAULT_BUILD_TOOLS,
 )
 from ncdev.core.config import NCDevConfig
+from ncdev.monitoring import MonitorEventWriter
 from ncdev.pipeline.asset_manifest import (
     manifest_prompt_section,
     verify_manifest_covers_references,
@@ -388,6 +389,7 @@ def execute_feature_claude_driven(
     """
     step_dir = run_dir / "steps" / feature.feature_id
     step_dir.mkdir(parents=True, exist_ok=True)
+    monitor = MonitorEventWriter(run_dir)
 
     charter_dir = run_dir / "outputs"
     prior_ids = [r.feature_id for r in prior_results if r.status == StepStatus.PASSED]
@@ -449,6 +451,17 @@ def execute_feature_claude_driven(
         lessons=recent_lessons(project_name=charter_bundle.contract.project_name),
     )
     _skill_block = render_skill_block(_selected_skills)
+    monitor.emit(
+        "agent_started",
+        phase="building",
+        feature_id=feature.feature_id,
+        message=f"Builder session starting for {feature.feature_id}",
+        data={
+            "selected_skills": list(_selected_skills),
+            "work_type": _work_type,
+            "implementer_mode": implementer_mode,
+        },
+    )
 
     # Record what the builder capability resolved to, for the ledger.
     from ncdev.core.capability_probe import probe_codex
@@ -475,8 +488,28 @@ def execute_feature_claude_driven(
         max_budget_usd=max_budget_usd,
         log_path=step_dir / "session.jsonl",
         append_system_prompt=_skill_block or None,
+        on_event=lambda event: monitor.emit_ai_event(
+            event,
+            phase="building",
+            feature_id=feature.feature_id,
+        ),
     )
     build_duration = time.time() - start
+    monitor.emit(
+        "agent_finished",
+        phase="building",
+        feature_id=feature.feature_id,
+        message=session.summary(),
+        data={
+            "success": session.success,
+            "duration_seconds": session.duration_seconds,
+            "total_cost_usd": session.total_cost_usd,
+            "tool_calls": len(session.tool_calls),
+            "codex_invocations": len(session.codex_invocations),
+            "subagents_dispatched": list(session.subagents_dispatched),
+            "skills_invoked": list(session.skills_invoked),
+        },
+    )
 
     # Save session summary for debugging
     (step_dir / "session-summary.txt").write_text(session.summary(), encoding="utf-8")
@@ -500,6 +533,20 @@ def execute_feature_claude_driven(
         run_test_commands=run_test_commands,
         probe_health=probe_health,
         touched_files=touched,
+    )
+    monitor.emit(
+        "verification_finished",
+        phase="building",
+        feature_id=feature.feature_id,
+        message=(
+            "Post-session verification passed"
+            if verification.overall_passed
+            else "Post-session verification failed"
+        ),
+        data={
+            "overall_passed": verification.overall_passed,
+            "failure_reasons": list(verification.failure_reasons),
+        },
     )
 
     # Decide status
@@ -559,6 +606,13 @@ def execute_feature_claude_driven(
             _gauntlet_report_json(g_report), encoding="utf-8",
         )
         logger.info("%s", g_report.summary_line())
+        monitor.emit(
+            "gauntlet_finished",
+            phase="building",
+            feature_id=feature.feature_id,
+            message=g_report.summary_line(),
+            data={"passed": g_report.passed},
+        )
         if not g_report.passed:
             status = StepStatus.FAILED
             blocking = "; ".join(

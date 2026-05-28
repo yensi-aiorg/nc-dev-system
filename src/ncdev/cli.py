@@ -644,6 +644,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--api-key", default=None, help="API key for authentication")
     serve_parser.add_argument("--workspace", default=None)
 
+    monitor_parser = sub.add_parser("monitor", help="Start the live NC Dev run monitor")
+    monitor_parser.add_argument("--port", type=int, default=16651)
+    monitor_parser.add_argument("--host", default="127.0.0.1")
+    monitor_parser.add_argument(
+        "--run-dir",
+        default=None,
+        help="Specific .nc-dev/runs/<run_id> directory. Defaults to latest run.",
+    )
+    monitor_parser.add_argument("--workspace", default=None)
+
     qa_import = sub.add_parser("qa-import", help="Import a manual QA report as durable NC-dev intake")
     qa_import.add_argument("--report", required=True, help="Path to the manual QA report Markdown file")
     qa_import.add_argument("--target-repo", required=True, help="Target repository that should be fixed")
@@ -1117,6 +1127,28 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
             )
             print(summarize_sentinel_status(fix_state))
+        return 0
+
+    if args.command == "monitor":
+        from ncdev.monitoring.api import create_monitor_app
+
+        try:
+            import uvicorn
+        except ImportError:
+            console.print(
+                "[red]uvicorn is required for `ncdev monitor`. "
+                "Install the project dependencies and retry.[/red]"
+            )
+            return 1
+
+        workspace = _workspace(args.workspace)
+        run_dir = Path(args.run_dir).resolve() if args.run_dir else None
+        app = create_monitor_app(workspace=workspace, run_dir=run_dir)
+        console.print(
+            f"[cyan]NC Dev monitor listening at "
+            f"http://{args.host}:{args.port}[/cyan]"
+        )
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     if args.command == "serve":

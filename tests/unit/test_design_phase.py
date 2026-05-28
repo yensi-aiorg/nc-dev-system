@@ -229,6 +229,7 @@ def test_greenfield_ui_without_stitch_uses_deterministic_seed(tmp_path: Path):
     import json as _j
     tokens = _j.loads((ds / "tokens.json").read_text())
     assert tokens["archetype"] == "Warm Playfulness"
+    assert tokens["generated_by"] == "ncdev.design_seed"
     assert "primary" in tokens["colors"]
 
 
@@ -289,6 +290,49 @@ def test_brownfield_with_design_system_runs_summariser(tmp_path: Path):
     # Prompt must be the brownfield-summariser variant
     assert "read the existing" in captured["prompt"].lower()
     assert "Do NOT modify" in captured["prompt"]
+
+
+def test_brownfield_owned_tokens_are_not_reseeded(tmp_path: Path):
+    contract = _web_contract(is_brownfield=True)
+    ds = tmp_path / "docs" / "design-system"
+    ds.mkdir(parents=True)
+    original_tokens = {
+        "version": "1.0",
+        "owned_by_feature": "f02-design-system",
+        "gradients": {"primary": "linear-gradient(red, blue)"},
+        "typography": {"families": {"sans": "Sohne"}},
+    }
+    tokens_path = ds / "tokens.json"
+    import json as _j
+    tokens_path.write_text(_j.dumps(original_tokens), encoding="utf-8")
+
+    output_dir = tmp_path / "out"
+    captured: dict = {}
+
+    def fake_session(prompt, **kwargs):
+        captured["prompt"] = prompt
+        doc = DesignSystemDoc(
+            project_name="myapp",
+            design_archetype="Technical Elegance",
+            source="existing",
+            tokens_files=["tokens.json"],
+        )
+        (output_dir / "design-system.json").write_text(
+            doc.model_dump_json(indent=2), encoding="utf-8",
+        )
+        return ClaudeSessionResult(success=True, final_text="summarised", exit_code=0)
+
+    with patch("ncdev.pipeline.design_phase.run_ai_session", side_effect=fake_session):
+        result = run_design_phase(
+            contract, tmp_path, output_dir,
+            stitch_probe=lambda: False,
+        )
+
+    assert result.hard_failed is False
+    assert result.design_doc is not None
+    assert result.design_doc.source == "existing"
+    assert "Do NOT modify" in captured["prompt"]
+    assert _j.loads(tokens_path.read_text(encoding="utf-8")) == original_tokens
 
 
 # ---------------------------------------------------------------------------

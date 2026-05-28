@@ -38,6 +38,7 @@ from rich.table import Table
 
 from ncdev.utils import make_run_id
 from ncdev.core.config import NCDevConfig, ensure_default_config
+from ncdev.monitoring import MonitorEventWriter
 from ncdev.pipeline.charter import generate_charter, load_charter
 from ncdev.pipeline.claude_executor import (
     _ensure_git_identity,
@@ -113,6 +114,17 @@ def run_pipeline(
         target_path=str(target_repo_path) if target_repo_path else "",
         phase="init",
     )
+    monitor = MonitorEventWriter(run_dir, run_id=run_id)
+    monitor.emit(
+        "run_started",
+        phase="init",
+        message=f"NC Dev run started in {config.mode} mode",
+        data={
+            "source": str(source_path),
+            "target": str(target_repo_path or ""),
+            "mode": config.mode,
+        },
+    )
 
     console.print(Panel(
         f"[bold cyan]NC Dev — {config.mode} mode[/bold cyan]\n"
@@ -124,6 +136,7 @@ def run_pipeline(
 
     # ── Phase 2: Charter ─────────────────────────────────────────────────
     state.phase = "charter"
+    monitor.emit("phase_started", phase="charter", message="Charter generation started")
     console.print("\n[bold]Phase 2: Charter (Claude planning session)[/bold]")
 
     if dry_run:
@@ -170,6 +183,12 @@ def run_pipeline(
             _persist_state(state, run_dir)
             return state
         console.print(f"  [green]✓[/green] Charter: {len(bundle.feature_queue.features)} features queued")
+        monitor.emit(
+            "charter_ready",
+            phase="charter",
+            message=f"Charter ready with {len(bundle.feature_queue.features)} features",
+            data={"features": [f.feature_id for f in bundle.feature_queue.features]},
+        )
 
     # Surface charter assumptions early — before the build compounds a
     # wrong judgment call. A PRD is ambiguous by nature; silent guessing
@@ -185,6 +204,12 @@ def run_pipeline(
         ))
         state.metadata["charter_assumptions"] = list(
             bundle.feature_queue.assumptions
+        )
+        monitor.emit(
+            "charter_decision",
+            phase="charter",
+            message="Charter assumptions recorded",
+            data={"assumptions": list(bundle.feature_queue.assumptions)},
         )
 
     if bundle is not None and not (outputs_dir / "behavior-contract.v1.json").exists():
@@ -235,6 +260,7 @@ def run_pipeline(
 
     # ── Phase 3: Design system ───────────────────────────────────────────
     state.phase = "design"
+    monitor.emit("phase_started", phase="design", message="Design phase started")
     console.print("\n[bold]Phase 3: Design system[/bold]")
     if dry_run or bundle is None:
         console.print("  [dim]Skipped[/dim]")
@@ -320,6 +346,7 @@ def run_pipeline(
 
     # ── Phase 4: Brownfield context ingestion ────────────────────────────
     state.phase = "ingestion"
+    monitor.emit("phase_started", phase="ingestion", message="Context ingestion started")
     if bundle and bundle.contract.is_brownfield and bundle.contract.uses_citex and not dry_run:
         console.print("\n[bold]Phase 4: Ingest existing code into Citex[/bold]")
         try:
@@ -344,6 +371,7 @@ def run_pipeline(
 
     # ── Phase 5: Sequential feature execution ────────────────────────────
     state.phase = "building"
+    monitor.emit("phase_started", phase="building", message="Feature execution started")
     completed: list[StepResult] = []
 
     if dry_run or bundle is None:
@@ -360,6 +388,15 @@ def run_pipeline(
             remaining = [f for f in remaining if f.feature_id in targets]
         _sync_progress_state(state, completed)
         _persist_state(state, run_dir)
+        monitor.emit(
+            "feature_queue_ready",
+            phase="building",
+            message=f"{len(remaining)} features ready for execution",
+            data={
+                "remaining": [f.feature_id for f in remaining],
+                "total_features": len(features),
+            },
+        )
         target_note = (
             f" (targeted: {', '.join(target_feature_ids)})"
             if target_feature_ids
@@ -373,6 +410,19 @@ def run_pipeline(
         for feature in remaining:
             state.current_step = feature.feature_id
             _persist_state(state, run_dir)
+            monitor.emit(
+                "feature_started",
+                phase="building",
+                feature_id=feature.feature_id,
+                message=f"{feature.feature_id} — {feature.title}",
+                data={
+                    "title": feature.title,
+                    "description": feature.description,
+                    "acceptance_criteria": list(feature.acceptance_criteria),
+                    "required_files": list(feature.acceptance.required_files),
+                    "required_tests": list(feature.acceptance.required_tests),
+                },
+            )
 
             # Dependency gate: a feature whose depends_on_features contains
             # any non-PASSED id is skipped rather than built. In strict mode,
@@ -392,6 +442,12 @@ def run_pipeline(
                     status=StepStatus.BLOCKED,
                     error_message=reason,
                 ))
+                monitor.emit(
+                    "feature_blocked",
+                    phase="building",
+                    feature_id=feature.feature_id,
+                    message=reason,
+                )
                 _sync_progress_state(state, completed)
                 _persist_state(state, run_dir)
                 if strict_deps:
@@ -417,6 +473,20 @@ def run_pipeline(
                 config=config,
             )
             completed.append(result)
+            monitor.emit(
+                "feature_finished",
+                phase="building",
+                feature_id=result.feature_id,
+                message=f"{result.feature_id} {result.status.value}",
+                data={
+                    "status": result.status.value,
+                    "commit_sha": result.commit_sha,
+                    "files_created": list(result.files_created),
+                    "files_modified": list(result.files_modified),
+                    "cost_usd": result.cost_usd,
+                    "error_message": result.error_message,
+                },
+            )
             if bundle.contract.uses_citex:
                 try:
                     from ncdev.pipeline.context_ingestion import ingest_feature_result
@@ -490,6 +560,11 @@ def run_pipeline(
         any_passed = any(r.status == StepStatus.PASSED for r in completed)
         if any_passed:
             state.phase = "integration"
+            monitor.emit(
+                "phase_started",
+                phase="integration",
+                message="Integration gate started",
+            )
             console.print("\n[bold]Phase 5b: Integration gate[/bold]")
             integration = run_integration_gate(
                 bundle=bundle,
@@ -499,12 +574,24 @@ def run_pipeline(
             state.metadata["integration"] = integration.__dict__.copy()
             _persist_state(state, run_dir)
             if integration.passed:
+                monitor.emit(
+                    "integration_passed",
+                    phase="integration",
+                    message="Integration gate passed",
+                    data=integration.__dict__.copy(),
+                )
                 console.print(
                     f"  [green]✓[/green] Integration gate passed in "
                     f"{integration.duration_seconds:.1f}s "
                     f"({integration.routes_probed} routes probed)"
                 )
             else:
+                monitor.emit(
+                    "integration_failed",
+                    phase="integration",
+                    message="Integration gate failed",
+                    data=integration.__dict__.copy(),
+                )
                 console.print(Panel(
                     "[bold red]Integration gate FAILED[/bold red]\n"
                     + "\n".join(f"  - {f}" for f in integration.failures[:10]),
@@ -556,6 +643,12 @@ def run_pipeline(
         ))
 
     _persist_state(state, run_dir)
+    monitor.emit(
+        "run_completed",
+        phase="complete",
+        message=f"Run completed with status {state.status}",
+        data={"status": state.status},
+    )
 
     # Structured run report — consolidated observability artifact
     # (report.json + report.md): features, gauntlet verdicts, charter

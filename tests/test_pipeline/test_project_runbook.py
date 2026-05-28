@@ -57,6 +57,25 @@ def test_runbook_command_for_backend_single_test(tmp_path: Path) -> None:
     assert cmd == ["pytest", "-q", "-x", "tests/test_f01.py"]
 
 
+def test_runbook_command_uses_playwright_for_frontend_e2e_specs(tmp_path: Path) -> None:
+    (tmp_path / "frontend" / "tests" / "e2e").mkdir(parents=True)
+    (tmp_path / "frontend" / "package.json").write_text('{"name": "x"}')
+    test_path = tmp_path / "frontend" / "tests" / "e2e" / "f03_waitlist.spec.ts"
+    test_path.write_text("import { test } from '@playwright/test';\n")
+    runbook = build_fallback_runbook(target_path=tmp_path, bundle=_bundle())
+
+    resolved = command_for_test_from_runbook(
+        runbook,
+        test_path=test_path,
+        target_path=tmp_path,
+    )
+
+    assert resolved is not None
+    cwd, cmd = resolved
+    assert cwd == tmp_path / "frontend"
+    assert cmd == ["npx", "playwright", "test", "tests/e2e/f03_waitlist.spec.ts"]
+
+
 def test_parse_runbook_response_accepts_fenced_json() -> None:
     parsed = parse_runbook_response(
         """
