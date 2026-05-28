@@ -60,13 +60,35 @@ class StewardDecision(BaseModel):
     capability_lessons: list[str] = Field(default_factory=list)
 
 
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
-
-
 def parse_steward_response(text: str) -> StewardDecision:
-    """Parse the Steward's JSON response. Tolerates markdown fences."""
-    cleaned = _FENCE_RE.sub("", text.strip()).strip()
-    data = json.loads(cleaned)
+    """Parse the Steward's decision out of its response.
+
+    The Steward reliably emits a short prose analysis FOLLOWED by a
+    fenced ```json block — e.g.
+
+        All three bandit findings are in vendored .venv code, not the
+        feature's own code. This is a scanner-scope mismatch.
+
+        ```json
+        {"disposition": "repair_current_slice", ...}
+        ```
+
+    The previous implementation only stripped the fence markers and
+    then `json.loads`'d the whole string, so the leading prose made it
+    fail with "Expecting value: line 1 column 1 (char 0)". That false
+    parse error was being treated as an unrecoverable Steward failure
+    and stopping the factory with 8-9/10 features already built.
+
+    `extract_json_object` pulls the first JSON object out of a fenced
+    block OR a bare brace span embedded in prose — exactly the shapes
+    the model emits. Raise ValueError when no object is found so the
+    caller's retry loop can try again.
+    """
+    from ncdev.pipeline.gauntlet.context import extract_json_object
+
+    data = extract_json_object(text)
+    if data is None:
+        raise ValueError("no JSON object found in steward response")
     return StewardDecision.model_validate(data)
 
 

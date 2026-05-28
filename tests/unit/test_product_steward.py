@@ -39,6 +39,41 @@ def test_parse_steward_response_strips_markdown_fences():
     assert decision.disposition == Disposition.CONTINUE
 
 
+def test_parse_steward_response_prose_then_fenced_json():
+    """The Steward reliably writes a prose analysis BEFORE the fenced
+    JSON block. The parser must extract the JSON from the prose rather
+    than choking on the leading text (regression: this was stopping
+    the factory with `Expecting value: line 1 column 1` while 9/10
+    features were already built).
+    """
+    payload = (
+        "All three bandit findings are in vendored .venv code, not the\n"
+        "feature's own code. This is a scanner-scope mismatch.\n"
+        "\n"
+        "```json\n"
+        + json.dumps({
+            "disposition": "repair_current_slice",
+            "reasoning": "bandit scanned .venv vendored deps",
+            "target_feature_ids": ["f09-discharge-lpa"],
+        })
+        + "\n```\n"
+    )
+    decision = parse_steward_response(payload)
+    assert decision.disposition == Disposition.REPAIR_CURRENT_SLICE
+    assert decision.target_feature_ids == ["f09-discharge-lpa"]
+
+
+def test_parse_steward_response_bare_object_in_prose():
+    """A bare (unfenced) JSON object embedded in prose also parses."""
+    payload = (
+        "Everything looks complete. "
+        + json.dumps({"disposition": "continue", "reasoning": "done"})
+        + " — no further action."
+    )
+    decision = parse_steward_response(payload)
+    assert decision.disposition == Disposition.CONTINUE
+
+
 def test_parse_steward_response_invalid_disposition_raises():
     import pytest
 
