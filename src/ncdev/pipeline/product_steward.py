@@ -597,30 +597,54 @@ def run_product_steward(
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "steward-prompt.md").write_text(prompt, encoding="utf-8")
 
-    session = run_ai_session(
-        prompt,
-        cwd=target_path,
-        config=config,
-        tools=DEFAULT_PLAN_TOOLS,
-        model=model,
-        timeout=600,
-        include_codex_protocol=False,
-        max_budget_usd=max_budget_usd,
-        log_path=run_dir / "steward-session.jsonl",
-    )
-    (run_dir / "steward-response.md").write_text(
-        session.final_text or "(empty)", encoding="utf-8",
-    )
+    # The Steward's verdict gates the whole factory loop, so a single
+    # transient empty / non-JSON LLM response must NOT be read as
+    # "the product is unrecoverable" — that would throw away a build
+    # that may be 7/10 features done. Retry a few times (an empty
+    # result or a fenced-but-truncated reply is usually transient),
+    # and only collapse to STOP_AS_UNRECOVERABLE after the retries are
+    # exhausted. Each attempt's raw response is persisted for audit.
+    max_attempts = 3
+    last_error = "no attempts made"
+    for attempt in range(1, max_attempts + 1):
+        session = run_ai_session(
+            prompt,
+            cwd=target_path,
+            config=config,
+            tools=DEFAULT_PLAN_TOOLS,
+            model=model,
+            timeout=600,
+            include_codex_protocol=False,
+            max_budget_usd=max_budget_usd,
+            log_path=run_dir / f"steward-session-attempt-{attempt}.jsonl",
+        )
+        (run_dir / f"steward-response-attempt-{attempt}.md").write_text(
+            session.final_text or "(empty)", encoding="utf-8",
+        )
 
-    if not session.success or not session.final_text:
-        return StewardDecision(
-            disposition=Disposition.STOP_AS_UNRECOVERABLE,
-            reasoning="Steward session failed or returned no text",
+        if not session.success or not session.final_text or not session.final_text.strip():
+            last_error = (
+                "session failed"
+                if not session.success
+                else "session returned no text"
+            )
+            continue
+        try:
+            decision = parse_steward_response(session.final_text)
+        except (json.JSONDecodeError, ValueError) as exc:
+            last_error = f"response invalid: {exc}"
+            continue
+        # Persist the accepted response under the stable name too, so
+        # downstream tooling that looks for steward-response.md works.
+        (run_dir / "steward-response.md").write_text(
+            session.final_text, encoding="utf-8",
         )
-    try:
-        return parse_steward_response(session.final_text)
-    except (json.JSONDecodeError, ValueError) as exc:
-        return StewardDecision(
-            disposition=Disposition.STOP_AS_UNRECOVERABLE,
-            reasoning=f"Steward response invalid: {exc}",
-        )
+        return decision
+
+    return StewardDecision(
+        disposition=Disposition.STOP_AS_UNRECOVERABLE,
+        reasoning=(
+            f"Steward produced no usable decision after {max_attempts} "
+            f"attempts (last: {last_error})"
+        ),
+    )
