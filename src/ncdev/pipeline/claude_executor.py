@@ -243,6 +243,7 @@ def build_feature_prompt(
 - Verification contract:  {charter_dir}/verification-contract.json
 - Behavior contract:      {charter_dir}/behavior-contract.v1.json
 - Design system:          {charter_dir}/design-system.json  (if present)
+- Process runbook:        {charter_dir}/project-runbook.json  (model-authored command policy, if present)
 - Feature queue:          {charter_dir}/feature-queue.json
 - Target repository:      {target_path}
 - Citex project ID:       {project_id}
@@ -561,7 +562,8 @@ def execute_feature_claude_driven(
         if not g_report.passed:
             status = StepStatus.FAILED
             blocking = "; ".join(
-                f"{l.layer}: {l.summary}" for l in g_report.blocking_failures
+                f"{failure.layer}: {failure.summary}"
+                for failure in g_report.blocking_failures
             )
             gauntlet_note = f" | gauntlet BLOCKED — {blocking}"
 

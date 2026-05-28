@@ -52,6 +52,7 @@ from ncdev.pipeline.models import (
     PipelineRunState,
 )
 from ncdev.pipeline.provenance import append_provenance
+from ncdev.pipeline.project_runbook import generate_project_runbook
 
 console = Console()
 
@@ -275,6 +276,46 @@ def run_pipeline(
                 outputs_dir=outputs_dir,
                 state=state,
                 bundle=bundle,
+            )
+
+    # ── Phase 3b: AI process runbook ─────────────────────────────────────
+    if dry_run or bundle is None:
+        pass
+    else:
+        console.print("\n[bold]Phase 3b: Process runbook[/bold]")
+        try:
+            runbook = generate_project_runbook(
+                target_path=target_path,
+                output_dir=outputs_dir,
+                bundle=bundle,
+                config=config,
+                model=builder_model,
+                max_budget_usd=max_budget_usd,
+                log_path=run_dir / "logs" / "project-runbook.jsonl",
+            )
+            state.metadata["project_runbook_source"] = runbook.source
+            _persist_state(state, run_dir)
+            console.print(
+                f"  [green]✓[/green] Project runbook ready "
+                f"(source={runbook.source})"
+            )
+            if recovery_branch:
+                _commit_recovery_checkpoint(
+                    target_path=target_path,
+                    run_id=run_id,
+                    run_dir=run_dir,
+                    source_path=source_path,
+                    branch=recovery_branch,
+                    project_name=bundle.contract.project_name,
+                    stage="runbook-ready",
+                    outputs_dir=outputs_dir,
+                    state=state,
+                    bundle=bundle,
+                )
+        except Exception as exc:  # noqa: BLE001
+            console.print(
+                f"  [yellow]Project runbook generation failed: {exc} — "
+                "continuing with verifier heuristics[/yellow]"
             )
 
     # ── Phase 4: Brownfield context ingestion ────────────────────────────
@@ -767,6 +808,9 @@ def _write_recovery_snapshot(
     rels = [_rel_to_repo(target_path, root / "checkpoint.json")]
     rels.extend(_copy_recovery_artifacts(run_dir=run_dir, outputs_dir=outputs_dir, root=root))
     rels.extend(_write_bundle_recovery_outputs(target_path=target_path, root=root, bundle=bundle))
+    target_runbook = target_path / ".ncdev" / "project-runbook.json"
+    if target_runbook.exists():
+        rels.append(_rel_to_repo(target_path, target_runbook))
     return rels
 
 
@@ -780,6 +824,7 @@ def _copy_recovery_artifacts(*, run_dir: Path, outputs_dir: Path, root: Path) ->
         "behavior-contract.v1.json",
         "behavior-contract.md",
         "design-system.json",
+        "project-runbook.json",
     ]
     for name in output_names:
         src = outputs_dir / name

@@ -239,6 +239,45 @@ def test_steward_prompt_omits_provenance_when_empty(tmp_path):
     assert "Feature provenance" not in prompt
 
 
+def test_steward_prompt_includes_project_runbook(tmp_path):
+    from ncdev.pipeline.product_steward import build_steward_prompt
+    from ncdev.pipeline.project_runbook import (
+        ProjectRunbook,
+        TestCommandPolicy,
+        write_project_runbook,
+    )
+
+    write_project_runbook(
+        ProjectRunbook(
+            source="deterministic_fallback",
+            project_name="salon",
+            backend=TestCommandPolicy(
+                root="backend",
+                test_command="pytest -q",
+                single_test_command="pytest -q -x {test_path}",
+            ),
+            protected_files=["docs/design-system/tokens.json"],
+            mandates=["Prefer project-runbook commands over verifier heuristics."],
+        ),
+        target_path=tmp_path,
+        output_dir=tmp_path / "run" / "outputs",
+    )
+    prd = tmp_path / "prd.md"
+    prd.write_text("# x")
+
+    prompt = build_steward_prompt(
+        prd_path=prd,
+        bundle=_bundle(),
+        completed=[],
+        target_path=tmp_path,
+    )
+
+    assert "Project process runbook" in prompt
+    assert "pytest -q -x {test_path}" in prompt
+    assert "docs/design-system/tokens.json" in prompt
+    assert "verifier mismatch" in prompt
+
+
 def test_steward_prompt_truncates_long_file_lists(tmp_path):
     from ncdev.pipeline.product_steward import build_steward_prompt
 
