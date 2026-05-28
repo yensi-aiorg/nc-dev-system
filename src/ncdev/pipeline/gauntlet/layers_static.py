@@ -157,7 +157,17 @@ def _scanners_for(repo: Path) -> tuple[tuple[str, list[str], str], ...]:
     or ``[tool.bandit]`` block into ``pyproject.toml``; bandit reads
     those automatically.
     """
-    excludes = ",".join(f"./{name}" for name in _BANDIT_EXCLUDE_DIRS)
+    # bandit's -x matches each candidate path with fnmatch, so a bare
+    # "./.venv" only excludes a TOP-LEVEL .venv — it misses nested
+    # virtualenvs like backend/.venv (where pymongo/httpx live and trip
+    # MD5/SHA1 findings). Emit glob patterns that match the directory at
+    # any depth: both "*/<name>/*" (nested) and "./<name>" (top-level).
+    _patterns: list[str] = []
+    for name in _BANDIT_EXCLUDE_DIRS:
+        _patterns.append(f"./{name}")
+        _patterns.append(f"*/{name}/*")
+        _patterns.append(f"*/{name}")
+    excludes = ",".join(_patterns)
     scanners: list[tuple[str, list[str], str]] = [
         (
             "bandit",
