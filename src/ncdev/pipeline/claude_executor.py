@@ -1007,11 +1007,18 @@ def _count_test_files(target_path: Path) -> int:
 
 
 def _run_shell(cmd: str, *, cwd: Path, timeout: int) -> tuple[bool, str]:
-    """Run ``cmd`` in a shell. Returns (success, combined_output)."""
+    """Run ``cmd`` in a shell. Returns (success, combined_output).
+
+    ``errors="replace"`` on decode: test runners / lint / scanners can
+    emit non-UTF-8 bytes (a failing test that prints binary, a tool
+    that writes Latin-1). Strict decode would raise UnicodeDecodeError
+    and crash the factory mid-run rather than reporting the command as
+    failed. Replacement keeps the output a valid str for the verifier.
+    """
     try:
         r = subprocess.run(
             cmd, shell=True, cwd=str(cwd),
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, errors="replace", timeout=timeout,
         )
         return r.returncode == 0, (r.stdout + "\n" + r.stderr)
     except subprocess.TimeoutExpired as exc:
@@ -1108,15 +1115,35 @@ def _git_diff_text(target_path: Path, ref: str) -> str:
 
     Feeds the gauntlet's anti-bypass (L7) and oracle (L8) layers. An
     empty ref or git failure yields "" so those layers skip cleanly.
+
+    Robustness notes:
+
+    - ``--no-color`` keeps the diff plain (defensive — config could
+      force color).
+    - ``--no-textconv`` avoids running textconv filters that could be
+      slow or themselves emit binary.
+    - ``errors="replace"`` on the decode: a feature commit can include
+      a file git's heuristic does not classify as binary (e.g. a PDF
+      fixture, a font, a sample doc with a stray high byte) and then
+      ``git diff`` dumps raw bytes. With strict UTF-8 + ``text=True``
+      a single 0xDA byte would raise UnicodeDecodeError and crash the
+      whole factory mid-run (observed on f06's commit). We decode the
+      captured bytes ourselves with replacement so the diff is always
+      a valid str — the oracle reads it as context, not as something
+      that must round-trip byte-exact.
     """
     if not ref:
         return ""
     try:
         r = subprocess.run(
-            ["git", "diff", f"{ref}..HEAD"],
-            cwd=str(target_path), capture_output=True, text=True, timeout=20,
+            ["git", "diff", "--no-color", "--no-textconv", f"{ref}..HEAD"],
+            cwd=str(target_path),
+            capture_output=True,  # bytes — we decode explicitly below
+            timeout=20,
         )
-        return r.stdout if r.returncode == 0 else ""
+        if r.returncode != 0:
+            return ""
+        return r.stdout.decode("utf-8", errors="replace")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
 
