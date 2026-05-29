@@ -233,17 +233,34 @@ def test_required_file_at_alternate_path_passes(tmp_path: Path):
     exact-path mismatch (grounding rule 1: alternate path counts).
     """
     # ------------------------------------------------------------------ #
-    # Set up a minimal repo under tmp_path
+    # Set up a COMPLETE, real echo service under tmp_path. The product
+    # intent IS fully implemented — the ONLY discrepancy is that the test
+    # file lives at backend/tests/test_echo.py while the contract's
+    # required_files lists the bare tests/test_echo.py. The judge must
+    # treat that as "satisfied at a reasonable alternate path", not absent.
     # ------------------------------------------------------------------ #
-    # File lives at alternate path (not the contract's exact path)
+    (tmp_path / "backend" / "app").mkdir(parents=True)
+    (tmp_path / "backend" / "app" / "__init__.py").write_text("")
+    (tmp_path / "backend" / "app" / "main.py").write_text(
+        "from fastapi import FastAPI\n\n"
+        "app = FastAPI()\n\n"
+        "@app.get('/health')\n"
+        "def health():\n"
+        "    return {'status': 'ok'}\n\n"
+        "@app.get('/api/v1/echo')\n"
+        "def echo(msg: str = ''):\n"
+        "    return {'echo': msg}\n"
+    )
+    # The required test file — present, just at backend/tests/ not tests/
     (tmp_path / "backend" / "tests").mkdir(parents=True)
     (tmp_path / "backend" / "tests" / "test_echo.py").write_text(
-        "def test_trivial():\n    assert True\n"
-    )
-    # Real work to inspect — gives the judge something meaningful to see
-    (tmp_path / "backend" / "app").mkdir(parents=True)
-    (tmp_path / "backend" / "app" / "main.py").write_text(
-        'def main():\n    return {"status": "ok"}\n'
+        "from app.main import echo, health\n\n"
+        "def test_echo_returns_msg():\n"
+        "    assert echo('hello') == {'echo': 'hello'}\n\n"
+        "def test_echo_defaults_empty():\n"
+        "    assert echo() == {'echo': ''}\n\n"
+        "def test_health_ok():\n"
+        "    assert health() == {'status': 'ok'}\n"
     )
 
     # ------------------------------------------------------------------ #
