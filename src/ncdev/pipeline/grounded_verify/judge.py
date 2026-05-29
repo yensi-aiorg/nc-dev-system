@@ -66,9 +66,17 @@ _RULES = """\
 You are the VERIFIER for one feature. Decide whether this feature's slice is genuinely DONE.
 
 Grounding rules (do not violate):
-1. A genuinely failing test is decisive toward FAIL — UNLESS you can justify, with
-   evidence, that the failure is harness/environmental noise (e.g. a shell `cd` error,
-   an unstarted service, an unrelated pre-existing failure). Cite the evidence.
+1. Distinguish HOW a test command failed before ruling:
+   - If the test command FAILED TO EXECUTE — a shell/env/cwd error such as
+     "No such file or directory", a missing interpreter, or an unstarted service —
+     that is harness noise about the COMMAND, not proof the code is wrong. You MUST
+     investigate the working tree (read the changed files, locate the implementation,
+     re-run the tests from the correct directory) before ruling. FAIL only if the
+     implementation is absent or you confirm it is actually broken.
+   - If the tests RAN and assertions failed (real assertion output — AssertionError,
+     KeyError, a wrong status code, etc.) that is decisive toward FAIL, unless you can
+     evidence it as an unrelated pre-existing or dependency-only failure.
+   Always cite the evidence and any tool calls you made.
 2. Judge INTENT satisfaction, not exact file paths/names. A file at a reasonable
    alternate path satisfies a required-file intent.
 3. Findings inside dependencies (.venv, node_modules, site-packages) are NEVER the
