@@ -128,8 +128,8 @@ class RunReport:
 
         lines.append("## Features")
         lines.append("")
-        lines.append("| Feature | Status | Gauntlet | Commit | Build |")
-        lines.append("|---------|--------|----------|--------|-------|")
+        lines.append("| Feature | Status | Verify | Commit | Build |")
+        lines.append("|---------|--------|--------|--------|-------|")
         for f in self.features:
             if not f.gauntlet_ran:
                 g = "—"
@@ -145,7 +145,7 @@ class RunReport:
 
         blocked = [f for f in self.features if f.gauntlet_blocking]
         if blocked:
-            lines.append("## Gauntlet blocking failures")
+            lines.append("## Verifier blocking failures")
             lines.append("")
             for f in blocked:
                 lines.append(f"### {f.feature_id}")
@@ -162,9 +162,9 @@ class RunReport:
         return "\n".join(lines)
 
 
-def _load_gauntlet(run_dir: Path, feature_id: str) -> dict | None:
-    """Read a feature's persisted gauntlet.json, or None if absent."""
-    path = run_dir / "steps" / feature_id / "gauntlet.json"
+def _load_verdict(run_dir: Path, feature_id: str) -> dict | None:
+    """Read a feature's persisted verdict.json, or None if absent."""
+    path = run_dir / "steps" / feature_id / "verdict.json"
     if not path.exists():
         return None
     try:
@@ -182,16 +182,17 @@ def _feature_report(result: StepResult, run_dir: Path) -> FeatureReport:
         cost_usd=result.cost_usd,
         error=result.error_message,
     )
-    gauntlet = _load_gauntlet(run_dir, result.feature_id)
-    if gauntlet is not None:
+    # The grounded verifier writes verdict.json. The report keeps the
+    # historical ``gauntlet_*`` field names (schema-stable) but populates
+    # them from the verifier's verdict + reasons.
+    verdict = _load_verdict(run_dir, result.feature_id)
+    if verdict is not None:
         fr.gauntlet_ran = True
-        fr.gauntlet_passed = bool(gauntlet.get("passed", False))
-        fr.gauntlet_blocking = [
-            f"{layer.get('layer', '?')}: {layer.get('summary', '')}"
-            for layer in gauntlet.get("layers", [])
-            if layer.get("blocking")
-            and layer.get("status") in ("failed", "error")
-        ]
+        fr.gauntlet_passed = str(verdict.get("verdict", "")).upper() == "PASS"
+        if not fr.gauntlet_passed:
+            fr.gauntlet_blocking = [
+                r for r in (verdict.get("reasons") or []) if (r or "").strip()
+            ]
     return fr
 
 

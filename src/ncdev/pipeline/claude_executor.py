@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import subprocess
 import time
 from pathlib import Path
@@ -41,15 +40,12 @@ from ncdev.core.config import NCDevConfig
 from ncdev.monitoring import MonitorEventWriter
 from ncdev.pipeline.asset_manifest import (
     manifest_prompt_section,
-    verify_manifest_covers_references,
 )
 from ncdev.pipeline.models import (
     CharterBundle,
     FeatureStep,
     StepResult,
     StepStatus,
-    StepVerification,
-    TestResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,26 +56,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _load_prior_gauntlet_findings(
+def _load_prior_verdict_findings(
     feature_id: str,
     current_run_dir: Path | None,
 ) -> str:
-    """Find the most recent prior run's ``gauntlet.json`` for this feature
-    and return a formatted prompt block describing the *specific* blocking
-    layers + findings that rejected the prior commit.
+    """Find the most recent prior run's ``verdict.json`` for this feature
+    and return a formatted prompt block describing the *specific* reasons
+    and repair guidance from the grounded verifier that rejected the prior
+    commit.
 
     Returns an empty string when:
       - no current_run_dir is given,
       - no prior run dir exists alongside it,
-      - no gauntlet.json exists for this feature in any prior run, or
-      - none of the layers in the most recent gauntlet.json have
-        ``status == "failed"``.
+      - no verdict.json exists for this feature in any prior run, or
+      - the most recent verdict.json for this feature was a PASS.
 
     This is what makes the repair loop actually close: without it, a
-    feature that the Gauntlet rejected is re-attempted with the *same*
+    feature that the verifier rejected is re-attempted with the *same*
     prompt as the first attempt, so the same omission tends to recur.
-    With it, the next session sees the verbatim L6/L8 findings inline
-    and can act on them.
+    With it, the next session sees the verbatim FAIL reasons + repair
+    guidance inline and can act on them.
     """
     if current_run_dir is None or not current_run_dir.parent.exists():
         return ""
@@ -98,61 +94,57 @@ def _load_prior_gauntlet_findings(
     except OSError:
         return ""
     for prior in candidates:
-        gpath = prior / "steps" / feature_id / "gauntlet.json"
-        if not gpath.exists():
+        vpath = prior / "steps" / feature_id / "verdict.json"
+        if not vpath.exists():
             continue
         try:
-            g = json.loads(gpath.read_text(encoding="utf-8"))
+            v = json.loads(vpath.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             continue
-        failed_layers = [
-            layer for layer in g.get("layers", [])
-            if layer.get("status") == "failed"
-        ]
-        if not failed_layers:
-            # This prior run actually passed Gauntlet for this feature;
+        if str(v.get("verdict", "")).upper() == "PASS":
+            # This prior run actually passed verification for this feature;
             # don't surface it as a repair note. (The feature is being
-            # re-attempted because it failed for a different reason, or
-            # was marked failed for a non-Gauntlet reason.) Stop searching.
+            # re-attempted because it failed for a different reason.) Stop.
+            return ""
+        reasons = [r for r in (v.get("reasons") or []) if (r or "").strip()]
+        guidance = [
+            g for g in (v.get("repair_guidance") or []) if (g or "").strip()
+        ]
+        if not reasons and not guidance:
             return ""
         lines: list[str] = [
-            "## Prior Gauntlet findings — fix THESE before re-committing",
+            "## Prior verification findings — fix THESE before re-committing",
             "",
             f"This feature was attempted in a prior cycle (run "
             f"`{prior.name}`) and its commit was rejected by the",
-            "multi-layer Gauntlet. The blocking layers and their verbatim",
-            "findings are below. Address each one in your repair pass; do",
-            "not re-do work already accepted by other layers.",
+            "grounded verifier. The verbatim failure reasons and repair",
+            "guidance are below. Address each one in your repair pass.",
             "",
         ]
-        for layer in failed_layers:
-            name = layer.get("layer", "?")
-            summary = layer.get("summary", "")
-            lines.append(f"### {name} — {summary}")
+        if reasons:
+            lines.append("### Failure reasons")
             lines.append("")
-            detail = (layer.get("detail") or "").strip()
-            if detail and detail != summary:
-                short = detail[:1500] + (
-                    "... [truncated, see prior gauntlet.json for full output]"
-                    if len(detail) > 1500
-                    else ""
+            for reason in reasons[:10]:
+                short = reason.strip()[:600] + (
+                    "... [truncated]" if len(reason.strip()) > 600 else ""
                 )
-                lines.extend(["```", short, "```", ""])
-            for finding in (layer.get("findings") or [])[:5]:
-                f_text = (finding or "").strip()
-                if not f_text or f_text == detail:
-                    continue
-                f_short = f_text[:600] + (
-                    "... [truncated]" if len(f_text) > 600 else ""
+                lines.append(f"- {short}")
+            lines.append("")
+        if guidance:
+            lines.append("### Repair guidance")
+            lines.append("")
+            for g in guidance[:10]:
+                short = g.strip()[:600] + (
+                    "... [truncated]" if len(g.strip()) > 600 else ""
                 )
-                lines.append(f"- {f_short}")
+                lines.append(f"- {short}")
             lines.append("")
         lines.extend([
             "Treat these as concrete, structured failure modes — not vague",
-            "suggestions. For each finding, decide whether it's a code fix",
-            "(do it), a missing dependency (add it), or a genuinely",
-            "incorrect acceptance criterion (call out the contract conflict",
-            "explicitly in your final response so the Steward can amend it).",
+            "suggestions. For each, decide whether it's a code fix (do it),",
+            "a missing dependency (add it), or a genuinely incorrect",
+            "acceptance criterion (call out the contract conflict explicitly",
+            "in your final response so the Steward can amend it).",
             "",
         ])
         return "\n".join(lines)
@@ -167,7 +159,7 @@ def build_feature_prompt(
     project_id: str,
     citex_url: str = "http://localhost:20161",
     implementer_mode: str = "codex",
-    prior_gauntlet_findings: str = "",
+    prior_verdict_findings: str = "",
 ) -> str:
     """Compose the single prompt handed to Claude for this feature.
 
@@ -251,7 +243,7 @@ def build_feature_prompt(
 - Citex URL:              {citex_url}  (optional — query if reachable; skip if not)
 
 {prior_block}
-{prior_gauntlet_findings + chr(10) if prior_gauntlet_findings else ""}
+{prior_verdict_findings + chr(10) if prior_verdict_findings else ""}
 ## Your feature spec
 
 - ID:          {feature.feature_id}
@@ -382,10 +374,16 @@ def execute_feature_claude_driven(
 ) -> StepResult:
     """Run one feature via a Claude session and return the StepResult.
 
-    See module docstring for the outer flow. When ``run_gauntlet_check``
-    is set, a feature that would otherwise PASS is additionally run
-    through the Verification Gauntlet (executor layer subset); a
-    blocking gauntlet failure downgrades it to FAILED.
+    See module docstring for the outer flow. Verification is performed by
+    the grounded agentic verifier (``grounded_verify``): a hard floor
+    (compile/commit) gate, evidence gathering (tests, diff, screenshots),
+    and an evidence-grounded judge. A feature PASSES iff work landed
+    (a commit) and the verifier approves.
+
+    ``run_test_commands``, ``probe_health`` and ``run_gauntlet_check`` are
+    accepted for backward compatibility but no longer drive behavior — the
+    grounded verifier replaced the old post-session checks and the layered
+    Gauntlet. (Test commands are sourced from the verification contract.)
     """
     step_dir = run_dir / "steps" / feature.feature_id
     step_dir.mkdir(parents=True, exist_ok=True)
@@ -400,10 +398,11 @@ def execute_feature_claude_driven(
     cfg_mode = config.mode if config is not None else "claude_plan_codex_build"
     implementer_mode = "claude" if cfg_mode in {"claude_only"} else "codex"
 
-    # If this feature was rejected by the Gauntlet in any prior run,
-    # surface the verbatim L0–L8 findings inline so the next session can
-    # act on them. Empty string when no prior run rejected this feature.
-    prior_gauntlet_findings = _load_prior_gauntlet_findings(
+    # If this feature was rejected by the grounded verifier in any prior
+    # run, surface the verbatim reasons + repair guidance inline so the
+    # next session can act on them. Empty string when no prior run
+    # rejected this feature.
+    prior_verdict_findings = _load_prior_verdict_findings(
         feature_id=feature.feature_id,
         current_run_dir=run_dir,
     )
@@ -416,7 +415,7 @@ def execute_feature_claude_driven(
         project_id=project_id,
         citex_url=citex_url,
         implementer_mode=implementer_mode,
-        prior_gauntlet_findings=prior_gauntlet_findings,
+        prior_verdict_findings=prior_verdict_findings,
     )
     (step_dir / "prompt.md").write_text(prompt, encoding="utf-8")
 
@@ -526,22 +525,34 @@ def execute_feature_claude_driven(
     feature_files_created, feature_files_modified = _diff_since(target_path, pre_commit)
     touched = feature_files_created + feature_files_modified
 
-    # Post-hoc verification (Claude's own verification-before-completion
-    # skill should have caught most things; this is our belt-and-braces)
-    verification = _post_session_verification(
-        target_path, feature, charter_bundle,
-        run_test_commands=run_test_commands,
-        probe_health=probe_health,
-        touched_files=touched,
+    # Grounded agentic verification — hard floor (compile/commit) + evidence
+    # gathering (tests, diff, screenshots) + an evidence-grounded judge. This
+    # subsumes the old post-session checks and the layered Gauntlet. Imported
+    # lazily: grounded_verify.evidence imports _run_shell from this module, so
+    # a module-level import would be circular.
+    from ncdev.pipeline.grounded_verify import grounded_verify
+
+    verification = grounded_verify(
+        target_path,
+        feature_id=feature.feature_id,
+        intent=(feature.description or feature.title or feature.feature_id),
+        pre_commit=pre_commit,
+        backend_test_cmd=charter_bundle.verification.backend_test_command or None,
+        frontend_test_cmd=charter_bundle.verification.frontend_test_command or None,
+        compile_cmd=charter_bundle.verification.build_command or None,
+        changed_files=touched,
+        diff=_git_diff_text(target_path, pre_commit),
+        prior_context="",
+        step_dir=step_dir,
     )
     monitor.emit(
         "verification_finished",
         phase="building",
         feature_id=feature.feature_id,
         message=(
-            "Post-session verification passed"
+            "verification passed"
             if verification.overall_passed
-            else "Post-session verification failed"
+            else "verification failed"
         ),
         data={
             "overall_passed": verification.overall_passed,
@@ -549,13 +560,12 @@ def execute_feature_claude_driven(
         },
     )
 
-    # Decide status
+    # Status: PASSED iff work landed and the grounded verifier approved.
+    # session.success is no longer part of the verdict — the SIGTERM
+    # false-fail class is gone; the hard floor + evidence judge real state.
     recoverability_note = ""
-    if session.success and made_commit and not dirty and verification.overall_passed:
-        status = StepStatus.PASSED
-    elif made_commit and verification.overall_passed:
-        # Claude might have exited with non-zero for trivial reasons; if
-        # the commit and verification are good, we accept.
+    gauntlet_note = ""
+    if made_commit and verification.overall_passed:
         status = StepStatus.PASSED
     else:
         # Something is wrong. Commit whatever is there with [BROKEN] tag
@@ -578,48 +588,6 @@ def execute_feature_claude_driven(
     files_modified = feature_files_modified
     if status == StepStatus.FAILED and dirty:
         files_created, files_modified = _diff_since(target_path, pre_commit)
-
-    # Verification Gauntlet — the v4 layered correctness ladder. Runs
-    # only when the feature would otherwise PASS; a blocking gauntlet
-    # failure downgrades it to FAILED. The committed work stays (a real
-    # commit, not a dirty tree) for the Steward / repair loop to act on.
-    gauntlet_note = ""
-    if run_gauntlet_check and status == StepStatus.PASSED:
-        from ncdev.pipeline.gauntlet import (
-            EXECUTOR_LAYERS,
-            GauntletContext,
-            run_gauntlet,
-        )
-
-        g_ctx = GauntletContext(
-            feature=feature,
-            contract=charter_bundle.verification,
-            repo=target_path,
-            changed_files=touched,
-            diff=_git_diff_text(target_path, pre_commit),
-            builder_provider=implementer_mode,
-            config=config,
-            run_commands=run_test_commands,
-        )
-        g_report = run_gauntlet(g_ctx, layers=EXECUTOR_LAYERS)
-        (step_dir / "gauntlet.json").write_text(
-            _gauntlet_report_json(g_report), encoding="utf-8",
-        )
-        logger.info("%s", g_report.summary_line())
-        monitor.emit(
-            "gauntlet_finished",
-            phase="building",
-            feature_id=feature.feature_id,
-            message=g_report.summary_line(),
-            data={"passed": g_report.passed},
-        )
-        if not g_report.passed:
-            status = StepStatus.FAILED
-            blocking = "; ".join(
-                f"{failure.layer}: {failure.summary}"
-                for failure in g_report.blocking_failures
-            )
-            gauntlet_note = f" | gauntlet BLOCKED — {blocking}"
 
     result = StepResult(
         feature_id=feature.feature_id,
@@ -655,355 +623,6 @@ def execute_feature_claude_driven(
     }, indent=2), encoding="utf-8")
 
     return result
-
-
-# ---------------------------------------------------------------------------
-# Post-session verification (light — Claude does the heavy lifting)
-# ---------------------------------------------------------------------------
-
-
-def _post_session_verification(
-    target_path: Path,
-    feature: FeatureStep,
-    bundle: CharterBundle,
-    *,
-    run_test_commands: bool = True,
-    probe_health: bool = True,
-    touched_files: list[str] | None = None,
-) -> StepVerification:
-    """Enforce every clause of the verification contract.
-
-    Belt-and-braces to Claude's in-session ``verification-before-completion``
-    skill — we don't trust "claimed done" to mean "actually done".
-    """
-    ver = StepVerification()
-    reasons: list[str] = []
-
-    # 1. Required files — REMOVED from per-feature scope.
-    #    The verification-contract's global ``required_files`` list spans
-    #    the whole product (e.g. frontend/src/stores/auth.ts comes from
-    #    f03, frontend/src/stores/projects.ts from f04). Demanding every
-    #    feature produce all of them is the same anti-pattern previously
-    #    fixed for ``required_screenshots`` (clause 4 below): f02-design-
-    #    system can't write auth.ts before f03 has even run.
-    #    Per-feature required files are enforced under
-    #    ``feature.acceptance.required_files`` (clause 8 below). The
-    #    global list is enforced by the end-of-run integration gate
-    #    (``integration_gate.py``) against the cumulative repo state.
-
-    # 2. Asset manifest must exist and cover code references
-    if bundle.verification.assets_manifest_required:
-        ok, missing = verify_manifest_covers_references(
-            target_path, feature.feature_id,
-            touched_files=touched_files,
-        )
-        if not ok:
-            if missing == ["<no-manifest>"]:
-                reasons.append(f"asset manifest not written for {feature.feature_id}")
-            else:
-                reasons.append(f"asset references without manifest: {missing[:5]}")
-
-    # 3. Prohibited patterns (regex — treats entries in the contract as
-    #    patterns, falls back to literal match if the regex fails to compile).
-    #    Feature-local scope matters here for the same reason it matters for
-    #    asset manifests: one legacy TODO elsewhere in a brownfield repo should
-    #    not fail every future feature.
-    patterns = bundle.verification.prohibited_patterns
-    if patterns:
-        bad = _grep_for_prohibited(target_path, patterns, touched_files=touched_files)
-        if bad:
-            reasons.append(f"prohibited patterns found: {bad[:5]}")
-
-    # 4. Required screenshots — REMOVED from per-feature scope.
-    #    The contract's global required_screenshots list spans the
-    #    whole product (login, signup, dashboard, ...) and demanding
-    #    every feature produce all of them is nonsensical: f01-scaffold
-    #    can't capture a "dashboard" screenshot before f08 builds the
-    #    dashboard. Per-feature screenshots are enforced under
-    #    feature.acceptance.required_screenshots (clause 8 below).
-    #    The contract's global list is enforced by the end-of-run
-    #    integration gate against the cumulative repo state.
-
-    # 5. Minimum test count — prevents "0 tests, all green" gaming
-    if bundle.verification.minimum_test_count > 0:
-        count = _count_test_files(target_path)
-        ver.unit_tests = TestResult(suite="unit", passed=count, success=count > 0)
-        if count < bundle.verification.minimum_test_count:
-            reasons.append(
-                f"test file count {count} below minimum "
-                f"{bundle.verification.minimum_test_count}"
-            )
-
-    # 6. Run the declared test commands
-    if run_test_commands:
-        if bundle.verification.backend_test_command:
-            ok, out = _run_shell(
-                bundle.verification.backend_test_command,
-                cwd=target_path, timeout=600,
-            )
-            ver.integration_tests = TestResult(
-                suite="backend", passed=1 if ok else 0,
-                failed=0 if ok else 1, success=ok, output=out[:2000],
-            )
-            if not ok:
-                reasons.append(f"backend tests failed: {_last_line(out)}")
-        if bundle.verification.frontend_test_command:
-            ok, out = _run_shell(
-                bundle.verification.frontend_test_command,
-                cwd=target_path, timeout=600,
-            )
-            ver.e2e_tests = TestResult(
-                suite="frontend", passed=1 if ok else 0,
-                failed=0 if ok else 1, success=ok, output=out[:2000],
-            )
-            if not ok:
-                reasons.append(f"frontend tests failed: {_last_line(out)}")
-
-    # 7. Health probe — if the contract declares a backend_health_url,
-    #    the feature is only "done" when that URL responds. Leaving
-    #    backend_health_url empty in the contract disables the probe
-    #    (common for CLI/library projects). Codex R2 flagged: if the
-    #    user put the URL there, they meant it.
-    # Health probe is OPT-IN per feature. Default False because most
-    # feature sessions don't keep a daemon running after the session
-    # exits — probing them all would always fail. Scaffold / boot
-    # features set acceptance.verify_app_boots=True to assert that
-    # the app must be reachable after their session, and the
-    # integration gate covers the rest at end-of-run.
-    if probe_health and feature.acceptance.verify_app_boots and bundle.verification.backend_health_url:
-        reachable = _probe_health(
-            bundle.verification.backend_health_url,
-            timeout=bundle.verification.boot_timeout_seconds,
-        )
-        ver.app_boots = reachable
-        if not reachable:
-            reasons.append(
-                f"backend health URL unreachable: "
-                f"{bundle.verification.backend_health_url} — feature "
-                f"{feature.feature_id} declared verify_app_boots=True so the "
-                "app must respond at session end"
-            )
-
-    # 8. Per-feature acceptance — bind verification to *this feature*, not
-    #    just the global contract. Closes the silent-skip path where a
-    #    feature could PASS by satisfying a globally-empty contract while
-    #    its own required files / tests / screenshots are missing.
-    accept = feature.acceptance
-    for req_file in accept.required_files:
-        fp = target_path / req_file
-        if not fp.exists():
-            reasons.append(
-                f"feature acceptance: required file missing: {req_file}"
-            )
-            continue
-        if accept.must_mention_feature_id and not _file_mentions_token(
-            fp, feature.feature_id
-        ):
-            reasons.append(
-                f"feature acceptance: {req_file} does not mention "
-                f"feature_id '{feature.feature_id}' (must_mention_feature_id=True)"
-            )
-
-    for req_test in accept.required_tests:
-        tp = target_path / req_test
-        if not tp.exists():
-            reasons.append(
-                f"feature acceptance: required test missing: {req_test}"
-            )
-            continue
-        if accept.must_mention_feature_id and not _file_mentions_token(
-            tp, feature.feature_id
-        ):
-            reasons.append(
-                f"feature acceptance: test {req_test} does not reference "
-                f"feature_id '{feature.feature_id}'"
-            )
-            continue
-        if run_test_commands:
-            ok, out = _run_test_in_project_root(target_path / req_test, target_path)
-            if not ok:
-                reasons.append(
-                    f"feature acceptance: required test {req_test} failed: "
-                    f"{_last_line(out)}"
-                )
-
-    for req_shot in accept.required_screenshots:
-        if not _screenshot_exists(target_path, req_shot):
-            reasons.append(
-                f"feature acceptance: required screenshot not captured: {req_shot}"
-            )
-
-    ver.failure_reasons = reasons
-    ver.overall_passed = not reasons
-    ver.prohibited_patterns = [r for r in reasons if "prohibited" in r.lower()]
-    return ver
-
-
-def _run_test_in_project_root(test_path: Path, target_path: Path) -> tuple[bool, str]:
-    """Run a single test from the right project root.
-
-    Mirrors state_scanner._run_single_test for the per-feature
-    verifier. Frontend tests must run from frontend/ (where
-    package.json + node_modules live); backend tests from
-    backend/ (where pyproject.toml lives).
-
-    target_path is the repo root — required so _runner_for_test can
-    walk all the way up to find package.json / pyproject.toml. Passing
-    test_path.parent stops the walk inside src/ and misses the project
-    marker.
-    """
-    from ncdev.pipeline.state_scanner import _runner_for_test
-
-    if not test_path.exists():
-        return False, f"test file not found: {test_path}"
-    project_root, cmd = _runner_for_test(test_path, target_path)
-    if cmd is None or project_root is None:
-        return False, f"no test runner for {test_path.suffix}"
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        return result.returncode == 0, (result.stdout + "\n" + result.stderr)
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        return False, str(exc)
-
-
-def _file_mentions_token(path: Path, token: str) -> bool:
-    """True if ``path`` (a small text file) references ``token`` literally.
-
-    Reads up to 1 MB to keep verification cheap on large files. Returns
-    False on any read error — callers treat that as "doesn't mention",
-    which is the safe default for an acceptance gate.
-    """
-    try:
-        if path.stat().st_size > 1_000_000:
-            return token in path.name
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        return token in text or token in path.name
-    except OSError:
-        return False
-
-
-def _grep_for_prohibited(
-    target_path: Path,
-    patterns: list[str],
-    *,
-    touched_files: list[str] | None = None,
-) -> list[str]:
-    """Scan git-tracked files for prohibited patterns.
-
-    Each entry is treated as a regular expression via ``re.search``. If
-    a pattern fails to compile, falls back to a substring check so
-    human-written entries like ``TODO`` still work.
-
-    When ``touched_files`` is provided, only scan that feature-local set.
-    This keeps brownfield legacy debt from failing unrelated future work.
-    """
-    compiled: list[tuple[str, re.Pattern[str] | None]] = []
-    for pat in patterns:
-        try:
-            compiled.append((pat, re.compile(pat)))
-        except re.error:
-            compiled.append((pat, None))
-
-    hits: list[str] = []
-    try:
-        ls = subprocess.run(
-            ["git", "ls-files"],
-            cwd=str(target_path), capture_output=True, text=True, timeout=10,
-        )
-        if ls.returncode != 0:
-            return []
-        tracked_files = {f for f in ls.stdout.splitlines() if f}
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return []
-
-    if touched_files is not None:
-        files = [f for f in touched_files if f in tracked_files]
-    else:
-        files = sorted(tracked_files)
-
-    for f in files:
-        fp = target_path / f
-        try:
-            if fp.stat().st_size > 1_000_000:
-                continue
-            text = fp.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for pat, regex in compiled:
-            hit = regex.search(text) if regex is not None else (pat in text)
-            if hit:
-                hits.append(f"{f} contains '{pat}'")
-                if len(hits) > 20:
-                    return hits
-                break   # one hit per file is enough
-    return hits
-
-
-# ---------------------------------------------------------------------------
-# Verification helpers
-# ---------------------------------------------------------------------------
-
-
-def _screenshot_exists(target_path: Path, name: str) -> bool:
-    """True if a file matching the screenshot name exists under the repo.
-
-    Matches by token overlap rather than substring, so a required slug
-    "landing-shell" matches Claude's actual output of
-    "landing-desktop-1440x900.png" (both share the "landing" token).
-    Strict substring matching was rejecting valid screenshots that
-    Claude named with viewport / dimension suffixes — a common pattern.
-
-    Search dirs: .ncdev/evidence/<feature_id?>/, evidence/screenshots/,
-    docs/screenshots/. Recursive within each.
-    """
-    slug = name.replace(" ", "-").replace("/", "-").lower()
-    slug_tokens = {t for t in slug.split("-") if t and t != "shell"}
-    if not slug_tokens:
-        return False
-    candidate_dirs = [
-        target_path / ".ncdev" / "evidence",
-        target_path / "evidence" / "screenshots",
-        target_path / "docs" / "screenshots",
-    ]
-    for d in candidate_dirs:
-        if not d.exists():
-            continue
-        for f in d.rglob("*.png"):
-            stem = f.stem.lower().replace("_", "-")
-            file_tokens = {t for t in stem.split("-") if t}
-            # Substring fallback (legacy behaviour: <slug>.png exactly)
-            if slug in stem:
-                return True
-            # Token-overlap match: at least one substantive token in common
-            if slug_tokens & file_tokens:
-                return True
-    return False
-
-
-def _count_test_files(target_path: Path) -> int:
-    patterns = (
-        "tests/**/test_*.py",
-        "tests/**/*_test.py",
-        "**/*.test.ts",
-        "**/*.test.tsx",
-        "**/*.spec.ts",
-        "**/*.spec.tsx",
-        "backend/tests/**/*.py",
-        "frontend/tests/**/*.ts",
-        "frontend/tests/**/*.tsx",
-    )
-    seen: set[Path] = set()
-    for pat in patterns:
-        for p in target_path.glob(pat):
-            if p.is_file() and "node_modules" not in p.parts:
-                seen.add(p.resolve())
-    return len(seen)
 
 
 def _run_shell(cmd: str, *, cwd: Path, timeout: int) -> tuple[bool, str]:
@@ -1146,30 +765,6 @@ def _git_diff_text(target_path: Path, ref: str) -> str:
         return r.stdout.decode("utf-8", errors="replace")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
-
-
-def _gauntlet_report_json(report) -> str:  # noqa: ANN001
-    """Serialise a GauntletReport (nested dataclasses + enums) to JSON."""
-    return json.dumps(
-        {
-            "feature_id": report.feature_id,
-            "passed": report.passed,
-            "duration_seconds": report.duration_seconds,
-            "layers": [
-                {
-                    "layer": layer.layer,
-                    "status": layer.status.value,
-                    "blocking": layer.blocking,
-                    "summary": layer.summary,
-                    "detail": layer.detail,
-                    "findings": layer.findings,
-                    "duration_seconds": layer.duration_seconds,
-                }
-                for layer in report.layers
-            ],
-        },
-        indent=2,
-    )
 
 
 def _ensure_git_identity(target_path: Path) -> None:
