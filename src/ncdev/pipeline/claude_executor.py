@@ -20,7 +20,8 @@ Claude shells out to Codex via Bash for implementation and test writing
          * clean working tree + new commit(s) → PASSED
          * changes present but no commit     → commit with [BROKEN] tag
          * no changes at all                 → FAILED, builder didn't do anything
-    4. Run post-hoc verification: manifest covers refs, required files exist.
+    4. Run grounded verification: hard floor (compile/commit) + evidence
+       gathering (tests, diff, screenshots) + an evidence-grounded judge.
     5. Return StepResult. Orchestrator moves to the next feature.
 """
 
@@ -77,22 +78,30 @@ def _load_prior_verdict_findings(
     With it, the next session sees the verbatim FAIL reasons + repair
     guidance inline and can act on them.
     """
-    if current_run_dir is None or not current_run_dir.parent.exists():
+    if current_run_dir is None:
         return ""
+    # The factory pins a single run_dir and reuses it for every repair
+    # cycle (see factory.py "Pin the run_dir and reuse its charter"). The
+    # prior attempt's verdict.json therefore lives in THIS run_dir, at
+    # current_run_dir/steps/<fid>/verdict.json — and grounded_verify
+    # overwrites it on the next attempt. We must read it FIRST, before
+    # this attempt's verify call clobbers it. Fall back to sibling runs
+    # afterwards (multi-run topologies still benefit from that path).
+    candidates: list[Path] = [current_run_dir]
     runs_root = current_run_dir.parent
-    if not runs_root.is_dir():
-        return ""
-    try:
-        candidates = sorted(
-            (
-                p for p in runs_root.iterdir()
-                if p.is_dir() and p != current_run_dir
-            ),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        return ""
+    if runs_root.exists() and runs_root.is_dir():
+        try:
+            siblings = sorted(
+                (
+                    p for p in runs_root.iterdir()
+                    if p.is_dir() and p != current_run_dir
+                ),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            siblings = []
+        candidates.extend(siblings)
     for prior in candidates:
         vpath = prior / "steps" / feature_id / "verdict.json"
         if not vpath.exists():
@@ -542,7 +551,7 @@ def execute_feature_claude_driven(
         compile_cmd=charter_bundle.verification.build_command or None,
         changed_files=touched,
         diff=_git_diff_text(target_path, pre_commit),
-        prior_context="",
+        prior_context=prior_verdict_findings,
         step_dir=step_dir,
     )
     monitor.emit(
@@ -564,7 +573,6 @@ def execute_feature_claude_driven(
     # session.success is no longer part of the verdict — the SIGTERM
     # false-fail class is gone; the hard floor + evidence judge real state.
     recoverability_note = ""
-    gauntlet_note = ""
     if made_commit and verification.overall_passed:
         status = StepStatus.PASSED
     else:
@@ -599,7 +607,7 @@ def execute_feature_claude_driven(
         files_created=files_created,
         files_modified=files_modified,
         commit_sha=post_commit or "",
-        error_message=(session.error or "") + recoverability_note + gauntlet_note,
+        error_message=(session.error or "") + recoverability_note,
         builder_output=(session.final_text or "")[:2000],
         resolved_provider=_resolved_provider,
         resolved_model=_resolved_model,

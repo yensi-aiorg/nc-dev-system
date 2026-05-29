@@ -13,6 +13,7 @@ from ncdev.claude_session import ClaudeSessionResult
 from ncdev.pipeline.asset_manifest import save_feature_manifest
 from ncdev.pipeline.claude_executor import (
     _ensure_git_identity,
+    _load_prior_verdict_findings,
     build_feature_prompt,
     execute_feature_claude_driven,
 )
@@ -43,9 +44,9 @@ def _make_feature(fid: str = "f01-scaffold") -> FeatureStep:
 
 
 def _make_bundle(required_files: list[str] | None = None) -> CharterBundle:
-    # Test-only bundle: empty test commands + no health URL so
-    # _post_session_verification doesn't try to run real pytest / probe
-    # a non-existent server in unit tests.
+    # Test-only bundle: empty test commands + no health URL so the
+    # grounded verifier (stubbed in these unit tests) has nothing real
+    # to run against a non-existent server.
     return CharterBundle(
         contract=TargetProjectContract(project_name="myapp", project_type="web"),
         verification=VerificationContract(
@@ -149,6 +150,78 @@ def test_prompt_handles_empty_acceptance_criteria(tmp_path: Path):
         project_id="p",
     )
     assert "infer from description" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Repair loop closes — prior verdict findings reach the rebuild prompt
+# ---------------------------------------------------------------------------
+
+
+def test_prior_verdict_in_pinned_run_reaches_builder_prompt(tmp_path: Path):
+    """Regression: the factory pins a single run_dir and reuses it for
+    every repair cycle. The prior attempt's verdict.json therefore lives
+    at run_dir/steps/<fid>/verdict.json (NOT a sibling run). Before this
+    fix, _load_prior_verdict_findings excluded the current run_dir, so the
+    prior FAIL reasons never reached the rebuild prompt and the repair
+    loop never closed.
+
+    Simulate the repair attempt against the real pinned-run topology and
+    assert the verbatim FAIL reason + repair guidance flow through into
+    the composed builder prompt.
+    """
+    import json
+
+    run_dir = tmp_path / "run"
+    fid = "f03-auth"
+    step_dir = run_dir / "steps" / fid
+    step_dir.mkdir(parents=True)
+    (step_dir / "verdict.json").write_text(
+        json.dumps({
+            "verdict": "FAIL",
+            "reasons": ["missing 401 handling"],
+            "repair_guidance": ["add auth guard"],
+        }),
+        encoding="utf-8",
+    )
+
+    # The function must read THIS pinned run's own prior verdict.
+    findings = _load_prior_verdict_findings(
+        feature_id=fid,
+        current_run_dir=run_dir,
+    )
+    assert "missing 401 handling" in findings
+    assert "add auth guard" in findings
+
+    # And it must flow into the composed builder prompt at the existing
+    # call site that consumed the old prior_*_findings argument.
+    prompt = build_feature_prompt(
+        feature=_make_feature(fid),
+        target_path=tmp_path,
+        charter_dir=tmp_path / "outputs",
+        prior_feature_ids=[],
+        project_id="myapp",
+        prior_verdict_findings=findings,
+    )
+    assert "missing 401 handling" in prompt
+    assert "add auth guard" in prompt
+
+
+def test_prior_pass_in_pinned_run_yields_no_repair_note(tmp_path: Path):
+    """A PASS verdict for this feature in the pinned run must NOT be
+    surfaced as a repair note."""
+    import json
+
+    run_dir = tmp_path / "run"
+    fid = "f03-auth"
+    step_dir = run_dir / "steps" / fid
+    step_dir.mkdir(parents=True)
+    (step_dir / "verdict.json").write_text(
+        json.dumps({"verdict": "PASS", "reasons": [], "repair_guidance": []}),
+        encoding="utf-8",
+    )
+
+    findings = _load_prior_verdict_findings(feature_id=fid, current_run_dir=run_dir)
+    assert findings == ""
 
 
 # ---------------------------------------------------------------------------
