@@ -1,0 +1,5 @@
+{"items": [{"name": "backend-tests", "command": "pytest -q",
+  "exit_code": 1, "output_tail": "E       KeyError: 'items'\nFAILED tests/integration/test_f08_stale_resolution.py",
+  "scope": "feature-tests"}],
+ "diff": "diff --git a/backend/app/services/tracker.py b/backend/app/services/tracker.py\n+...",
+ "changed_files": ["backend/app/services/tracker.py"], "screenshots": []}

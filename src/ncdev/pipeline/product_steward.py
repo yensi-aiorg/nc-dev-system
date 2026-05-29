@@ -79,17 +79,36 @@ def parse_steward_response(text: str) -> StewardDecision:
     parse error was being treated as an unrecoverable Steward failure
     and stopping the factory with 8-9/10 features already built.
 
-    `extract_json_object` pulls the first JSON object out of a fenced
+    `_extract_json_object` pulls the first JSON object out of a fenced
     block OR a bare brace span embedded in prose — exactly the shapes
     the model emits. Raise ValueError when no object is found so the
     caller's retry loop can try again.
     """
-    from ncdev.pipeline.gauntlet.context import extract_json_object
-
-    data = extract_json_object(text)
+    data = _extract_json_object(text)
     if data is None:
         raise ValueError("no JSON object found in steward response")
     return StewardDecision.model_validate(data)
+
+
+def _extract_json_object(text: str) -> dict | None:
+    """Pull the first JSON object out of an LLM response, or None.
+
+    Tolerant of a ```json fenced block or a bare object embedded in
+    prose — the two shapes models actually emit. (Ported from the
+    retired gauntlet.context module, which was its only consumer.)
+    """
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidate = fenced.group(1) if fenced else None
+    if candidate is None:
+        brace = re.search(r"\{.*\}", text, re.DOTALL)
+        candidate = brace.group(0) if brace else None
+    if candidate is None:
+        return None
+    try:
+        parsed = json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _summarise_completed(completed: list[StepResult]) -> str:
@@ -112,23 +131,20 @@ def _summarise_completed(completed: list[StepResult]) -> str:
     return "\n".join(lines)
 
 
-def _summarise_gauntlet(
+def _summarise_verifier_findings(
     run_dir: Path | None,
     completed: list[StepResult],
 ) -> str:
-    """Surface the verbatim findings from each failed feature's Gauntlet.
+    """Surface the verbatim findings from each failed feature's verifier.
 
     Without this, the Steward only sees the high-level
-    ``error_message`` ("gauntlet BLOCKED — L6-security ...; L8-oracle
-    ...") and cannot distinguish a fixable code defect (e.g. bandit
-    flagged real issues) from a false positive (scanner noise) or a
-    bad acceptance criterion (oracle reading the contract wrong).
+    ``error_message`` and cannot distinguish a fixable code defect from
+    a false positive or a bad acceptance criterion.
 
-    Reads ``<run_dir>/steps/<feature_id>/gauntlet.json`` for every
-    completed feature whose status is FAILED/BLOCKED and emits the
-    layer name, summary, detail, and up to three findings per layer.
-    Per-layer detail is truncated at 800 chars to keep the prompt
-    bounded.
+    Reads ``<run_dir>/steps/<feature_id>/verdict.json`` (written by the
+    grounded verifier) for every completed feature whose status is
+    FAILED/BLOCKED and emits the verdict reasons + repair guidance.
+    Each item is truncated to keep the prompt bounded.
     """
     if not completed or run_dir is None:
         return ""
@@ -137,64 +153,58 @@ def _summarise_gauntlet(
         status = getattr(r.status, "name", str(r.status).upper())
         if status not in {"FAILED", "BLOCKED"}:
             continue
-        gpath = run_dir / "steps" / r.feature_id / "gauntlet.json"
-        if not gpath.exists():
+        vpath = run_dir / "steps" / r.feature_id / "verdict.json"
+        if not vpath.exists():
             continue
         try:
-            g = json.loads(gpath.read_text(encoding="utf-8"))
+            v = json.loads(vpath.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             continue
-        failed_layers = [
-            layer for layer in g.get("layers", [])
-            if layer.get("status") == "failed"
+        if str(v.get("verdict", "")).upper() == "PASS":
+            continue
+        reasons = [x for x in (v.get("reasons") or []) if (x or "").strip()]
+        guidance = [
+            x for x in (v.get("repair_guidance") or []) if (x or "").strip()
         ]
-        if not failed_layers:
+        if not reasons and not guidance:
             continue
         lines = [
-            f"  - {r.feature_id} (commit {r.commit_sha[:8] or 'none'}):",
+            f"  - {r.feature_id} (commit {r.commit_sha[:8] or 'none'}, "
+            f"confidence {v.get('confidence', '?')}):",
         ]
-        for layer in failed_layers:
-            name = layer.get("layer", "?")
-            summary = layer.get("summary", "")
-            lines.append(f"      [{name}] {summary}")
-            detail = (layer.get("detail") or "").strip()
-            if detail and detail != summary:
-                short = detail[:800] + (
-                    "... [truncated]" if len(detail) > 800 else ""
-                )
-                for dl in short.splitlines():
-                    lines.append(f"          {dl}")
-            findings = layer.get("findings") or []
-            for finding in findings[:3]:
-                f_text = (finding or "").strip()
-                if not f_text or f_text == detail:
-                    continue
-                f_short = f_text[:500] + (
-                    "... [truncated]" if len(f_text) > 500 else ""
-                )
-                for fl in f_short.splitlines():
-                    lines.append(f"          • {fl}")
+        for reason in reasons[:6]:
+            short = reason.strip()[:500] + (
+                "... [truncated]" if len(reason.strip()) > 500 else ""
+            )
+            for rl in short.splitlines():
+                lines.append(f"      [reason] {rl}")
+        for g in guidance[:6]:
+            short = g.strip()[:500] + (
+                "... [truncated]" if len(g.strip()) > 500 else ""
+            )
+            for gl in short.splitlines():
+                lines.append(f"      [fix] {gl}")
         blocks.append("\n".join(lines))
     if not blocks:
         return ""
     header = [
-        "### Gauntlet findings on failed features",
+        "### Verifier findings on failed features",
         "",
-        "Each failed feature ran through the multi-layer Gauntlet:",
-        "  L0-compile  L1-lint  L5-visual  L6-security  L7-anti-bypass  L8-oracle",
+        "Each failed feature was judged by the grounded verifier "
+        "(hard floor + evidence + judge).",
         "",
-        "The verbatim findings from each *blocking* layer are below. Use them",
+        "The verbatim FAIL reasons and repair guidance are below. Use them",
         "to choose the right disposition:",
         "",
-        "  - L6-security finding describes a real defect → `repair_current_slice`,",
-        "    name the layer + the file/issue in `reasoning`.",
-        "  - L8-oracle finding names a concrete acceptance gap (e.g. missing",
-        "    UI primitive, missing field, wrong wording) → `repair_current_slice`,",
-        "    quote the gap in `reasoning` so the next session can fix exactly it.",
-        "  - L1-lint / L0-compile finding → almost always `repair_current_slice`",
+        "  - A reason describing a real code defect → `repair_current_slice`,",
+        "    name the file/issue in `reasoning`.",
+        "  - A reason naming a concrete acceptance gap (missing UI primitive,",
+        "    missing field, wrong wording) → `repair_current_slice`, quote the",
+        "    gap in `reasoning` so the next session can fix exactly it.",
+        "  - A compile/lint failure → almost always `repair_current_slice`",
         "    (these are mechanical).",
-        "  - L8-oracle finding describes a contract that doesn't match the PRD",
-        "    or that's gated on something the feature legitimately doesn't own",
+        "  - A reason describing a contract that doesn't match the PRD or",
+        "    that's gated on something the feature legitimately doesn't own",
         "    → `rewrite_acceptance` with an amendment that fixes the contract.",
         "  - Repeated failure across cycles on the same finding → consider",
         "    `stop_as_unrecoverable` only after two prior repair attempts.",
@@ -348,7 +358,7 @@ def build_steward_prompt(
     process_runbook_block = _summarise_project_runbook(
         load_project_runbook(target_path)
     )
-    gauntlet_block = _summarise_gauntlet(run_dir, completed)
+    gauntlet_block = _summarise_verifier_findings(run_dir, completed)
     performance_status_block = _summarise_performance_status(
         product_debt=product_debt,
         performance_budget=bundle.verification.performance_budget,

@@ -17,11 +17,11 @@ def _state(**kw) -> PipelineRunState:
     return PipelineRunState(**base)
 
 
-def _gauntlet_json(run_dir: Path, fid: str, *, passed: bool, blocking: list[dict]):
+def _verdict_json(run_dir: Path, fid: str, *, verdict: str, reasons: list[str]):
     step = run_dir / "steps" / fid
     step.mkdir(parents=True, exist_ok=True)
-    (step / "gauntlet.json").write_text(
-        json.dumps({"feature_id": fid, "passed": passed, "layers": blocking}),
+    (step / "verdict.json").write_text(
+        json.dumps({"verdict": verdict, "confidence": 0.9, "reasons": reasons}),
         encoding="utf-8",
     )
 
@@ -45,26 +45,23 @@ def test_report_surfaces_charter_assumptions(tmp_path: Path) -> None:
     assert "assumed single-tenant" in report.to_markdown()
 
 
-def test_report_reads_gauntlet_blocking_failures(tmp_path: Path) -> None:
+def test_report_reads_verifier_blocking_failures(tmp_path: Path) -> None:
     state = _state()
     state.completed_steps = [
         StepResult(feature_id="f01", status=StepStatus.FAILED),
     ]
-    _gauntlet_json(
-        tmp_path, "f01", passed=False,
-        blocking=[{
-            "layer": "L7-anti-bypass", "status": "failed",
-            "blocking": True, "summary": "stubbed integration",
-        }],
+    _verdict_json(
+        tmp_path, "f01", verdict="FAIL",
+        reasons=["stubbed integration in production code"],
     )
     report = build_run_report(state, tmp_path)
     fr = report.features[0]
     assert fr.gauntlet_ran is True
     assert fr.gauntlet_passed is False
-    assert any("L7-anti-bypass" in b for b in fr.gauntlet_blocking)
+    assert any("stubbed integration" in b for b in fr.gauntlet_blocking)
 
 
-def test_report_marks_gauntlet_not_run_when_absent(tmp_path: Path) -> None:
+def test_report_marks_verifier_not_run_when_absent(tmp_path: Path) -> None:
     state = _state()
     state.completed_steps = [StepResult(feature_id="f01", status=StepStatus.PASSED)]
     report = build_run_report(state, tmp_path)

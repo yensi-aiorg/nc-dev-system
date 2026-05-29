@@ -1,0 +1,4 @@
+{"items": [{"name": "security-scan", "command": "bandit (diff-scoped: 0 files)",
+  "exit_code": 0, "output_tail": "no issues in changed files", "scope": "diff"}],
+ "diff": "diff --git a/backend/app/api/documents.py b/backend/app/api/documents.py\n+...",
+ "changed_files": ["backend/app/api/documents.py"], "screenshots": []}

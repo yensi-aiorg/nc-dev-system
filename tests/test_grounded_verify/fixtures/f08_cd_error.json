@@ -1,0 +1,5 @@
+{"items": [{"name": "backend-tests", "command": "cd backend && pytest",
+  "exit_code": 1, "output_tail": "/usr/bin/cd: line 4: cd: backend: No such file or directory",
+  "scope": "feature-tests"}],
+ "diff": "diff --git a/backend/app/api/tracker.py b/backend/app/api/tracker.py\n+...",
+ "changed_files": ["backend/app/api/tracker.py"], "screenshots": []}

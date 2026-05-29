@@ -56,6 +56,7 @@ markers = [
   "integration: Integration tests (may need Docker)",
   "e2e: End-to-end tests (needs Docker + browsers)",
   "slow: Tests that take >30 seconds",
+  "llm: tests that spend tokens on a real claude/codex session (run explicitly)",
 ]
 
 [tool.coverage.run]
