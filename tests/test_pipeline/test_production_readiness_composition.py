@@ -21,6 +21,7 @@ from ncdev.pipeline.charter import (
     load_charter,
 )
 from ncdev.pipeline.engine import run_pipeline
+from ncdev.pipeline.integration_gate import IntegrationResult
 from ncdev.pipeline.models import (
     AssetManifest,
     CharterBundle,
@@ -178,16 +179,21 @@ def test_run_halts_on_first_failed_feature(tmp_path: Path, monkeypatch) -> None:
     assert state.status == "failed"
 
 
-def test_passed_features_still_get_integration_failed_when_routes_dont_respond(
+def test_passed_features_still_get_integration_failed_when_gate_fails(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Per-feature PASSED is necessary but not sufficient. If the
-    integration gate finds required_routes unreachable, the run is
-    integration_failed regardless of feature counts."""
+    """Per-feature PASSED is necessary but not sufficient. When the
+    (grounded) integration gate returns a FAIL verdict, the run is
+    integration_failed regardless of feature counts.
+
+    The gate's own verdict logic (grounded product judge over route /
+    test / build evidence) is tested under
+    ``tests/test_grounded_verify/``; here we only assert the engine wires
+    the gate's result into the run status, so we stub the gate at the
+    engine boundary rather than driving a live judge.
+    """
     workspace, target = _setup_workspace(tmp_path)
     bundle = _make_realistic_bundle()
-    # Disable test commands so the gate's only failing clause is routes
-    bundle.verification.backend_test_command = ""
 
     monkeypatch.setattr(
         "ncdev.pipeline.engine.generate_charter",
@@ -203,8 +209,6 @@ def test_passed_features_still_get_integration_failed_when_routes_dont_respond(
     )
 
     def fake_executor(*, feature, **kwargs):  # noqa: ARG001
-        # Seed the asset manifest so clause-1 passes; we want the route
-        # probe (clause 3) to be the failing clause.
         save_feature_manifest(
             target,
             AssetManifest(feature_id=feature.feature_id, assets=[]),
@@ -214,8 +218,16 @@ def test_passed_features_still_get_integration_failed_when_routes_dont_respond(
     monkeypatch.setattr(
         "ncdev.pipeline.engine.execute_feature_claude_driven", fake_executor
     )
+
+    def failing_gate(**kwargs):  # noqa: ARG001
+        return IntegrationResult(
+            passed=False,
+            failures=["product intent not satisfied: required route unreachable"],
+            routes_probed=2,
+        )
+
     monkeypatch.setattr(
-        "ncdev.pipeline.integration_gate._probe", lambda url, *, timeout: False
+        "ncdev.pipeline.engine.grounded_integration_gate", failing_gate
     )
 
     state = run_pipeline(
@@ -225,22 +237,22 @@ def test_passed_features_still_get_integration_failed_when_routes_dont_respond(
     )
 
     assert state.status == "integration_failed", (
-        "Both features PASSED but routes unreachable — must be integration_failed, "
-        "NOT passed/partial"
+        "Both features PASSED but the integration gate FAILED — must be "
+        "integration_failed, NOT passed/partial"
     )
     integration = state.metadata.get("integration", {})
     failures = integration.get("failures", [])
-    assert any("required_route unreachable" in f for f in failures)
+    assert any("not satisfied" in f for f in failures)
 
 
-def test_passed_features_with_all_gates_satisfied_yields_passed(
+def test_passed_features_with_gate_passing_yields_passed(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """The happy path: both features PASS, integration gate passes, run
-    status is `passed`. Demonstrates the gates don't false-positive."""
+    """The happy path: both features PASS, the (grounded) integration gate
+    returns PASS, run status is `passed`. Asserts the engine maps a passing
+    gate verdict to a passing run (no false-positive)."""
     workspace, target = _setup_workspace(tmp_path)
     bundle = _make_realistic_bundle()
-    # Drop required_files we can't easily satisfy in a tiny test
     bundle.verification.required_files = []
 
     monkeypatch.setattr(
@@ -266,9 +278,12 @@ def test_passed_features_with_all_gates_satisfied_yields_passed(
     monkeypatch.setattr(
         "ncdev.pipeline.engine.execute_feature_claude_driven", fake_executor
     )
-    # Routes all reachable
+
+    def passing_gate(**kwargs):  # noqa: ARG001
+        return IntegrationResult(passed=True, routes_probed=2)
+
     monkeypatch.setattr(
-        "ncdev.pipeline.integration_gate._probe", lambda url, *, timeout: True
+        "ncdev.pipeline.engine.grounded_integration_gate", passing_gate
     )
 
     state = run_pipeline(
