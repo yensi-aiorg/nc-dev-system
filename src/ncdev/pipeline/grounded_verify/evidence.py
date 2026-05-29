@@ -53,15 +53,23 @@ def gather_evidence(
 
     targets = _scoped_bandit_targets(changed_files)
     if targets and shutil.which("bandit"):
-        proc = subprocess.run(
-            ["bandit", "-q", "--severity-level", "high", *targets],
-            cwd=str(target_path), capture_output=True, text=True, timeout=120,
-        )
-        items.append(EvidenceItem(name="security-scan",
-                                  command=f"bandit (diff-scoped: {len(targets)} files)",
-                                  exit_code=proc.returncode,
-                                  output_tail=(proc.stdout + proc.stderr)[-2000:],
-                                  scope="diff"))
+        bandit_cmd = f"bandit (diff-scoped: {len(targets)} files)"
+        try:
+            proc = subprocess.run(
+                ["bandit", "-q", "--severity-level", "high", *targets],
+                cwd=str(target_path), capture_output=True, text=True, timeout=120,
+            )
+            items.append(EvidenceItem(name="security-scan",
+                                      command=bandit_cmd,
+                                      exit_code=proc.returncode,
+                                      output_tail=(proc.stdout + proc.stderr)[-2000:],
+                                      scope="diff"))
+        except (subprocess.SubprocessError, OSError) as exc:
+            items.append(EvidenceItem(name="security-scan",
+                                      command=bandit_cmd,
+                                      exit_code=None,
+                                      output_tail=f"bandit failed to run: {exc}",
+                                      scope="diff"))
 
     return EvidenceBundle(items=items, diff=diff[-8000:],
                           changed_files=list(changed_files),

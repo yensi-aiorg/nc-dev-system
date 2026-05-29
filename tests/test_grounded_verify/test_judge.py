@@ -2,7 +2,7 @@
 from pathlib import Path
 from dataclasses import dataclass
 
-from ncdev.pipeline.grounded_verify.judge import parse_verdict, judge, build_prompt
+from ncdev.pipeline.grounded_verify.judge import parse_verdict, judge, build_prompt, VERIFIER_TOOLS
 from ncdev.pipeline.grounded_verify.models import EvidenceBundle, EvidenceItem
 
 
@@ -65,3 +65,37 @@ def test_judge_retries_then_fails_safe(tmp_path: Path):
     assert calls["n"] == 2          # one retry
     assert v.verdict == "FAIL"      # conservative fail-safe
     assert any("could not" in r.lower() or "parse" in r.lower() for r in v.reasons)
+
+
+# --- Fix #1: verifier must not mutate the code it judges ---
+
+def test_judge_uses_read_only_tools_and_default_permission(tmp_path: Path):
+    """judge() must pass VERIFIER_TOOLS (no Write/Edit) and permission_mode='default'."""
+    captured: dict = {}
+
+    def capturing_runner(*a, **k):
+        captured.update(k)
+        return FakeSession('```json\n{"verdict":"PASS","confidence":0.9}\n```')
+
+    judge("f99", "intent", _bundle(), prior_context="", target_path=tmp_path,
+          session_runner=capturing_runner)
+
+    assert "Write" not in captured["tools"]
+    assert "Edit" not in captured["tools"]
+    assert captured["permission_mode"] == "default"
+
+
+# --- Fix #2: robust verdict extraction ---
+
+def test_parse_fenced_after_decoy_bare_object():
+    """A decoy bare object before a fenced block must not prevent extraction."""
+    text = 'noise {"foo": 1} then ```json\n{"verdict":"FAIL","reasons":["x"]}\n```'
+    v = parse_verdict(text)
+    assert v is not None and v.verdict == "FAIL"
+
+
+def test_parse_second_bare_object_wins_when_first_invalid():
+    """When first bare block is invalid, the second valid one is returned."""
+    text = 'prefix {"unrelated": true} {"verdict": "PASS"}'
+    v = parse_verdict(text)
+    assert v is not None and v.verdict == "PASS"

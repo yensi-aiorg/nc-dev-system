@@ -4,33 +4,63 @@ from __future__ import annotations
 
 import json
 import re
-
-from pydantic import ValidationError
-
-from ncdev.pipeline.grounded_verify.models import Verdict
-
-_FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-_BARE = re.compile(r"\{.*\}", re.DOTALL)
-
-
-def parse_verdict(text: str) -> Verdict | None:
-    """Pull a Verdict out of an LLM response, or None if absent/invalid."""
-    m = _FENCED.search(text) or _BARE.search(text)
-    if not m:
-        return None
-    candidate = m.group(1) if m.re is _FENCED else m.group(0)
-    try:
-        data = json.loads(candidate)
-        return Verdict.model_validate(data)
-    except (json.JSONDecodeError, ValidationError):
-        return None
-
-
 from pathlib import Path
 from typing import Callable
 
-from ncdev.claude_session import DEFAULT_BUILD_TOOLS, run_claude_session
-from ncdev.pipeline.grounded_verify.models import EvidenceBundle
+from pydantic import ValidationError
+
+from ncdev.claude_session import run_claude_session
+from ncdev.pipeline.grounded_verify.models import EvidenceBundle, Verdict
+
+# Read-only toolset — the verifier must not be able to mutate the code it judges.
+VERIFIER_TOOLS = ("Read", "Glob", "Grep", "Bash")
+
+_FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def _iter_brace_blocks(text: str):
+    """Yield balanced-brace substrings from *text*, left to right."""
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    yield text[start : i + 1]
+
+
+def parse_verdict(text: str) -> Verdict | None:
+    """Pull a Verdict out of an LLM response, or None if absent/invalid.
+
+    Strategy:
+    1. Try every ```json fenced block first (in order).
+    2. Then try every balanced-brace substring (in order).
+    Return the first candidate that parses as a valid Verdict.
+    """
+    candidates: list[str] = []
+
+    # (a) fenced blocks
+    for m in _FENCED.finditer(text):
+        candidates.append(m.group(1))
+
+    # (b) balanced-brace substrings
+    for block in _iter_brace_blocks(text):
+        candidates.append(block)
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+            return Verdict.model_validate(data)
+        except (json.JSONDecodeError, ValidationError):
+            continue
+
+    return None
+
 
 _RULES = """\
 You are the VERIFIER for one feature. Decide whether this feature's slice is genuinely DONE.
@@ -84,8 +114,8 @@ def judge(
     prompt = build_prompt(feature_id, intent, evidence, prior_context=prior_context)
     for attempt in range(2):
         result = session_runner(
-            prompt, cwd=target_path, tools=DEFAULT_BUILD_TOOLS,
-            model="opus", timeout=timeout, permission_mode="acceptEdits",
+            prompt, cwd=target_path, tools=VERIFIER_TOOLS,
+            model="opus", timeout=timeout, permission_mode="default",
         )
         verdict = parse_verdict(getattr(result, "final_text", "") or "")
         if verdict is not None:
