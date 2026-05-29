@@ -218,3 +218,72 @@ def test_fail_verdict_surfaces_reasons(tmp_path: Path, monkeypatch):
     assert result.passed is False
     assert "missing /api/v1/echo route" in result.failures
     assert "echo handler returns 500" in result.failures
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Scenario regression — required_files at alternate path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.llm
+def test_required_file_at_alternate_path_passes(tmp_path: Path):
+    """Regression: gate must PASS when required_files path differs from actual path.
+
+    Reproduces the real smoke-build failure where the contract lists
+    ``tests/test_echo.py`` but the file lives at ``backend/tests/test_echo.py``.
+    The grounded judge sees the evidence and must correctly disregard the
+    exact-path mismatch (grounding rule 1: alternate path counts).
+    """
+    # ------------------------------------------------------------------ #
+    # Set up a minimal repo under tmp_path
+    # ------------------------------------------------------------------ #
+    # File lives at alternate path (not the contract's exact path)
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    (tmp_path / "backend" / "tests" / "test_echo.py").write_text(
+        "def test_trivial():\n    assert True\n"
+    )
+    # Real work to inspect — gives the judge something meaningful to see
+    (tmp_path / "backend" / "app").mkdir(parents=True)
+    (tmp_path / "backend" / "app" / "main.py").write_text(
+        'def main():\n    return {"status": "ok"}\n'
+    )
+
+    # ------------------------------------------------------------------ #
+    # Build the bundle
+    # ------------------------------------------------------------------ #
+    from ncdev.pipeline.models import FeatureAcceptance, FeatureStep
+
+    bundle = _make_bundle(
+        # Contract lists the *original* path — not where the file actually is
+        features=[
+            FeatureStep(
+                feature_id="f01",
+                title="Echo endpoint",
+                description="Implement /health and /echo",
+                acceptance_criteria=["GET /health returns 200"],
+                acceptance=FeatureAcceptance(
+                    required_files=["tests/test_echo.py"],  # exact path mismatch
+                    required_routes=[],  # no route probing needed
+                ),
+            )
+        ],
+        # Trivially-passing test command — real shell, clean evidence
+        backend_test_command="python -c \"print('ok')\"",
+        # No start_command → hard floor is skipped
+        start_command="",
+    )
+    completed = [_make_completed("f01")]
+
+    # ------------------------------------------------------------------ #
+    # Call the REAL gate with a real session_runner (LLM judge)
+    # ------------------------------------------------------------------ #
+    from ncdev.pipeline.grounded_verify.integration import grounded_integration_gate
+
+    result = grounded_integration_gate(
+        bundle,
+        tmp_path,
+        completed,
+        probe_health=False,       # no live server needed
+        run_test_commands=True,   # real shell — trivial command passes cleanly
+    )
+
+    assert result.passed is True, result.failures
