@@ -99,3 +99,12 @@ def test_parse_second_bare_object_wins_when_first_invalid():
     text = 'prefix {"unrelated": true} {"verdict": "PASS"}'
     v = parse_verdict(text)
     assert v is not None and v.verdict == "PASS"
+
+
+def test_run_judge_core_parses_and_fails_safe(tmp_path):
+    from ncdev.pipeline.grounded_verify.judge import _run_judge
+    ok_runner = lambda *a, **k: FakeSession('```json\n{"verdict":"PASS"}\n```')
+    assert _run_judge("any prompt", target_path=tmp_path, session_runner=ok_runner).verdict == "PASS"
+    bad_runner = lambda *a, **k: FakeSession("no json")
+    v = _run_judge("p", target_path=tmp_path, session_runner=bad_runner)
+    assert v.verdict == "FAIL" and v.confidence == 0.0
