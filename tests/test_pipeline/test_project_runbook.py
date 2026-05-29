@@ -10,6 +10,8 @@ from ncdev.pipeline.models import (
     VerificationContract,
 )
 from ncdev.pipeline.project_runbook import (
+    ProjectRunbook,
+    TestCommandPolicy as RunbookTestCommandPolicy,
     build_fallback_runbook,
     command_for_test_from_runbook,
     generate_project_runbook,
@@ -55,6 +57,58 @@ def test_runbook_command_for_backend_single_test(tmp_path: Path) -> None:
     cwd, cmd = resolved
     assert cwd == tmp_path / "backend"
     assert cmd == ["pytest", "-q", "-x", "tests/test_f01.py"]
+
+
+def test_runbook_command_strips_redundant_cd_root_from_ai_runbook(tmp_path: Path) -> None:
+    (tmp_path / "backend" / "tests").mkdir(parents=True)
+    test_path = tmp_path / "backend" / "tests" / "test_f01.py"
+    test_path.write_text("def test_x(): pass\n")
+    runbook = ProjectRunbook(
+        source="ai_model",
+        project_name="proj",
+        backend=RunbookTestCommandPolicy(
+            root="backend",
+            test_command="cd backend && pytest -q",
+            single_test_command="cd backend && pytest -q -x {test_path}",
+        ),
+    )
+
+    resolved = command_for_test_from_runbook(
+        runbook,
+        test_path=test_path,
+        target_path=tmp_path,
+    )
+
+    assert resolved is not None
+    cwd, cmd = resolved
+    assert cwd == tmp_path / "backend"
+    assert cmd == ["pytest", "-q", "-x", "tests/test_f01.py"]
+
+
+def test_runbook_command_strips_redundant_cd_root_from_frontend_ai_runbook(tmp_path: Path) -> None:
+    (tmp_path / "frontend" / "tests").mkdir(parents=True)
+    test_path = tmp_path / "frontend" / "tests" / "api.test.ts"
+    test_path.write_text("import { test } from 'vitest';\n")
+    runbook = ProjectRunbook(
+        source="ai_model",
+        project_name="proj",
+        frontend=RunbookTestCommandPolicy(
+            root="frontend",
+            test_command="cd frontend && npm run test -- --run",
+            single_test_command="cd frontend && npm run test -- --run {test_path}",
+        ),
+    )
+
+    resolved = command_for_test_from_runbook(
+        runbook,
+        test_path=test_path,
+        target_path=tmp_path,
+    )
+
+    assert resolved is not None
+    cwd, cmd = resolved
+    assert cwd == tmp_path / "frontend"
+    assert cmd == ["npm", "run", "test", "--", "--run", "tests/api.test.ts"]
 
 
 def test_runbook_command_uses_playwright_for_frontend_e2e_specs(tmp_path: Path) -> None:

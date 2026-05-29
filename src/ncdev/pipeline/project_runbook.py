@@ -186,6 +186,7 @@ def command_for_test_from_runbook(
         )
         if not template:
             continue
+        template = _strip_policy_root_cd(template, policy.root)
         if area == "frontend" and _looks_like_playwright_test(test_path):
             return root, ["npx", "playwright", "test", rel_to_root]
         command = template.format(
@@ -261,6 +262,33 @@ def _split_cd_command(command: str) -> tuple[str, str]:
     if not match:
         return "", stripped
     return match.group(1).strip(), match.group(2).strip()
+
+
+def _strip_policy_root_cd(command: str, root: str) -> str:
+    """Remove a redundant ``cd <root> &&`` from a root-scoped command.
+
+    ``command_for_test_from_runbook`` already returns ``cwd=target/root``.
+    AI-authored runbooks sometimes preserve verification-contract commands
+    verbatim (``cd backend && pytest ...``), which would otherwise try to
+    change into ``backend/backend`` and fail every required-test check.
+    """
+
+    cd_root, remainder = _split_cd_command(command)
+    if not cd_root or not root:
+        return command
+    if _normalise_root(cd_root) == _normalise_root(root):
+        return remainder
+    return command
+
+
+def _normalise_root(root: str) -> str:
+    try:
+        parts = shlex.split(root)
+        if len(parts) == 1:
+            root = parts[0]
+    except ValueError:
+        pass
+    return root.strip().removeprefix("./").rstrip("/")
 
 
 def _single_from_test_command(command: str) -> str:

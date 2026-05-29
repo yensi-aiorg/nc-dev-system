@@ -1,0 +1,48 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: "N"
+      - generic [ref=e6]:
+        - heading "NC Dev Monitor" [level=1] [ref=e7]
+        - paragraph [ref=e8]: Live run telemetry
+    - heading "Runs" [level=2] [ref=e10]
+  - main [ref=e11]:
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - heading "Waiting for run" [level=1] [ref=e14]
+        - paragraph
+      - generic [ref=e17]: connected
+    - generic [ref=e18]:
+      - generic [ref=e19]:
+        - heading "Phase" [level=2] [ref=e20]
+        - generic [ref=e21]: "-"
+      - generic [ref=e22]:
+        - heading "Feature" [level=2] [ref=e23]
+        - generic [ref=e24]: "-"
+      - generic [ref=e25]:
+        - heading "Agents" [level=2] [ref=e26]
+        - generic [ref=e27]: "0"
+      - generic [ref=e28]:
+        - heading "Progress" [level=2] [ref=e29]
+        - generic [ref=e30]: 0/0
+    - generic [ref=e31]:
+      - generic [ref=e33]:
+        - heading "Feature Queue" [level=2] [ref=e34]
+        - generic [ref=e35]: unknown
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - heading "Current Work" [level=2] [ref=e39]
+          - generic [ref=e40]: none
+        - generic [ref=e42]:
+          - generic [ref=e43]:
+            - heading "No active feature" [level=3] [ref=e44]
+            - paragraph
+          - generic [ref=e45]:
+            - heading "Behavior" [level=2] [ref=e47]
+            - heading "Tests" [level=2] [ref=e49]
+          - heading "Files Changing" [level=2] [ref=e51]
+  - complementary [ref=e52]:
+    - heading "Live Events" [level=2] [ref=e54]
+    - generic [ref=e56]:
+      - heading "Codex Log Tail" [level=2] [ref=e58]
+      - generic [ref=e60]: No Codex log captured yet.
