@@ -36,6 +36,7 @@ def gather_evidence(
     changed_files: list[str],
     diff: str,
     screenshots: list[str],
+    build_command: str | None = None,
     timeout: int = 600,
 ) -> EvidenceBundle:
     items: list[EvidenceItem] = []
@@ -70,6 +71,12 @@ def gather_evidence(
                                       exit_code=None,
                                       output_tail=f"bandit failed to run: {exc}",
                                       scope="diff"))
+
+    if build_command:
+        ok, out = _run_shell(build_command, cwd=target_path, timeout=timeout)
+        items.append(EvidenceItem(name="build", command=build_command,
+                                  exit_code=_exit_from_ok(ok), output_tail=out[-2000:],
+                                  scope="build-advisory"))
 
     return EvidenceBundle(items=items, diff=diff[-8000:],
                           changed_files=list(changed_files),

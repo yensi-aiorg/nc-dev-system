@@ -14,7 +14,7 @@ def test_hard_floor_fail_skips_agent(monkeypatch, tmp_path: Path):
                         lambda *a, **k: called.__setitem__("judge", True) or Verdict(verdict="PASS"))
     ver = grounded_verify(tmp_path, feature_id="f01", intent="x", pre_commit="OLD",
                           backend_test_cmd=None, frontend_test_cmd=None,
-                          compile_cmd=None, changed_files=[], diff="")
+                          build_command=None, changed_files=[], diff="")
     assert ver.overall_passed is False
     assert ver.failure_reasons == ["no work produced"]
     assert called["judge"] is False        # invariant: agent never called below floor
@@ -28,6 +28,6 @@ def test_pass_verdict_maps_to_overall_passed(monkeypatch, tmp_path: Path):
                         lambda *a, **k: Verdict(verdict="PASS", confidence=0.9))
     ver = grounded_verify(tmp_path, feature_id="f01", intent="x", pre_commit="OLD",
                           backend_test_cmd=None, frontend_test_cmd=None,
-                          compile_cmd=None, changed_files=[], diff="")
+                          build_command=None, changed_files=[], diff="")
     assert ver.overall_passed is True
     assert ver.failure_reasons == []

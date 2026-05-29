@@ -59,3 +59,22 @@ def test_gather_evidence_bandit_timeout_recorded_not_raised(monkeypatch, tmp_pat
     item = names["security-scan"]
     assert item.exit_code is None
     assert "bandit failed to run" in item.output_tail
+
+
+def test_gather_evidence_build_command_advisory(monkeypatch, tmp_path: Path):
+    """build_command appends an EvidenceItem with scope 'build-advisory'."""
+    import ncdev.pipeline.grounded_verify.evidence as ev
+
+    monkeypatch.setattr(ev, "_run_shell", lambda cmd, *, cwd, timeout: (True, "ok"))
+
+    bundle = ev.gather_evidence(
+        tmp_path, backend_test_cmd=None, frontend_test_cmd=None,
+        changed_files=[], diff="", screenshots=[],
+        build_command="echo hi",
+    )
+    names = {i.name: i for i in bundle.items}
+    assert "build" in names
+    item = names["build"]
+    assert item.scope == "build-advisory"
+    assert item.command == "echo hi"
+    assert item.exit_code == 0

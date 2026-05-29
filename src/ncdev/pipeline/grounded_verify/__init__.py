@@ -2,7 +2,6 @@
 """Grounded agentic verifier — public entrypoint."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Callable
 
@@ -23,7 +22,7 @@ def grounded_verify(
     pre_commit: str,
     backend_test_cmd: str | None,
     frontend_test_cmd: str | None,
-    compile_cmd: str | None,
+    build_command: str | None = None,
     changed_files: list[str],
     diff: str,
     screenshots: list[str] | None = None,
@@ -32,7 +31,7 @@ def grounded_verify(
     session_runner: Callable = run_claude_session,
 ) -> StepVerification:
     ver = StepVerification()
-    floor = check_hard_floor(target_path, pre_commit=pre_commit, compile_cmd=compile_cmd)
+    floor = check_hard_floor(target_path, pre_commit=pre_commit, changed_files=changed_files)
     if not floor.passed:
         ver.overall_passed = False
         ver.failure_reasons = [floor.reason]
@@ -41,7 +40,7 @@ def grounded_verify(
     evidence = gather_evidence(
         target_path, backend_test_cmd=backend_test_cmd,
         frontend_test_cmd=frontend_test_cmd, changed_files=changed_files,
-        diff=diff, screenshots=screenshots or [],
+        diff=diff, screenshots=screenshots or [], build_command=build_command,
     )
     verdict = judge(feature_id, intent, evidence, prior_context=prior_context,
                     target_path=target_path, session_runner=session_runner)

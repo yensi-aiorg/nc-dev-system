@@ -2,10 +2,11 @@
 """Pre-LLM hard floor. The only checks the agent cannot override."""
 from __future__ import annotations
 
+import py_compile
 from pathlib import Path
 
 from ncdev.pipeline.claude_executor import (
-    _git_head, _git_working_tree_dirty, _run_shell,
+    _git_head, _git_working_tree_dirty,
 )
 from ncdev.pipeline.grounded_verify.models import HardFloorResult
 
@@ -14,19 +15,28 @@ def check_hard_floor(
     target_path: Path,
     *,
     pre_commit: str,
-    compile_cmd: str | None,
+    changed_files: list[str],
     timeout: int = 300,
 ) -> HardFloorResult:
-    """Auto-fail only if there is no work to judge, or it won't compile."""
+    """Auto-fail only if there is no work to judge, or a changed .py has a syntax error."""
     made_commit = _git_head(target_path) != pre_commit
     dirty = _git_working_tree_dirty(target_path)
     if not made_commit and not dirty:
         return HardFloorResult(passed=False, reason="no work produced (no commit, clean tree)")
-    if compile_cmd:
-        ok, out = _run_shell(compile_cmd, cwd=target_path, timeout=timeout)
-        if not ok:
+
+    for path in changed_files:
+        if not path.endswith(".py"):
+            continue
+        fp = target_path / path
+        if not fp.exists():
+            continue
+        try:
+            py_compile.compile(str(fp), doraise=True)
+        except py_compile.PyCompileError as e:
+            msg = e.msg if hasattr(e, "msg") else str(e)
             return HardFloorResult(
                 passed=False,
-                reason=f"does not compile: {out.strip().splitlines()[-1] if out.strip() else compile_cmd}",
+                reason=f"does not compile: {path}: {msg}",
             )
+
     return HardFloorResult(passed=True)

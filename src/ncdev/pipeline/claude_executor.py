@@ -548,7 +548,7 @@ def execute_feature_claude_driven(
         pre_commit=pre_commit,
         backend_test_cmd=charter_bundle.verification.backend_test_command or None,
         frontend_test_cmd=charter_bundle.verification.frontend_test_command or None,
-        compile_cmd=charter_bundle.verification.build_command or None,
+        build_command=charter_bundle.verification.build_command or None,
         changed_files=touched,
         diff=_git_diff_text(target_path, pre_commit),
         prior_context=prior_verdict_findings,
