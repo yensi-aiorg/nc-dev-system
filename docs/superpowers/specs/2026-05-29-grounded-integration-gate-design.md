@@ -62,6 +62,14 @@ New function (in `src/ncdev/pipeline/grounded_verify/integration.py`) that **ret
 3. Engine integration unchanged (same `IntegrationResult` contract); full suite green.
 4. The exact-path `required_files` + manifest-as-verdict clauses are gone; executable checks survive as evidence.
 
+### Measured results (2026-05-29)
+
+**Built, reviewed, merged (`f65cd94`), pushed.** Reused the verifier machinery; extracted `_run_judge` shared core. Full suite green (900+), 32 deterministic gate tests + 1 live scenario.
+
+- **Live scenario (real judge):** a *complete* echo service whose test file is at `backend/tests/test_echo.py` while the contract lists `tests/test_echo.py` → **PASS** (intent satisfied at an alternate path) — the exact case the old gate false-failed. A *thin/absent* product → correctly **FAIL** ("feature is genuinely absent, not relocated", using the new `git ls-files` evidence).
+- **End-to-end smoke build:** 3/3 features passed; the old `required file missing: tests/test_echo.py` false-fail is **gone**. The gate now ends red only on a *genuine* "app did not start" (the hard floor correctly caught a real port collision — port 23301 held by another live project's container), which is correct conservative behavior, not a false-fail. A fully-green run only needs a free port.
+- Code review (CHANGES-REQUESTED → fixed): the integration `EvidenceBundle` now carries the repo file inventory (`git ls-files`) and route status detail, so the judge can ground "alternate path" and "404 vs unreachable" rulings.
+
 ## 9. Out of scope
 
 Planner/builder/repair agents (future slices). This slice is the integration gate only.
