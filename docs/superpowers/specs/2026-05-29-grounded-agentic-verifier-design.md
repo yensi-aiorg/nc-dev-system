@@ -107,6 +107,18 @@ Net: ~840 LOC of brittle judgment removed; deterministic execution preserved. Mo
 3. A fresh real build shows materially higher first-pass rate and lower per-feature repair-cycle count than the baseline.
 4. ~840 LOC of gauntlet + clause logic removed; the module is import-only and orchestrator-agnostic.
 
+### Measured results (2026-05-29)
+
+**Real-judge replay (3 recorded evidence patterns):** all correct — dep-noise (f05) → PASS, genuine `KeyError` (assertions ran) → FAIL, harness-noise `cd` error + real work on disk (f08) → PASS.
+
+**End-to-end smoke build** (`echo-service`, run `run-20260529T093515Z-3fa56422`):
+- **3/3 features PASSED first-pass** (f01-scaffold, f02-echo-endpoint, f03-containerization-docs), zero repair cycles — vs the baseline of **2/43 (~5%), fpsr=0.0**.
+- Each verdict was genuinely grounded (0.97 confidence, citing real code lines).
+- The build-advisory mechanism worked: at f01 `docker compose build` exited 1 (no compose file yet) and the verifier correctly treated it as **non-blocking advisory** and PASSED on intent; at f03 it cited `docker compose build exited 0` as positive evidence.
+- A pre-fix run halted at f01 because the hard floor used `build_command` (`docker compose build`) as a compile gate — fixed: the hard floor now byte-compiles changed Python files, and `build_command` is advisory evidence (commit `78c995b`).
+
+**Known follow-up:** the run ended `integration_failed` on the *separate* end-of-run integration gate (`required file missing: tests/test_echo.py` — exact-path matching). That gate is the same brittle-deterministic class this verifier replaced per-feature, and is the natural next slice to make agentic.
+
 ## 9. Resolved design decisions
 
 These were open questions; resolved 2026-05-29.
