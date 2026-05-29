@@ -109,17 +109,14 @@ def build_prompt(feature_id: str, intent: str, evidence: EvidenceBundle,
     return "\n".join(lines)
 
 
-def judge(
-    feature_id: str,
-    intent: str,
-    evidence: EvidenceBundle,
+def _run_judge(
+    prompt: str,
     *,
-    prior_context: str,
     target_path: Path,
     session_runner: Callable = run_claude_session,
     timeout: int = 900,
 ) -> Verdict:
-    prompt = build_prompt(feature_id, intent, evidence, prior_context=prior_context)
+    """Shared session+parse+retry+fail-safe loop used by both feature and integration judges."""
     for attempt in range(2):
         result = session_runner(
             prompt, cwd=target_path, tools=VERIFIER_TOOLS,
@@ -133,3 +130,21 @@ def judge(
     return Verdict(verdict="FAIL", confidence=0.0,
                    reasons=["verifier could not parse a valid verdict after retry"],
                    repair_guidance=["re-run verification"])
+
+
+def judge(
+    feature_id: str,
+    intent: str,
+    evidence: EvidenceBundle,
+    *,
+    prior_context: str,
+    target_path: Path,
+    session_runner: Callable = run_claude_session,
+    timeout: int = 900,
+) -> Verdict:
+    return _run_judge(
+        build_prompt(feature_id, intent, evidence, prior_context=prior_context),
+        target_path=target_path,
+        session_runner=session_runner,
+        timeout=timeout,
+    )

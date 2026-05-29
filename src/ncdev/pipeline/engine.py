@@ -45,7 +45,8 @@ from ncdev.pipeline.claude_executor import (
     execute_feature_claude_driven,
 )
 from ncdev.pipeline.design_phase import run_design_phase
-from ncdev.pipeline.integration_gate import IntegrationResult, run_integration_gate
+from ncdev.pipeline.grounded_verify.integration import grounded_integration_gate
+from ncdev.pipeline.integration_gate import IntegrationResult
 from ncdev.pipeline.models import (
     ProvenanceRecord,
     StepResult,
@@ -566,7 +567,7 @@ def run_pipeline(
                 message="Integration gate started",
             )
             console.print("\n[bold]Phase 5b: Integration gate[/bold]")
-            integration = run_integration_gate(
+            integration = grounded_integration_gate(
                 bundle=bundle,
                 target_path=target_path,
                 completed=completed,
