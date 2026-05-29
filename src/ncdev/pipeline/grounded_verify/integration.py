@@ -12,7 +12,7 @@ from ncdev.pipeline.grounded_verify.models import EvidenceBundle, EvidenceItem
 from ncdev.pipeline.integration_gate import (
     IntegrationResult,
     _derive_base_url,
-    _probe,
+    _probe_detail,
     _resolve_url,
     _run_shell,
     _tail,
@@ -130,6 +130,7 @@ def grounded_integration_gate(
         if not ok:
             result.passed = False
             result.app_started = False
+            result.app_start_output_tail = _tail(out)
             result.failures = [f"app did not start: {_tail(out)}"]
             result.duration_seconds = time.time() - start
             return result
@@ -157,18 +158,22 @@ def grounded_integration_gate(
             for route in feat.acceptance.required_routes:
                 full = _resolve_url(route, base_url)
                 result.routes_probed += 1
-                reachable = bool(full) and _probe(
-                    full, timeout=bundle.verification.boot_timeout_seconds
-                )
+                if full:
+                    ok, detail = _probe_detail(
+                        full, timeout=bundle.verification.boot_timeout_seconds
+                    )
+                else:
+                    ok, detail = False, "unreachable: no base URL configured"
                 evidence_items.append(
                     EvidenceItem(
                         name=f"route:{route}",
                         command=f"GET {full or route}",
-                        exit_code=0 if reachable else 1,
+                        exit_code=0 if ok else 1,
+                        output_tail=detail,
                         scope="route",
                     )
                 )
-                if not reachable:
+                if not ok:
                     result.routes_failed.append(full or route)
 
     # Test commands
@@ -211,7 +216,14 @@ def grounded_integration_gate(
     if feature_titles:
         product_intent = f"{product_intent}: {'; '.join(feature_titles)}"
 
-    evidence_bundle = EvidenceBundle(items=evidence_items)
+    # Gather repo file inventory so the judge can resolve alternate paths
+    _ls_ok, _ls_out = _run_shell("git ls-files", cwd=target_path, timeout=60)
+    if _ls_ok:
+        repo_files = [p for p in _ls_out.splitlines() if p.strip()][:2000]
+    else:
+        repo_files = []
+
+    evidence_bundle = EvidenceBundle(items=evidence_items, changed_files=repo_files)
     verdict = _run_judge(
         build_integration_prompt(product_intent, evidence_bundle, sorted(built_ids)),
         target_path=target_path,

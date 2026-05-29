@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -149,7 +148,7 @@ def test_pass_verdict_maps_to_result(tmp_path: Path, monkeypatch):
     # All shell commands succeed
     monkeypatch.setattr(intmod, "_run_shell", lambda *a, **k: (True, "ok"))
     monkeypatch.setattr(intmod, "_wait_for_health", lambda *a, **k: True)
-    monkeypatch.setattr(intmod, "_probe", lambda *a, **k: True)
+    monkeypatch.setattr(intmod, "_probe_detail", lambda *a, **k: (True, "HTTP 200"))
     monkeypatch.setattr(intmod, "_resolve_url", lambda route, base: f"http://localhost/{route.lstrip('/')}")
     monkeypatch.setattr(intmod, "_derive_base_url", lambda url: "http://localhost")
     monkeypatch.setattr(intmod, "_tail", lambda s, n=400: s[-n:] if len(s) > n else s)
@@ -185,7 +184,7 @@ def test_fail_verdict_surfaces_reasons(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(intmod, "_run_shell", lambda *a, **k: (True, "ok"))
     monkeypatch.setattr(intmod, "_wait_for_health", lambda *a, **k: True)
-    monkeypatch.setattr(intmod, "_probe", lambda *a, **k: True)
+    monkeypatch.setattr(intmod, "_probe_detail", lambda *a, **k: (True, "HTTP 200"))
     monkeypatch.setattr(intmod, "_resolve_url", lambda route, base: f"http://localhost/{route.lstrip('/')}")
     monkeypatch.setattr(intmod, "_derive_base_url", lambda url: "http://localhost")
     monkeypatch.setattr(intmod, "_tail", lambda s, n=400: s[-n:] if len(s) > n else s)
@@ -287,3 +286,140 @@ def test_required_file_at_alternate_path_passes(tmp_path: Path):
     )
 
     assert result.passed is True, result.failures
+
+
+# ---------------------------------------------------------------------------
+# Fix #1: changed_files populated from git ls-files
+# ---------------------------------------------------------------------------
+
+def test_changed_files_passed_to_judge(tmp_path: Path, monkeypatch):
+    """grounded_integration_gate must pass repo file inventory to the judge via EvidenceBundle.changed_files."""
+    import ncdev.pipeline.grounded_verify.integration as intmod
+
+    fake_files = ["backend/tests/test_echo.py", "backend/app/main.py"]
+
+    def fake_run_shell(cmd: str, *, cwd, timeout):
+        if "ls-files" in cmd:
+            return True, "\n".join(fake_files) + "\n"
+        return True, "ok"
+
+    monkeypatch.setattr(intmod, "_run_shell", fake_run_shell)
+    monkeypatch.setattr(intmod, "_wait_for_health", lambda *a, **k: True)
+    monkeypatch.setattr(intmod, "_probe_detail", lambda *a, **k: (True, "HTTP 200"))
+    monkeypatch.setattr(intmod, "_resolve_url", lambda route, base: f"http://localhost/{route.lstrip('/')}")
+    monkeypatch.setattr(intmod, "_derive_base_url", lambda url: "http://localhost")
+    monkeypatch.setattr(intmod, "_tail", lambda s, n=400: s[-n:] if len(s) > n else s)
+
+    from ncdev.pipeline.grounded_verify.models import EvidenceBundle, Verdict
+
+    captured: dict = {}
+
+    def capturing_judge(prompt: str, *, target_path, session_runner):
+        # Recover the bundle from what was passed to build_integration_prompt
+        # by looking for the changed_files section in the prompt
+        captured["prompt"] = prompt
+        return Verdict(verdict="PASS", confidence=0.9, reasons=[])
+
+    monkeypatch.setattr(intmod, "_run_judge", capturing_judge)
+
+    # Also intercept build_integration_prompt to capture the bundle directly
+    original_build = intmod.build_integration_prompt
+    captured_bundle: dict = {}
+
+    def capturing_build(intent, evidence, completed_ids, **kwargs):
+        captured_bundle["bundle"] = evidence
+        return original_build(intent, evidence, completed_ids, **kwargs)
+
+    monkeypatch.setattr(intmod, "build_integration_prompt", capturing_build)
+
+    from ncdev.pipeline.grounded_verify.integration import grounded_integration_gate
+
+    bundle = _make_bundle()
+    completed = [_make_completed()]
+
+    grounded_integration_gate(
+        bundle,
+        tmp_path,
+        completed,
+        probe_health=False,
+        run_test_commands=False,
+        session_runner=lambda *a, **k: None,
+    )
+
+    evidence: EvidenceBundle = captured_bundle["bundle"]
+    assert "backend/tests/test_echo.py" in evidence.changed_files
+    assert "backend/app/main.py" in evidence.changed_files
+
+
+# ---------------------------------------------------------------------------
+# Fix #2: failed route records detail in output_tail
+# ---------------------------------------------------------------------------
+
+def test_failed_route_records_detail(tmp_path: Path, monkeypatch):
+    """A failed route probe must capture the HTTP status/error detail in EvidenceItem.output_tail."""
+    import ncdev.pipeline.grounded_verify.integration as intmod
+
+    def fake_run_shell(cmd: str, *, cwd, timeout):
+        if "ls-files" in cmd:
+            return True, ""
+        return True, "ok"
+
+    monkeypatch.setattr(intmod, "_run_shell", fake_run_shell)
+    monkeypatch.setattr(intmod, "_wait_for_health", lambda *a, **k: True)
+    monkeypatch.setattr(intmod, "_probe_detail", lambda *a, **k: (False, "HTTP 500"))
+    monkeypatch.setattr(intmod, "_resolve_url", lambda route, base: f"http://localhost/{route.lstrip('/')}")
+    monkeypatch.setattr(intmod, "_derive_base_url", lambda url: "http://localhost")
+    monkeypatch.setattr(intmod, "_tail", lambda s, n=400: s[-n:] if len(s) > n else s)
+
+    from ncdev.pipeline.grounded_verify.models import Verdict
+
+    captured_items: dict = {}
+
+    original_build = intmod.build_integration_prompt
+
+    def capturing_build(intent, evidence, completed_ids, **kwargs):
+        captured_items["items"] = evidence.items
+        return original_build(intent, evidence, completed_ids, **kwargs)
+
+    monkeypatch.setattr(intmod, "build_integration_prompt", capturing_build)
+    monkeypatch.setattr(
+        intmod, "_run_judge",
+        lambda *a, **k: Verdict(verdict="FAIL", confidence=0.9, reasons=["route failed"]),
+    )
+
+    from ncdev.pipeline.grounded_verify.integration import grounded_integration_gate
+
+    bundle = _make_bundle(
+        features=[
+            __import__(
+                "ncdev.pipeline.models",
+                fromlist=["FeatureStep"],
+            ).FeatureStep(
+                feature_id="f01",
+                title="Echo endpoint",
+                description="Impl",
+                acceptance_criteria=["GET /health returns 200"],
+                acceptance=__import__(
+                    "ncdev.pipeline.models",
+                    fromlist=["FeatureAcceptance"],
+                ).FeatureAcceptance(required_routes=["/health"]),
+            )
+        ],
+        backend_health_url="http://localhost:8000/health",
+    )
+    completed = [_make_completed()]
+
+    grounded_integration_gate(
+        bundle,
+        tmp_path,
+        completed,
+        probe_health=True,
+        run_test_commands=False,
+        session_runner=lambda *a, **k: None,
+    )
+
+    route_items = [it for it in captured_items["items"] if it.scope == "route"]
+    assert route_items, "Expected at least one route EvidenceItem"
+    failed = [it for it in route_items if it.exit_code == 1]
+    assert failed, "Expected at least one failed route item"
+    assert failed[0].output_tail == "HTTP 500"

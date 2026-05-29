@@ -102,16 +102,27 @@ def _resolve_url(route: str, base_url: str) -> str | None:
     return base_url.rstrip("/") + "/" + route.lstrip("/")
 
 
-def _probe(url: str, *, timeout: int) -> bool:
+def _probe_detail(url: str, *, timeout: int) -> tuple[bool, str]:
+    """GET ``url`` and return ``(ok, detail)`` where detail is human-readable.
+
+    ``detail`` is ``"HTTP <status>"`` on a response or ``"unreachable: <exc>"``
+    on an exception — giving the judge enough signal to distinguish
+    "connection refused" (env noise) from "HTTP 500" (decisive failure).
+    """
     try:
         import httpx
     except ImportError:  # pragma: no cover - runtime dependency
-        return False
+        return False, "unreachable: httpx not installed"
     try:
         r = httpx.get(url, timeout=min(timeout, 10))
-        return 200 <= r.status_code < 400  # 3xx redirects acceptable for routes
-    except Exception:  # noqa: BLE001
-        return False
+        ok = 200 <= r.status_code < 400  # 3xx redirects acceptable for routes
+        return ok, f"HTTP {r.status_code}"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"unreachable: {exc}"
+
+
+def _probe(url: str, *, timeout: int) -> bool:
+    return _probe_detail(url, timeout=timeout)[0]
 
 
 def _run_shell(cmd: str, *, cwd: Path, timeout: int) -> tuple[bool, str]:
