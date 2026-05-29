@@ -107,9 +107,11 @@ Net: ~840 LOC of brittle judgment removed; deterministic execution preserved. Mo
 3. A fresh real build shows materially higher first-pass rate and lower per-feature repair-cycle count than the baseline.
 4. ~840 LOC of gauntlet + clause logic removed; the module is import-only and orchestrator-agnostic.
 
-## 9. Open questions
+## 9. Resolved design decisions
 
-- Exact StructuredOutput enforcement mechanism in the headless `claude -p` invocation (schema-constrained final response vs. parse-and-retry).
-- Whether the diff-scoped security scan uses bandit (Python) only or also a JS/TS SAST for frontend diffs.
-- Whether headless `claude -p` can reliably review screenshot evidence multimodally, or visual review needs a separate vision call.
-- Repair-cycle budget interaction: does a low-confidence PASS trigger a lighter re-check?
+These were open questions; resolved 2026-05-29.
+
+- **Structured verdict output** — fenced-JSON + validate + one retry. The verifier prompt must end with a single ` ```json ` block matching a pydantic `Verdict` model; parse it from the existing stream-json result event (`claude_session.py`), validate against the model, and on failure retry **once** with the validation error fed back. `claude` exposes no `--output-schema` flag, so we do not depend on one; Opus 4.8 reliably emits one clean JSON block. The pydantic `Verdict` model is the single source of truth for the contract in §4 Phase 3.
+- **Security scan scope** — bandit on **Python diffs only** for v1. Frontend/TS diffs are judged by the agent from the diff text (plus eslint security rules if the target project already defines them). No standalone JS/TS SAST (semgrep) until evidence shows a real JS vulnerability escaping. Keeps the deterministic surface minimal.
+- **Visual review** — folded into the agent via the `Read` tool (Claude Code is multimodal; `Read` renders PNGs). The evidence-gatherer captures declared screenshots to disk; the agent reads them inline when the feature is UI-bearing and treats visual defects as a signal into the verdict, not a separate hard gate. A dedicated vision call is a **fallback only**, used if the replay tests show headless image-reading is unreliable.
+- **Low-confidence PASS** — no branching in v1. `confidence` is recorded in the verdict (for observability and the capability ledger) but a PASS is a PASS. A re-check path is added later only if data shows low-confidence passes correlate with escaped defects.
