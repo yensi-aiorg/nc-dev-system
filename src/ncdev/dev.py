@@ -25,6 +25,7 @@ For PRD-scale work, use :mod:`ncdev.pipeline.engine` (full pipeline) or the
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -42,7 +43,7 @@ from ncdev.core.config import NCDevConfig, load_config
 console = Console()
 
 # ── Citex Integration ───────────────────────────────────────────────────
-CITEX_API = "http://localhost:20161"
+CITEX_API = os.getenv("NCDEV_CITEX_URL", "http://localhost:20161")
 
 
 def citex_store(project_id: str, content: str, metadata: dict) -> bool:

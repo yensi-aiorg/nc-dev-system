@@ -1,10 +1,11 @@
 """Thin HTTP client for the Citex RAG API."""
 from __future__ import annotations
 
+import os
 from typing import Any
 import httpx
 
-CITEX_DEFAULT_URL = "http://localhost:20161"
+CITEX_DEFAULT_URL = os.getenv("NCDEV_CITEX_URL", "http://localhost:20161")
 
 
 class CitexClient:
