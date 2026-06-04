@@ -290,7 +290,14 @@ class CodexCLIProvider(_CLIProviderMixin, AIProvider):
     ) -> str:
         cmd_exe = self._get_command()
         cat_cmd = "type" if IS_WINDOWS else "cat"
-        return f'{cat_cmd} "{prompt_file}" | {cmd_exe} exec --full-auto --skip-git-repo-check -'
+        # Pin the Codex model for every shell-form invocation when NCDEV_CODEX_MODEL
+        # is set (e.g. a containerized deployment that wants a single fixed model).
+        model = os.environ.get("NCDEV_CODEX_MODEL", "").strip()
+        model_flag = f" -m {model}" if model else ""
+        return (
+            f'{cat_cmd} "{prompt_file}" | '
+            f'{cmd_exe} exec --full-auto --skip-git-repo-check{model_flag} -'
+        )
 
     def build_argv(
         self,
