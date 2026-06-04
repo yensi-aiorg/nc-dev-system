@@ -273,6 +273,16 @@ def _resolve_claude_model(model: str | None) -> str:
     )
 
 
+def _codex_config_overrides() -> list[str]:
+    """`key=value` config overrides for codex from NCDEV_CODEX_CONFIG.
+
+    Comma-separated, e.g. ``service_tier=fast,model_reasoning_effort=high``. Each
+    becomes a ``-c key=value`` flag, overriding ~/.codex/config.toml.
+    """
+    raw = os.environ.get("NCDEV_CODEX_CONFIG", "")
+    return [kv.strip() for kv in raw.split(",") if kv.strip()]
+
+
 class CodexCLIProvider(_CLIProviderMixin, AIProvider):
     """AI provider backed by the Codex CLI.
 
@@ -294,9 +304,10 @@ class CodexCLIProvider(_CLIProviderMixin, AIProvider):
         # is set (e.g. a containerized deployment that wants a single fixed model).
         model = os.environ.get("NCDEV_CODEX_MODEL", "").strip()
         model_flag = f" -m {model}" if model else ""
+        cfg_flags = "".join(f" -c {kv}" for kv in _codex_config_overrides())
         return (
             f'{cat_cmd} "{prompt_file}" | '
-            f'{cmd_exe} exec --full-auto --skip-git-repo-check{model_flag} -'
+            f'{cmd_exe} exec --full-auto --skip-git-repo-check{model_flag}{cfg_flags} -'
         )
 
     def build_argv(
@@ -307,9 +318,6 @@ class CodexCLIProvider(_CLIProviderMixin, AIProvider):
         tools: list[str] | None = None,
         codex_options: list[str] | None = None,
     ) -> list[str]:
-        from ncdev.core.capability_policy import resolve_model
-        from ncdev.core.capability_probe import probe_codex
-
         argv = [
             self._cmd_name,
             "exec",
@@ -317,7 +325,18 @@ class CodexCLIProvider(_CLIProviderMixin, AIProvider):
             "--sandbox",
             "danger-full-access",
         ]
-        argv += ["--model", resolve_model("openai_codex", model, probe_codex())]
+        # A deployment can pin one Codex model for every task via NCDEV_CODEX_MODEL,
+        # bypassing capability-based resolution.
+        forced = os.environ.get("NCDEV_CODEX_MODEL", "").strip()
+        if forced:
+            argv += ["--model", forced]
+        else:
+            from ncdev.core.capability_policy import resolve_model
+            from ncdev.core.capability_probe import probe_codex
+
+            argv += ["--model", resolve_model("openai_codex", model, probe_codex())]
+        for kv in _codex_config_overrides():
+            argv += ["-c", kv]
         if codex_options:
             argv += list(codex_options)
         argv.append(prompt)
