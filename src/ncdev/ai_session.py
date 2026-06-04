@@ -280,15 +280,26 @@ def run_codex_session(
         "Conventional Commits. Leave the working tree clean when done."
     )
 
-    from ncdev.core.capability_policy import resolve_model
-    from ncdev.core.capability_probe import probe_codex
+    from ncdev.ai_provider import _codex_config_overrides
+
+    forced_model = os.environ.get("NCDEV_CODEX_MODEL", "").strip()
+    if forced_model:
+        model_name = forced_model
+    else:
+        from ncdev.core.capability_policy import resolve_model
+        from ncdev.core.capability_probe import probe_codex
+
+        model_name = resolve_model("openai_codex", model, probe_codex())
 
     cmd: list[str] = [
         "codex", "exec",
         "--full-auto",
         "--sandbox", "danger-full-access",
-        "--model", resolve_model("openai_codex", model, probe_codex()),
+        "--model", model_name,
     ]
+    # Deployment-pinned codex config (e.g. service_tier=fast, reasoning effort).
+    for kv in _codex_config_overrides():
+        cmd += ["-c", kv]
     if codex_options:
         cmd += list(codex_options)
     if extra_args:
