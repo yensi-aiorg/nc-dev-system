@@ -318,13 +318,11 @@ class CodexCLIProvider(_CLIProviderMixin, AIProvider):
         tools: list[str] | None = None,
         codex_options: list[str] | None = None,
     ) -> list[str]:
-        argv = [
-            self._cmd_name,
-            "exec",
-            "--full-auto",
-            "--sandbox",
-            "danger-full-access",
-        ]
+        argv = [self._cmd_name, "exec"]
+        if os.environ.get("NCDEV_CODEX_BYPASS_SANDBOX", "").strip().lower() in {"1", "true", "yes"}:
+            argv += ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+        else:
+            argv += ["--full-auto", "--sandbox", "danger-full-access"]
         # A deployment can pin one Codex model for every task via NCDEV_CODEX_MODEL,
         # bypassing capability-based resolution.
         forced = os.environ.get("NCDEV_CODEX_MODEL", "").strip()

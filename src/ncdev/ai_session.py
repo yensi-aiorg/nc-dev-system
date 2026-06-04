@@ -291,12 +291,14 @@ def run_codex_session(
 
         model_name = resolve_model("openai_codex", model, probe_codex())
 
-    cmd: list[str] = [
-        "codex", "exec",
-        "--full-auto",
-        "--sandbox", "danger-full-access",
-        "--model", model_name,
-    ]
+    cmd: list[str] = ["codex", "exec"]
+    if os.environ.get("NCDEV_CODEX_BYPASS_SANDBOX", "").strip().lower() in {"1", "true", "yes"}:
+        # No bubblewrap — needed where the sandbox can't run (e.g. containers
+        # without user namespaces). Matches the proven headless codex invocation.
+        cmd += ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+    else:
+        cmd += ["--full-auto", "--sandbox", "danger-full-access"]
+    cmd += ["--model", model_name]
     # Deployment-pinned codex config (e.g. service_tier=fast, reasoning effort).
     for kv in _codex_config_overrides():
         cmd += ["-c", kv]
