@@ -1,3 +1,5 @@
+> ⚠️ **RETIRED as the factory fix engine (2026-07-03).** Superseded by **nc-dev-v3** (`github.com/yensi-solutions/nc-dev-v3`) — persistent HTTP intake on :16651 (launchd `solutions.yensi.ncdev3-intake`), Sentinel-wire-compatible. This repo is kept for history only; do not add new integrations against `ncdev serve` (:16650).
+
 # NC Dev System
 
 **Thin orchestrator. Claude drives, Codex implements.**
